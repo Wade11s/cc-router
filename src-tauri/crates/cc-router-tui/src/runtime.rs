@@ -23,6 +23,9 @@ const FRAME: Duration = Duration::from_millis(16);
 const STABLE_AFTER: Duration = Duration::from_secs(10);
 /// 等 `events()` 建立连接 (拿到响应头) 的上限; 网络卡住不能让重连无限期挂起 (G4b)。
 const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
+/// 后端每 15 秒发一次保活 (`src-tauri/src/proxy/web/events.rs::sse_handler`), 连续三次都没
+/// 收到才算断 (Task 3: 连接中途被黑洞时没有这个超时, 界面会一直显示「已连接」)。
+const IDLE_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub fn unix_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
@@ -167,11 +170,23 @@ fn stamp_barrier(action: &mut Action, issued: &Issued) {
 ///
 /// `ever_connected` 只有真的连上过一次才置 true: 调用方靠它判断「从没连上时不发
 /// `ConnectionLost`」(G6), 免得「从未连接」被 `App` 当成「掉线重连」。
-async fn run_once(client: &Client, tx: &UnboundedSender<Action>, ever_connected: &mut bool, connect_deadline: Duration) -> Duration {
+///
+/// `idle` 独立传参而不是直接读 `IDLE_TIMEOUT`, 与 `connect_deadline` 同理: 测试传一个远小于
+/// 生产值的超时, 不用真等 45 秒去戳一个中途沉默的 mock。
+async fn run_once(
+    client: &Client,
+    tx: &UnboundedSender<Action>,
+    ever_connected: &mut bool,
+    connect_deadline: Duration,
+    idle: Duration,
+) -> Duration {
     // 建立连接本身也要有超时, 否则一个卡住不响应的上游会让这个任务永久挂起 (G4b)。
-    let Ok(Ok(mut stream)) = tokio::time::timeout(connect_deadline, client.events()).await else {
+    let Ok(Ok(stream)) = tokio::time::timeout(connect_deadline, client.events()).await else {
         return Duration::ZERO;
     };
+    // 两次收到任何字节 (含保活) 之间最多等 idle, 否则视为黑洞——不这样做, 中途被黑洞的连接会
+    // 让 `stream.next()` 永远卡住, 界面上「已连接」再也不会变化 (Task 3)。
+    let mut stream = stream.with_idle_timeout(idle);
     *ever_connected = true;
     // 从连上的这一刻开始计时, 而不是从这一轮循环 (含连接排队 / 后面的退避 sleep) 开始算,
     // 否则「流活了多久」会把连接耗时和断线后的等待都算进去, next_attempt 判断全乱 (G4)。
@@ -194,7 +209,7 @@ async fn sse_loop(client: Arc<Client>, tx: UnboundedSender<Action>) {
     let mut attempt = 0;
     let mut ever_connected = false;
     loop {
-        let lived = run_once(&client, &tx, &mut ever_connected, CONNECT_DEADLINE).await;
+        let lived = run_once(&client, &tx, &mut ever_connected, CONNECT_DEADLINE, IDLE_TIMEOUT).await;
         if ever_connected && tx.send(Action::ConnectionLost).is_err() {
             return;
         }
@@ -543,7 +558,7 @@ mod tests {
         let (tx, _rx) = unbounded_channel::<Action>();
         let mut ever_connected = false;
 
-        let lived = run_once(&client, &tx, &mut ever_connected, Duration::from_secs(1)).await;
+        let lived = run_once(&client, &tx, &mut ever_connected, Duration::from_secs(1), IDLE_TIMEOUT).await;
 
         assert_eq!(lived, Duration::ZERO);
         assert!(!ever_connected);
@@ -566,7 +581,7 @@ mod tests {
         let (tx, mut rx) = unbounded_channel::<Action>();
         let mut ever_connected = false;
 
-        let lived = run_once(&client, &tx, &mut ever_connected, Duration::from_secs(1)).await;
+        let lived = run_once(&client, &tx, &mut ever_connected, Duration::from_secs(1), IDLE_TIMEOUT).await;
 
         assert!(ever_connected);
         assert!(lived < STABLE_AFTER, "一次快速的连上又断不该被算成「稳定过」, 实际 {lived:?}");
@@ -596,12 +611,41 @@ mod tests {
         let (tx, _rx) = unbounded_channel::<Action>();
         let mut ever_connected = false;
 
-        let lived = tokio::time::timeout(Duration::from_millis(800), run_once(&client, &tx, &mut ever_connected, Duration::from_millis(200)))
-            .await
-            .expect("run_once 应该在 connect_deadline (200ms) 附近就返回, 不该等满 mock 的 2s 延迟");
+        let lived = tokio::time::timeout(
+            Duration::from_millis(800),
+            run_once(&client, &tx, &mut ever_connected, Duration::from_millis(200), IDLE_TIMEOUT),
+        )
+        .await
+        .expect("run_once 应该在 connect_deadline (200ms) 附近就返回, 不该等满 mock 的 2s 延迟");
 
         assert_eq!(lived, Duration::ZERO);
         assert!(!ever_connected);
+    }
+
+    /// Task 3: 事件流连上之后上游彻底沉默 (黑洞, 连保活都不再发), `run_once` 必须在 `idle`
+    /// 超时后主动放弃这一轮连接, 而不是永远卡在 `stream.next()` 里——这样上层 `sse_loop` 才能
+    /// 照常退避重连, 而不是让界面永远停在「已连接」。用 `trickle_server` 只发一次保活就沉默
+    /// (握住连接 10 秒模拟黑洞), 200ms 的 idle 应该远早于黑洞期结束就触发; 外层 1.5 秒的
+    /// timeout 当安全网。
+    #[tokio::test]
+    async fn run_once_gives_up_on_a_silent_stream() {
+        let script = vec![(Duration::from_millis(0), b": keepalive\n\n".as_slice())];
+        let addr = crate::client::test_support::trickle_server(script).await;
+        let dir = tempfile::tempdir().unwrap();
+        write_runtime(dir.path(), addr.port(), "s", "9.9.9-test");
+        let client = Client::connect(dir.path()).unwrap();
+        let (tx, mut rx) = unbounded_channel::<Action>();
+        let mut ever_connected = false;
+
+        tokio::time::timeout(
+            Duration::from_millis(1500),
+            run_once(&client, &tx, &mut ever_connected, Duration::from_secs(1), Duration::from_millis(200)),
+        )
+        .await
+        .expect("run_once 应该在 idle (200ms) 附近就放弃, 不该等满黑洞的 10 秒");
+
+        assert!(ever_connected);
+        assert_eq!(rx.recv().await, Some(Action::Connected { app_version: "9.9.9-test".into() }));
     }
 
     /// 四种就地操作各自打对了 command、带对了 JSON 键名 (`id` / `enabled`, 与后端 `#[tauri::command]`

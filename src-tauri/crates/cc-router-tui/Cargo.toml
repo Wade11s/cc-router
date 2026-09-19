@@ -36,4 +36,8 @@ unicode-width = "0.2"
 [dev-dependencies]
 insta = "1"
 tempfile = "3"
+# 只给测试用的 trickle_server (client::test_support) 拉 TCP 原语; 与 [dependencies] 里的
+# tokio 是同一份依赖, 但这两个 feature 只在 cargo 为测试构建做 feature 统一时才生效, 不影响
+# 生产二进制的 feature 集合 (Task 3)。
+tokio = { version = "1", features = ["net", "io-util"] }
 wiremock = "0.6"

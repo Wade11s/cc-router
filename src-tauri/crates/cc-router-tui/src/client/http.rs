@@ -172,7 +172,7 @@ impl Client {
             let status = resp.status().as_u16();
             return Err(api_error(status, &resp.text().await.unwrap_or_default()));
         }
-        Ok(EventStream { resp, parser: SseParser::default(), pending: VecDeque::new() })
+        Ok(EventStream { resp, parser: SseParser::default(), pending: VecDeque::new(), idle: None })
     }
 }
 
@@ -180,16 +180,32 @@ pub struct EventStream {
     resp: reqwest::Response,
     parser: SseParser,
     pending: VecDeque<SseEvent>,
+    idle: Option<Duration>,
 }
 
 impl EventStream {
+    /// 两次收到**任何字节** (含 `: keepalive` 保活注释) 之间最多等 `idle`; 超时 `next()` 返回
+    /// `Err(ClientError::Transport("idle timeout".into()))`。不调用 = 不限时 (原行为)。
+    pub fn with_idle_timeout(mut self, idle: Duration) -> Self {
+        self.idle = Some(idle);
+        self
+    }
+
     /// `Ok(None)` = 服务端关闭了连接 (app 退出)。调用方负责退避重连。
     pub async fn next(&mut self) -> Result<Option<SseEvent>, ClientError> {
         loop {
             if let Some(ev) = self.pending.pop_front() {
                 return Ok(Some(ev));
             }
-            match self.resp.chunk().await {
+            let chunk = match self.idle {
+                // 任何字节到达 (含保活注释) 都让 chunk() 返回, 也就重置了这次 timeout 的计时。
+                Some(idle) => match tokio::time::timeout(idle, self.resp.chunk()).await {
+                    Ok(r) => r,
+                    Err(_) => return Err(ClientError::Transport("idle timeout".into())),
+                },
+                None => self.resp.chunk().await,
+            };
+            match chunk {
                 Ok(Some(bytes)) => self.pending.extend(self.parser.push(&bytes)),
                 Ok(None) => return Ok(None),
                 Err(e) => return Err(ClientError::Transport(e.to_string())),
@@ -369,5 +385,46 @@ mod tests {
         let mut stream = Client::connect(dir.path()).unwrap().events().await.unwrap();
         assert_eq!(stream.next().await.unwrap(), Some(SseEvent { name: "events_flushed".into(), data: "null".into() }));
         assert_eq!(stream.next().await.unwrap(), None);
+    }
+
+    /// Task 3: 保活注释本身不含事件, 但每收到一次都要重置空闲计时——五段保活之间各隔 60ms
+    /// (< 200ms 的 idle), 之后紧跟的真事件必须照常收到, 而不是被中途的假「空闲」判断打断。
+    #[tokio::test]
+    async fn keepalives_keep_an_idle_stream_alive() {
+        let script = vec![
+            (Duration::from_millis(60), b": keepalive\n\n".as_slice()),
+            (Duration::from_millis(60), b": keepalive\n\n".as_slice()),
+            (Duration::from_millis(60), b": keepalive\n\n".as_slice()),
+            (Duration::from_millis(60), b": keepalive\n\n".as_slice()),
+            (Duration::from_millis(60), b": keepalive\n\n".as_slice()),
+            (Duration::from_millis(60), b"event: e\ndata: 1\n\n".as_slice()),
+        ];
+        let addr = crate::client::test_support::trickle_server(script).await;
+        let dir = tempfile::tempdir().unwrap();
+        write_runtime(dir.path(), addr.port(), "s");
+        let mut stream = Client::connect(dir.path()).unwrap().events().await.unwrap().with_idle_timeout(Duration::from_millis(200));
+
+        let ev = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("五段保活加起来不到 1 秒, next() 应该在这之内拿到事件")
+            .unwrap();
+        assert_eq!(ev, Some(SseEvent { name: "e".into(), data: "1".into() }));
+    }
+
+    /// Task 3: 连接建立后上游彻底沉默 (黑洞), `idle` 超时后 `next()` 必须主动放弃, 而不是永远
+    /// 卡在 `chunk()` 里等一个再也不会来的字节。
+    #[tokio::test]
+    async fn a_silent_stream_times_out() {
+        let script = vec![(Duration::from_millis(0), b": keepalive\n\n".as_slice())];
+        let addr = crate::client::test_support::trickle_server(script).await;
+        let dir = tempfile::tempdir().unwrap();
+        write_runtime(dir.path(), addr.port(), "s");
+        let mut stream = Client::connect(dir.path()).unwrap().events().await.unwrap().with_idle_timeout(Duration::from_millis(200));
+
+        let err = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("idle (200ms) 应该远早于外层 1 秒的安全网就触发")
+            .expect_err("黑洞之后应该超时, 不是正常返回");
+        assert!(err.to_string().contains("idle"), "{err}");
     }
 }

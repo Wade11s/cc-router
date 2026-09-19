@@ -49,3 +49,50 @@ pub mod events {
     /// TUI 关心的全部事件名; `tui_contract.rs` 断言每一个都在后端 `BRIDGED_EVENTS` 里。
     pub const ALL: &[&str] = &[SUBSCRIPTION_STATE_CHANGED, SUBSCRIPTION_QUOTA_REACHED, ROUTE_ATTEMPT_STARTED, ROUTE_ATTEMPT_FINISHED];
 }
+
+/// 只给测试用的假后端 (Task 3: 事件流空闲超时)。放在 `client` 而不是 `http` 里, 是因为
+/// `http.rs` 与 `runtime.rs` 的测试都要用它。
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// 一次性的慢速 SSE 服务器: 只接受一个连接, 读完请求头 (直到看见 `\r\n\r\n`) 后回
+    /// `HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n`,
+    /// 然后按 `script` 逐段「等 delay → 写 bytes」, 写完后握住连接 10 秒不再发任何字节
+    /// (模拟黑洞)。返回监听地址 (在 spawn 接收任务之前就已确定, 调用方不用等)。
+    pub async fn trickle_server(script: Vec<(Duration, &'static [u8])>) -> std::net::SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("绑定本地端口失败");
+        let addr = listener.local_addr().expect("拿不到监听地址");
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else { return };
+            // 逐字节读到请求头结束 (\r\n\r\n) 为止——测试请求很小, 简单换取正确性足够。
+            let mut buf = Vec::new();
+            let mut byte = [0u8; 1];
+            loop {
+                if socket.read_exact(&mut byte).await.is_err() {
+                    return;
+                }
+                buf.push(byte[0]);
+                if buf.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let head = b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+            if socket.write_all(head).await.is_err() {
+                return;
+            }
+            for (delay, bytes) in script {
+                tokio::time::sleep(delay).await;
+                if socket.write_all(bytes).await.is_err() {
+                    return;
+                }
+            }
+            // 握住连接不再发任何字节, 模拟黑洞——调用方的 idle 超时应该在这之前就放弃。
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        });
+        addr
+    }
+}
