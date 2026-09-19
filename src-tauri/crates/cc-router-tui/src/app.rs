@@ -918,4 +918,23 @@ mod tests {
         a.update(Action::ConnectionLost);
         assert_eq!(a.pages.live.entry_count(), 2, "断线广播应该到达实时路由页, 插入一条分隔行");
     }
+
+    /// Task 8 review fix round 1: `data` 为 `None` 时日志页一律显示加载中 (不看 `loading`, 见
+    /// `logs.rs::draw_table` 的注释——断线/重连期间 `loading` 本来就一直是 false, 不能因此误报
+    /// 「没有记录」), 所以「一次失败的加载真的停掉了 loading 标记」这件事在渲染文本层面已经看不出
+    /// 来了, 只能靠 `Logs::is_loading()` 这个测试专用钩子直接读 (与 `set_force_dirty` 同一套「只在
+    /// 编译本 crate 单测时存在」的做法)。toast 与无 `Cmd` 两件事仍然留在 `tests/ui.rs` 里靠渲染 /
+    /// 返回值断言 (`a_failed_requests_fetch_toasts_and_returns_no_cmd`)。
+    #[test]
+    fn a_failed_requests_fetch_clears_the_logs_pages_loading_flag() {
+        use crate::client::dto::RequestQuery;
+
+        let mut a = app();
+        a.update(Action::Connected { app_version: VERSION.into() });
+        a.update(Action::SwitchTab(Tab::Logs));
+        assert!(a.pages.logs.is_loading(), "切进日志页应该立刻开始加载第 1 页");
+
+        a.update(Action::FetchDone { fetch: Fetch::Requests(RequestQuery::default()), issued: 1, result: Err("boom".into()) });
+        assert!(!a.pages.logs.is_loading(), "失败的加载应该停掉「加载中」标记");
+    }
 }

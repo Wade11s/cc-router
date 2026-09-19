@@ -61,6 +61,14 @@ impl Logs {
     pub fn set_force_dirty(&mut self, dirty: bool) {
         self.force_dirty = dirty;
     }
+
+    /// 测试专用 (review fix round 1): 当前是否有加载在飞行中。`draw_table` 的「`data` 为 `None`
+    /// 时一律显示加载中」这条约定生效之后, 渲染文本层面已经看不出一次失败的加载有没有真的清掉
+    /// 这个标记——`app.rs::mod tests` 靠这个钩子直接读, 与 `set_force_dirty` 同一套「只在编译本
+    /// crate 单测时存在」的做法。
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
 }
 
 impl Logs {
@@ -268,19 +276,17 @@ impl Logs {
         let capacity = inner.height.saturating_sub(1) as usize; // 减掉表头一行
         self.last_page_rows = capacity.max(1);
 
-        // `data` 为 None 时正常应该是「还在等第一次加载」(loading=true, 大号居中 throbber);
-        // `loading` 已经是 false 却仍然没有 `data` 说明第一次加载就失败了 (Err 分支只清 loading,
-        // 不产出任何占位数据)——这时候继续画一个永远转不完的假 spinner 只会误导用户, 退化成与
-        // 「有数据但条目为空」相同的居中文案 (错误信息本身已经由 `App` 弹过 toast)。
+        // `data` 为 None 时一律显示加载中 (与 `Subscriptions::draw_placeholder` 同一套约定), 不看
+        // `loading`——`switch_tab` 只在已连接时才发 `Refresh` (`App::switch_tab`), 断线/重连期间
+        // `loading` 一直是 false, 这时候如果退化成「没有记录」的空态文案就是在撒谎; 加载失败之后
+        // 同理 (`accept_fetch` 的 `Err` 分支只清 `loading`, 不产出任何占位数据), 一直显示加载中直到
+        // 下一次轮询/手动刷新真的成功——错误信息本身已经由 `App` 弹过 toast, 断线时头部也已经在
+        // 显示「重连中」, 不需要这里再额外区分。
         if self.data.is_none() {
             frame.render_widget(block, area);
-            if self.loading {
-                let mut state = spinner_state(ctx.tick);
-                let throbber = Throbber::default().label(s.loading).throbber_set(BRAILLE_SIX).style(theme.muted_style());
-                frame.render_stateful_widget(throbber, inner.centered_vertically(Constraint::Length(1)), &mut state);
-            } else {
-                draw_empty_message(frame, inner, theme, s, !self.query.filters.is_empty());
-            }
+            let mut state = spinner_state(ctx.tick);
+            let throbber = Throbber::default().label(s.loading).throbber_set(BRAILLE_SIX).style(theme.muted_style());
+            frame.render_stateful_widget(throbber, inner.centered_vertically(Constraint::Length(1)), &mut state);
             return;
         }
 

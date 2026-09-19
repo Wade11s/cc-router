@@ -62,7 +62,7 @@ pub enum StreamEvent<'a> {
 pub trait Component {
     /// 页面自己的键位。全局键 (切页 / 帮助 / 退出 / 刷新) 由 `App` 先处理, 到不了这里。`s`:
     /// Task 5 起页面自己需要拼装本地化文案 (比如 picker 标题、拒绝操作的 toast) 才加的参数,
-    /// 之前的页面 (总览 / 占位) 用不到就地忽略。
+    /// 不需要的页面 (比如总览) 就地忽略。
     fn handle_key(&mut self, key: KeyEvent, store: &Store, s: &'static Strings) -> Option<Action>;
     fn update(&mut self, action: &Action, store: &Store, s: &'static Strings) -> Vec<Cmd>;
     /// `&mut self`: 只允许为动效记录几何信息, 不改业务状态 —— 同一状态画两次必须得到同一帧。
@@ -175,6 +175,6 @@ mod tests {
         let mut pages = Pages::default();
         let mut count = 0;
         pages.for_each_mut(|_| count += 1);
-        assert_eq!(count, 5, "总览 / 订阅 / 虚拟模型 / 实时路由 / 占位五个页面字段各恰好一次");
+        assert_eq!(count, 5, "总览 / 订阅 / 虚拟模型 / 实时路由 / 日志五个页面字段各恰好一次");
     }
 }

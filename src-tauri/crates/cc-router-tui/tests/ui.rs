@@ -3964,19 +3964,21 @@ fn request_results_reach_the_logs_page_while_it_is_hidden() {
 }
 
 /// Task 8 review item #3: `FetchDone(Requests)` 的 `Err` 路径以前从没在 `App` 这一层测过——加载
-/// 失败要照常弹出错误 toast、日志页要停掉「加载中」指示、且不产出任何 `Cmd`。用「还没加载过」这
-/// 种状态 (`logs_app()` 切页之后立刻投递失败结果, 数据从未落地过) 覆盖: 这样「停掉加载指示」这件
-/// 事能单纯靠渲染文本断言 (`ZH.loading` 消失), 不用摸内部字段。
+/// 失败要照常弹出错误 toast、且不产出任何 `Cmd`。
+///
+/// Review fix round 1: 「data 为 None 时一律显示加载中, 不看 `loading`」(与 `Subscriptions::
+/// draw_placeholder` 同一套约定, 见 `logs.rs::draw_table`) 落地之后, 这条路径在渲染文本层面已经
+/// 看不出「加载指示真的停了」这件事——数据从没落地过时应该继续显示 `s.loading`, 不能因为一次
+/// 失败就误报成「没有记录」(断线 / 重连期间 `loading` 本来就一直是 false)。所以这里只保留还能靠
+/// 渲染文本断言的两件事 (toast / 无 Cmd), 「加载指示真的停了」这件事挪到 `app.rs::mod tests` 用
+/// `Logs::is_loading()` 这个测试专用钩子验证 (`a_failed_requests_fetch_clears_the_logs_pages_loading_flag`)。
 #[test]
-fn a_failed_requests_fetch_stops_loading_and_toasts_but_returns_no_cmd() {
+fn a_failed_requests_fetch_toasts_and_returns_no_cmd() {
     let mut a = logs_app(false);
-    let out_before = render(&mut a, 80, 24);
-    assert!(out_before.contains(ZH.loading), "还没有任何结果落地之前应该显示加载中\n{out_before}");
-
     let cmds = a.update(requests_failed(RequestQuery::default(), 1, "网络错误"));
     assert!(cmds.is_empty(), "失败的加载不该产出任何 Cmd");
 
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.toast_load_failed)("网络错误")), "应该弹出错误 toast\n{out}");
-    assert!(!out.contains(ZH.loading), "日志页应该停掉「加载中」状态\n{out}");
+    assert!(out.contains(ZH.loading), "还没有任何结果落地过, 应该继续显示加载中, 不能误报「没有记录」\n{out}");
 }
