@@ -239,6 +239,33 @@ pub struct Strings {
     /// 显示 `vm_missing`、也不允许这几个会依赖订阅列表的编辑操作。
     pub vm_subs_not_loaded: &'static str,
     pub vm_help_rows: &'static [(&'static str, &'static str)],
+
+    // ---------- Task 7: 实时路由页 ----------
+    pub live_spark_title: &'static str,
+    pub live_spark_total: fn(n: u64) -> String,
+    pub live_title: &'static str,
+    /// 还没有任何路由事件时, 表格区域居中显示的一行提示。
+    pub live_empty: &'static str,
+    /// 未暂停且跟随最新时的底栏文案。
+    pub live_following: &'static str,
+    /// 暂停时的底栏文案, 参数是暂停后新增、且符合过滤的尝试数。
+    pub live_paused: fn(n: usize) -> String,
+    /// 可见尝试数 (不含断线分隔行)。
+    pub live_count: fn(n: usize) -> String,
+    pub live_gap: &'static str,
+    pub live_interrupted: &'static str,
+    pub live_filter_title: &'static str,
+    pub live_filter_all: &'static str,
+    /// 当前过滤的摘要, 参数是过滤条件的显示名。日志页 (Task 8) 共用。
+    pub filter_summary: fn(what: &str) -> String,
+    pub filter_dim_vm: &'static str,
+    pub filter_dim_sub: &'static str,
+    pub key_pause: &'static str,
+    pub key_resume: &'static str,
+    pub key_latest: &'static str,
+    pub key_filter: &'static str,
+    pub key_clear_filter: &'static str,
+    pub live_help_rows: &'static [(&'static str, &'static str)],
 }
 
 impl Strings {
@@ -462,6 +489,36 @@ pub const ZH: Strings = Strings {
         ("x", "移除当前订阅"),
         ("m", "切换调度模式"),
         ("s", "保存修改"),
+    ],
+
+    live_spark_title: "最近 60 秒",
+    live_spark_total: |n| format!("{n} 次"),
+    live_title: "实时路由",
+    live_empty: "还没有路由事件，Claude Code 发出请求后会出现在这里",
+    live_following: "跟随最新",
+    live_paused: |n| format!("已暂停 · 新增 {n} 条"),
+    live_count: |n| format!("共 {n} 条"),
+    live_gap: "连接中断，期间的事件未收到",
+    live_interrupted: "中断",
+    live_filter_title: "按虚拟模型或订阅过滤",
+    live_filter_all: "全部 (清除过滤)",
+    filter_summary: |what| format!("过滤 {what}"),
+    filter_dim_vm: "虚拟模型",
+    filter_dim_sub: "订阅",
+    key_pause: "暂停",
+    key_resume: "继续",
+    key_latest: "最新",
+    key_filter: "过滤",
+    key_clear_filter: "清除过滤",
+    live_help_rows: &[
+        ("空格", "暂停 / 继续 (暂停时新事件先缓冲)"),
+        ("↑↓ / j k", "选择一行 (离开「跟随最新」)"),
+        ("PgUp / PgDn", "翻页"),
+        ("g / G", "最早一行 / 回到最新并继续"),
+        ("/", "按虚拟模型或订阅过滤"),
+        ("Esc", "清除过滤 / 回到最新"),
+        ("耗时", "从发起到上游开始响应, 不含生成时间"),
+        ("并发", "同一虚拟模型 + 订阅的并发尝试按先后配对"),
     ],
 };
 

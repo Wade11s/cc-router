@@ -5,7 +5,8 @@
   1. 起一个假的 cc-router 后端 (11 个 command + 事件流), 在临时目录写一份 runtime.json, 记录
      `update_subscription` / `update_virtual_model` 收到的原始请求体供事后断言;
   2. 在 80x24 的伪终端里跑 TUI, 依次按
-     2 / j / t / e / ? / Esc / ⏎⏎glm⏎ / q / n / Esc / y / ⏎⏎glm⏎ / s / 3 / l / J / m / s / 4 / 1 / q
+     2 / j / t / e / ? / Esc / ⏎⏎glm⏎ / q / n / Esc / y / ⏎⏎glm⏎ / s / 3 / l / J / m / s / 4 /
+     空格 / 空格 / 1 / q
      (2 = 订阅页; j 选中第二条 "Kimi 备用"; t = 测试连接, e = 就地启停;
      ⏎⏎glm⏎ 造一份草稿 (改 fable 槽模型) 之后先走一遍 fix round final (M9c) 加的放弃流程练习——
      q (脏页面上 q 会先问「确定放弃」) → n (选否, 草稿原样保留) → Esc (再问一次) → y (这次选是,
@@ -13,12 +14,20 @@
      `TestBackend` 单测里测过; 之后重新走一遍 ⏎⏎glm⏎ 造草稿、这次真的按 s 保存 (打一次假后端的
      `update_subscription`); 3 = 虚拟模型页, 真页面: l 从 Models 进 Members、J 把第一条订阅下移
      一位、m 切换调度模式 (Sequential -> RoundRobin, 同一份草稿), s 保存 (打一次假后端的
-     `update_virtual_model`); 4 = 实时路由, 仍是占位; 1 = 回总览);
-  3. 断言: 退出码 0、进出过备用屏幕、几个页面的关键文字 (含就地操作的 toast 文案、确认放弃提示)
-     都出现过、假后端真的收到了 `update_subscription` (fable 槽模型是选中的 "glm-4.6", 见下面
-     "Kimi 备用" 的 `model_cache`) 和 `update_virtual_model` (调度模式已经从 sequential 切到
-     round_robin、订阅顺序被重排) 的请求体、空闲 2 秒几乎不输出 (按需重绘, 且这个窗口不撞上任何
-     toast 的消散动效)。
+     `update_virtual_model`); 4 = 实时路由页 (Task 7 起是真页面): 空格暂停、再按一次空格继续
+     (`Live::toggle_pause` 是纯页面内状态, 不经 `Action`, 只能靠画面文字断言走过这条路径); 1 = 回
+     总览);
+  3. 断言: 退出码 0、进出过备用屏幕、几个页面的关键文字 (含就地操作的 toast 文案、确认放弃提示、
+     实时路由页的面板标题与暂停态) 都出现过、假后端真的收到了 `update_subscription` (fable 槽模型
+     是选中的 "glm-4.6", 见下面 "Kimi 备用" 的 `model_cache`) 和 `update_virtual_model` (调度模式
+     已经从 sequential 切到 round_robin、订阅顺序被重排) 的请求体、空闲 2 秒几乎不输出 (按需重绘,
+     且这个窗口不撞上任何 toast 的消散动效)。
+
+  Task 7: 假后端的 SSE 在 1.5 秒发出状态变更事件之后, 紧接着发三组 `route_attempt_*` 事件
+  (started(model-sonnet, "1") + finished(true); started(model-opus, "2") + finished(false);
+  started(model-haiku, "3"), 不发 finished——留一条常驻的「进行中」行), 给实时路由页 (键 `4`)
+  一份看得见内容的假数据。切进这一页之后按两次空格验证暂停 / 继续 (`Live::toggle_pause` 不产出
+  `Cmd`, 纯页面内状态, 只能靠画面文字断言)。
 
 用法 (仓库根目录):
   cd src-tauri && cargo build -p cc-router-tui && cd ..
@@ -108,7 +117,7 @@ RECORDED = {}
 
 # 去掉转义序列之后必须出现过的文字
 EXPECT = [
-    "总览", "1,284", "98.6%", "智谱主号", "已连接", "订阅 (3)", "备注名", "此页面将在后续版本提供", "键位",
+    "总览", "1,284", "98.6%", "智谱主号", "已连接", "订阅 (3)", "备注名", "键位",
     "连接正常",  # test_connection 成功的 toast
     "已停用",  # set_subscription_enabled 的 toast (Kimi 备用被 e 停用)
     "确定放弃",  # M9(c): 脏页面上 q / Esc 弹出的确认放弃提示 (confirm_discard 的子串)
@@ -120,6 +129,11 @@ EXPECT = [
     # `toast_vm_saved` 的实际文案是 `{vm}：已保存` (`i18n.rs`), 用 model-fable 专属的完整文案,
     # 不是 "槽位已保存" (订阅页保存的 toast) 的子串。
     "model-fable：已保存",
+    # Task 7: 实时路由页 (键 4) 不再是占位——面板标题、暂停态提示、常驻「进行中」行 (haiku/示例中转,
+    # 没发 finished) 都要真的出现在画面上。
+    "最近 60 秒",
+    "已暂停",
+    "→ 示例中转",
 ]
 
 
@@ -175,6 +189,19 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(1.5)
             DATA["list_subscriptions"][0].update(state="rate_limited", is_dispatchable=False)
             self.wfile.write(b'event: subscription_state_changed\ndata: "1"\n\n')
+            self.wfile.flush()
+            # Task 7: 紧接着发三组路由尝试事件, 给实时路由页 (键 4) 一份看得见内容的假数据——
+            # 一对成功 / 一对失败 / 一条只有 started 没有 finished 的「进行中」常驻行。
+            for name, sub_id, success in (
+                ("model-sonnet", "1", True),
+                ("model-opus", "2", False),
+            ):
+                started = json.dumps({"subscription_id": sub_id, "virtual_model": name})
+                self.wfile.write(f"event: route_attempt_started\ndata: {started}\n\n".encode())
+                finished = json.dumps({"subscription_id": sub_id, "virtual_model": name, "success": success})
+                self.wfile.write(f"event: route_attempt_finished\ndata: {finished}\n\n".encode())
+            pending = json.dumps({"subscription_id": "3", "virtual_model": "model-haiku"})
+            self.wfile.write(f"event: route_attempt_started\ndata: {pending}\n\n".encode())
             self.wfile.flush()
             while True:
                 time.sleep(5)
@@ -235,7 +262,8 @@ def main():
     #   l 切到 Members 焦点 (选中 model-fable 的成员列表) → J 把第一条订阅下移一位 (造一个草稿,
     #   ids 从 ["1","2"] 变成 ["2","1"]) → m 切换调度模式 (Sequential -> RoundRobin, 同一份草稿)
     #   → s 保存 (真的打一次假后端的 `update_virtual_model`, 等够 0.8s 让响应 + toast + 重拉都跑完);
-    # 4 = 实时路由 (仍占位, 期待「此页面将在后续版本提供」); 1 = 回总览。
+    # 4 = 实时路由页 (Task 7 起是真页面, 期待「最近 60 秒」面板标题、haiku/示例中转 那条常驻的
+    #   「进行中」行): 空格暂停 (期待「已暂停」) → 空格再继续; 1 = 回总览。
     for keys, wait in (
         (b"2", 0.6),
         (b"j", 0.6),
@@ -262,6 +290,8 @@ def main():
         (b"m", 0.4),
         (b"s", 0.8),
         (b"4", 0.6),
+        (b" ", 0.4),  # Task 7: 暂停实时路由页
+        (b" ", 0.4),  # 再按一次继续
         (b"1", 0.6),
     ):
         os.write(fd, keys)

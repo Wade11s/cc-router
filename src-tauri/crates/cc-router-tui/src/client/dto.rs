@@ -234,6 +234,16 @@ pub struct VirtualModel {
     pub subscription_ids: Vec<String>,
 }
 
+/// `route_attempt_started` / `route_attempt_finished` 的 payload; started 没有 `success`
+/// (Task 7, 实时路由页)。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RouteAttempt {
+    pub subscription_id: String,
+    pub virtual_model: String,
+    #[serde(default)]
+    pub success: Option<bool>,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct ModelCache {
     pub fetched_at: i64,

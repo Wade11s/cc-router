@@ -13,6 +13,7 @@ use cc_router_tui::client::dto::{
     QuotaPeriod, QuotaUsage, RefreshBalanceResult, RefreshModelsResult, RoutingMode, SeriesPoint, Settings, SlotEfforts, Subscription,
     SubscriptionState, TestConnectionResult, VirtualModel, EFFORT_CHOICES,
 };
+use cc_router_tui::client::events::{ROUTE_ATTEMPT_FINISHED, ROUTE_ATTEMPT_STARTED};
 use cc_router_tui::format::Tz;
 use cc_router_tui::i18n::ZH;
 use cc_router_tui::pages::Pages;
@@ -334,9 +335,9 @@ fn help_popup_80x24() {
 #[test]
 fn placeholder_page_80x24() {
     let mut a = loaded(false);
-    // 订阅页 (Tab::Subscriptions) 从 Task 3 起、虚拟模型页 (Tab::VirtualModels) 从 Task 6 起都是
-    // 真页面了, 占位快照换一个仍然占位的标签 (Tab::Live)。
-    a.update(Action::SwitchTab(Tab::Live));
+    // 订阅页 (Tab::Subscriptions) 从 Task 3 起、虚拟模型页 (Tab::VirtualModels) 从 Task 6 起、
+    // 实时路由页 (Tab::Live) 从 Task 7 起都是真页面了, 占位快照换一个仍然占位的标签 (Tab::Logs)。
+    a.update(Action::SwitchTab(Tab::Logs));
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
@@ -1241,10 +1242,12 @@ fn only_the_visible_page_polls_and_only_while_connected() {
     let quiet: usize = (41..=80).map(|i| a.update(Action::Tick { now_ms: NOW + i * 250 }).len()).sum();
     assert_eq!(quiet, 0, "断线期间不轮询");
 
+    // Task 7: `Tab::Live` 从这时起是真页面, 会像其它真页面一样轮询——用仍是占位页的 `Tab::Logs`
+    // 继续验证「占位页不轮询」这件事。
     let mut b = loaded(false);
-    b.update(Action::SwitchTab(Tab::Live));
+    b.update(Action::SwitchTab(Tab::Logs));
     let hidden: usize = (1..=40).map(|i| b.update(Action::Tick { now_ms: NOW + i * 250 }).len()).sum();
-    assert_eq!(hidden, 0, "总览不可见时不轮询");
+    assert_eq!(hidden, 0, "占位页不轮询");
 
     // 停在订阅页时轮询发的是 Fetch::Subscriptions, 不是 Fetch::Overview。
     let mut c = loaded(false);
@@ -1254,8 +1257,9 @@ fn only_the_visible_page_polls_and_only_while_connected() {
 }
 
 /// 订阅相关的 SSE 事件在总览页 / 订阅页 (Task 5) / 虚拟模型页 (Task 6) 都会重拉订阅列表——三个
-/// 页面都在 `update()` 里消费 `client::events::SUBSCRIPTION_CHANGES`; 只有仍是占位的标签
-/// (`Tab::Live`) 才会忽略它。
+/// 页面都在 `update()` 里消费 `client::events::SUBSCRIPTION_CHANGES`。实时路由页 (Task 7 起是真
+/// 页面) 同样会忽略它——它只在 `Refresh`/`Poll`/`Connected` 时拉数据, 不消费这类 SSE (它自己的
+/// 数据来自 `route_attempt_*` 事件, 走 `on_event` 不产出 `Cmd`)。
 #[test]
 fn subscription_events_refetch_the_list_only_on_the_overview() {
     let ev = |name: &str| Action::Sse { name: name.into(), data: "\"1\"".into(), at_ms: NOW };
@@ -1545,6 +1549,26 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     let first = render(&mut m, 80, 24);
     let second = render(&mut m, 80, 24);
     assert_eq!(first, second, "虚拟模型页忙碌态应该幂等");
+
+    // Task 7: 实时路由页 — 跟随最新 (默认态)。
+    let mut n = live_fixture_app(false);
+    let first = render(&mut n, 80, 24);
+    let second = render(&mut n, 80, 24);
+    assert_eq!(first, second, "实时路由页跟随最新应该幂等");
+
+    // Task 7: 选中一行 (离开跟随最新)。
+    let mut o = live_fixture_app(false);
+    o.handle_key(key(KeyCode::Up));
+    let first = render(&mut o, 80, 24);
+    let second = render(&mut o, 80, 24);
+    assert_eq!(first, second, "实时路由页选中一行应该幂等");
+
+    // Task 7: 暂停。
+    let mut p = live_fixture_app(false);
+    p.handle_key(key(KeyCode::Char(' ')));
+    let first = render(&mut p, 80, 24);
+    let second = render(&mut p, 80, 24);
+    assert_eq!(first, second, "实时路由页暂停应该幂等");
 }
 
 /// F3: 空列表加载时没有「旧」行可以比较, 不该把更早排队、还没画出来的闪烁带到后面某一帧。
@@ -3606,4 +3630,136 @@ mod virtual_models_save_hint {
         let footer = out.lines().last().unwrap_or_else(|| panic!("{out}"));
         assert!(footer.contains(ZH.key_save), "脏页面 80 列下 s 保存不该被丢\n{footer}");
     }
+}
+
+// ---------- 实时路由页 (Task 7) ----------
+
+fn route_started_data(vm: &str, sub: &str) -> String {
+    format!(r#"{{"subscription_id":"{sub}","virtual_model":"{vm}"}}"#)
+}
+
+fn route_finished_data(vm: &str, sub: &str, ok: bool) -> String {
+    format!(r#"{{"subscription_id":"{sub}","virtual_model":"{vm}","success":{ok}}}"#)
+}
+
+fn sse_started(vm: &str, sub: &str, at_ms: i64) -> Action {
+    Action::Sse { name: ROUTE_ATTEMPT_STARTED.into(), data: route_started_data(vm, sub), at_ms }
+}
+
+fn sse_finished(vm: &str, sub: &str, ok: bool, at_ms: i64) -> Action {
+    Action::Sse { name: ROUTE_ATTEMPT_FINISHED.into(), data: route_finished_data(vm, sub, ok), at_ms }
+}
+
+/// 连上 + 切到实时路由页 + 喂三条订阅 (与 `data()`/`detail_subs()` 同一批名字, 好让快照读起来
+/// 眼熟): "1" 智谱主号 / "2" Kimi 备用 / "3" 示例中转。
+fn live_app(fx_enabled: bool) -> App {
+    let mut a = app(fx_enabled);
+    a.update(Action::Connected { app_version: VERSION.into() });
+    a.update(Action::SwitchTab(Tab::Live));
+    a.update(subs_done(
+        1,
+        vec![
+            sub("1", "智谱主号", SubscriptionState::Healthy),
+            sub("2", "Kimi 备用", SubscriptionState::RateLimited),
+            sub("3", "示例中转", SubscriptionState::AuthFailed),
+        ],
+    ));
+    a
+}
+
+/// 快照用的完整状态: 成功 / 失败 / 进行中 / 只有 finished / 被断线中断 / 一条断线分隔行, 时间戳
+/// 都相对 `NOW` 固定。先 `Tick { now_ms: NOW − 35_000 }` 再 `ConnectionLost`, 让分隔行落在中间;
+/// 最后 `Tick { now_ms: NOW }`。
+fn live_fixture_app(fx_enabled: bool) -> App {
+    let mut a = live_app(fx_enabled);
+    a.update(sse_started("model-sonnet", "1", NOW - 50_000));
+    a.update(sse_finished("model-sonnet", "1", true, NOW - 48_200)); // 成功, 1.8s
+    a.update(sse_started("model-opus", "2", NOW - 40_000));
+    a.update(sse_finished("model-opus", "2", false, NOW - 39_600)); // 失败, 0.4s
+    a.update(sse_started("model-haiku", "3", NOW - 36_000)); // 待断线中断
+    a.update(Action::Tick { now_ms: NOW - 35_000 });
+    a.update(Action::ConnectionLost); // 中断上面那条 pending, 插入一条 Gap (at_ms = NOW - 35_000)
+    a.update(sse_finished("model-fable", "1", true, NOW - 20_000)); // 只有 finished, 耗时未知
+    a.update(sse_started("model-opus", "3", NOW - 10_000)); // 进行中
+    a.update(Action::Tick { now_ms: NOW });
+    a
+}
+
+#[test]
+fn live_80x24() {
+    insta::assert_snapshot!(render(&mut live_fixture_app(false), 80, 24));
+}
+
+#[test]
+fn live_120x40() {
+    insta::assert_snapshot!(render(&mut live_fixture_app(false), 120, 40));
+}
+
+#[test]
+fn live_paused_80x24() {
+    let mut a = live_app(false);
+    a.update(sse_started("model-sonnet", "1", NOW - 5_000));
+    a.update(sse_finished("model-sonnet", "1", true, NOW - 3_000));
+    a.handle_key(key(KeyCode::Char(' '))); // 暂停
+    a.update(sse_started("model-opus", "2", NOW - 1_000)); // 暂停后又来了新事件
+    a.update(Action::Tick { now_ms: NOW });
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+/// Task 2 review 遗留的测试缺口 (a): 重连期间 `Lost` 会反复到来, 断线分隔行必须只出现一条——
+/// 走 `App` (不是直接调页面), 与真实运行时的路径一致。
+#[test]
+fn connection_lost_twice_only_adds_one_gap_row() {
+    let mut a = live_app(false);
+    a.update(sse_started("model-sonnet", "1", NOW - 5_000));
+    a.update(Action::ConnectionLost);
+    a.update(Action::ConnectionLost);
+    a.update(Action::Tick { now_ms: NOW });
+    let out = render(&mut a, 80, 24);
+    let gap_rows = out.lines().filter(|l| l.contains(ZH.live_gap)).count();
+    assert_eq!(gap_rows, 1, "两次 ConnectionLost 只该出现一条断线分隔行\n{out}");
+}
+
+/// Task 2 review 遗留的测试缺口 (b): 耗时来自 `Sse.at_ms`, 不是 `Tick` 推进的 `now_ms`。
+#[test]
+fn elapsed_time_comes_from_the_sse_at_ms_values() {
+    let mut a = live_app(false);
+    a.update(sse_started("model-sonnet", "1", NOW - 50_000));
+    a.update(sse_finished("model-sonnet", "1", true, NOW - 48_200));
+    a.update(Action::Tick { now_ms: NOW });
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains("1.8s"), "耗时应该是 finished.at_ms - started.at_ms = 1800ms = 1.8s\n{out}");
+}
+
+/// 实时路由页不可见时也要记事件 (走 `on_event` 广播), 切回来能看到之前发生的尝试。
+#[test]
+fn hidden_live_page_still_records_events() {
+    // 准备: 新建的 App 默认停在总览页 (`Tab::Overview`), 实时路由页此刻不可见, 但仍要收事件广播。
+    let mut a = app(false);
+    a.update(Action::Connected { app_version: VERSION.into() });
+    a.update(subs_done(1, vec![sub("1", "智谱主号", SubscriptionState::Healthy)]));
+    a.update(sse_started("model-sonnet", "1", NOW - 5_000));
+    a.update(sse_finished("model-sonnet", "1", true, NOW - 3_000));
+    a.update(Action::SwitchTab(Tab::Live));
+    a.update(Action::Tick { now_ms: NOW });
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains("→ 智谱主号"), "{out}");
+    assert!(out.contains('✓'), "{out}");
+}
+
+#[test]
+fn live_filter_picker_lists_virtual_models_and_subscriptions() {
+    let mut a = live_app(false);
+    a.update(vm_done(1, vm_list()));
+    let action = a.handle_key(key(KeyCode::Char('/')));
+    assert!(matches!(action, Some(Action::OpenPicker(_))), "{action:?}");
+    a.update(action.unwrap());
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(ZH.live_filter_title), "{out}");
+    assert!(out.contains(ZH.live_filter_all), "{out}");
+    for name in ["model-fable", "model-opus", "model-sonnet", "model-haiku", "model-fallback"] {
+        assert!(out.contains(name), "缺虚拟模型 {name}\n{out}");
+    }
+    assert!(out.contains("智谱主号"), "{out}");
+    assert!(out.contains("Kimi 备用"), "{out}");
 }

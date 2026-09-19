@@ -333,7 +333,7 @@ impl Subscriptions {
                 };
                 self.draft.edit(&base, |d| d.slot_efforts.set(*slot, value));
             }
-            PickerTag::VmAddSubscription { .. } => (),
+            PickerTag::VmAddSubscription { .. } | PickerTag::LiveFilter => (),
         }
     }
 

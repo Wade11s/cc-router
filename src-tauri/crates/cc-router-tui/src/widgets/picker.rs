@@ -43,6 +43,8 @@ pub enum PickerTag {
     SlotModel { sub_id: String, slot: Slot },
     SlotEffort { sub_id: String, slot: Slot },
     VmAddSubscription { vm: String },
+    /// 实时路由页 (Task 7) 按虚拟模型或订阅过滤; 日志页 (Task 8) 会复用。
+    LiveFilter,
 }
 
 impl PickerTag {
@@ -53,7 +55,7 @@ impl PickerTag {
     pub fn subscription_id(&self) -> Option<&str> {
         match self {
             PickerTag::SlotModel { sub_id, .. } | PickerTag::SlotEffort { sub_id, .. } => Some(sub_id.as_str()),
-            PickerTag::VmAddSubscription { .. } => None,
+            PickerTag::VmAddSubscription { .. } | PickerTag::LiveFilter => None,
         }
     }
 }

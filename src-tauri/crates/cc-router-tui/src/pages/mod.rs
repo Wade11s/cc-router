@@ -16,11 +16,13 @@ use crate::widgets::keybar::Hint;
 use crate::widgets::toast::ToastKind;
 
 pub mod draft;
+pub mod live;
 pub mod overview;
 pub mod placeholder;
 pub mod subscriptions;
 pub mod virtual_models;
 
+use live::Live;
 use overview::Overview;
 use placeholder::Placeholder;
 use subscriptions::Subscriptions;
@@ -117,7 +119,7 @@ pub trait Component {
     fn on_event(&mut self, _ev: StreamEvent<'_>) {}
 }
 
-/// 三个页面的集合, 取代散字段 + 两个手写的 `select_page` / `select_page_ref` helper。字段公开是
+/// 页面的集合, 取代散字段 + 两个手写的 `select_page` / `select_page_ref` helper。字段公开是
 /// 为了调用方能直接访问具体类型自己的方法 (比如 `App::draw` 取 `pages.overview.logo_area()`),
 /// 不用为每个页面特有的方法单独在这里开一个洞。
 #[derive(Default)]
@@ -125,6 +127,7 @@ pub struct Pages {
     pub overview: Overview,
     pub subscriptions: Subscriptions,
     pub virtual_models: VirtualModels,
+    pub live: Live,
     pub placeholder: Placeholder,
 }
 
@@ -136,7 +139,8 @@ impl Pages {
             Tab::Overview => &self.overview,
             Tab::Subscriptions => &self.subscriptions,
             Tab::VirtualModels => &self.virtual_models,
-            Tab::Live | Tab::Logs => &self.placeholder,
+            Tab::Live => &self.live,
+            Tab::Logs => &self.placeholder,
         }
     }
 
@@ -146,17 +150,19 @@ impl Pages {
             Tab::Overview => &mut self.overview,
             Tab::Subscriptions => &mut self.subscriptions,
             Tab::VirtualModels => &mut self.virtual_models,
-            Tab::Live | Tab::Logs => &mut self.placeholder,
+            Tab::Live => &mut self.live,
+            Tab::Logs => &mut self.placeholder,
         }
     }
 
-    /// 给每个页面各恰好一次的机会 (占位页被 `Live` / `Logs` 两个 `Tab` 共用, 这里也只调一次,
-    /// 不是两次)。`App::notify_subscriptions_changed` 用它取代手写的「一个个列出字段名」, 以后加
-    /// 新页面只改这一处。
+    /// 给每个页面各恰好一次的机会 (占位页从 Task 7 起只被 `Tab::Logs` 一个 `Tab` 使用)。
+    /// `App::notify_subscriptions_changed` 用它取代手写的「一个个列出字段名」, 以后加新页面只改
+    /// 这一处。
     pub fn for_each_mut(&mut self, mut f: impl FnMut(&mut dyn Component)) {
         f(&mut self.overview);
         f(&mut self.subscriptions);
         f(&mut self.virtual_models);
+        f(&mut self.live);
         f(&mut self.placeholder);
     }
 }
@@ -170,6 +176,6 @@ mod tests {
         let mut pages = Pages::default();
         let mut count = 0;
         pages.for_each_mut(|_| count += 1);
-        assert_eq!(count, 4, "总览 / 订阅 / 虚拟模型 / 占位四个页面字段各恰好一次, 占位页不该因为被多个 Tab 共用就多算");
+        assert_eq!(count, 5, "总览 / 订阅 / 虚拟模型 / 实时路由 / 占位五个页面字段各恰好一次");
     }
 }

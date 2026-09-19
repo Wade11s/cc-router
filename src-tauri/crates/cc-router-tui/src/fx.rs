@@ -23,6 +23,8 @@ pub mod ms {
     pub const TOAST_OUT: u32 = 300;
     pub const ROW_CHANGED: u32 = 600;
     pub const VALUE_CHANGED: u32 = 400;
+    /// 实时路由页新行的淡入 (Task 7)。
+    pub const ROW_NEW: u32 = 300;
 }
 
 // `Default` 只是为了满足 `EffectManager<K>: Default` 的派生约束 (tachyonfx 0.25), 没有语义。
@@ -36,6 +38,8 @@ pub enum FxKey {
     /// 订阅 id
     Row(String),
     Value(&'static str),
+    /// 实时路由的条目序号 (Task 7)。
+    LiveRow(u64),
 }
 
 /// 切页方向: 往右边的标签走是 `Forward`。
@@ -149,6 +153,12 @@ impl Fx {
         let effect = fx::fade_from_fg(color, (ms::VALUE_CHANGED, Interpolation::QuadOut)).with_area(cell);
         self.add(FxKey::Value(key), effect);
     }
+
+    /// 实时路由的新行从强调色淡入 (Task 7): 视线自然落到刚出现的这一条上, 不需要循环效果。
+    pub fn row_new(&mut self, seq: u64, row: Rect, from: Color) {
+        let effect = fx::fade_from_fg(from, (ms::ROW_NEW, Interpolation::QuadOut)).with_area(row);
+        self.add(FxKey::LiveRow(seq), effect);
+    }
 }
 
 #[cfg(test)]
@@ -173,6 +183,7 @@ mod tests {
             ("toast_out", ms::TOAST_OUT, Box::new(|f| f.toast_out(PART))),
             ("row_changed", ms::ROW_CHANGED, Box::new(|f| f.row_changed("id", PART, Color::Red))),
             ("value_changed", ms::VALUE_CHANGED, Box::new(|f| f.value_changed("requests", PART, Color::Red))),
+            ("row_new", ms::ROW_NEW, Box::new(|f| f.row_new(1, PART, Color::Red))),
         ]
     }
 

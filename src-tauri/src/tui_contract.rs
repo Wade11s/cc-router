@@ -461,6 +461,34 @@ fn tui_event_names_are_bridged() {
     }
 }
 
+/// `route_attempt_payload` 的线上形状 (Task 7): started 的键恰好是 `subscription_id` /
+/// `virtual_model` (没有 `success`), finished 多一个 `success`; 两者都能解析成 `dto::RouteAttempt`。
+#[test]
+fn route_attempt_payloads_match() {
+    use crate::proxy::pipeline::route_attempt_payload;
+    use crate::virtual_model::model::VirtualModelName;
+
+    let id = uuid::Uuid::nil();
+
+    let started = route_attempt_payload(id, VirtualModelName::Sonnet, None);
+    let mut started_keys: Vec<&str> = started.as_object().unwrap().keys().map(String::as_str).collect();
+    started_keys.sort_unstable();
+    assert_eq!(started_keys, vec!["subscription_id", "virtual_model"], "started payload 不该带 success 键");
+
+    let finished = route_attempt_payload(id, VirtualModelName::Sonnet, Some(true));
+    let mut finished_keys: Vec<&str> = finished.as_object().unwrap().keys().map(String::as_str).collect();
+    finished_keys.sort_unstable();
+    assert_eq!(finished_keys, vec!["subscription_id", "success", "virtual_model"]);
+
+    let started_view: dto::RouteAttempt = through_json(&started);
+    assert_eq!(started_view.virtual_model, "model-sonnet");
+    assert_eq!(started_view.success, None);
+
+    let finished_view: dto::RouteAttempt = through_json(&finished);
+    assert_eq!(finished_view.virtual_model, "model-sonnet");
+    assert_eq!(finished_view.success, Some(true));
+}
+
 /// `RequestLogDto` 全部字段为 `Some` 时, `dto::RequestLog` 逐字段接住 (Task 4)。
 #[test]
 fn request_log_matches() {

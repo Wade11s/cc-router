@@ -102,24 +102,33 @@ fn truncate_body(text: &str, limit: usize) -> String {
     out
 }
 
+/// 路由尝试事件的 payload。`success` 为 `None` 时不带这个键 (started 事件)。抽出来是为了让
+/// `tui_contract.rs` 用真实的构造函数锁住线上形状 (Task 7)。
+pub(crate) fn route_attempt_payload(
+    sub_id: Uuid,
+    vm_name: VirtualModelName,
+    success: Option<bool>,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "subscription_id": sub_id.to_string(),
+        "virtual_model": vm_name.as_str(),
+    });
+    if let Some(success) = success {
+        payload["success"] = serde_json::Value::Bool(success);
+    }
+    payload
+}
+
 fn emit_attempt_started(state: &AppState, sub_id: Uuid, vm_name: VirtualModelName) {
-    let _ = state.app_handle.emit(
-        "route_attempt_started",
-        serde_json::json!({
-            "subscription_id": sub_id.to_string(),
-            "virtual_model": vm_name.as_str(),
-        }),
-    );
+    let _ = state
+        .app_handle
+        .emit("route_attempt_started", route_attempt_payload(sub_id, vm_name, None));
 }
 
 fn emit_attempt_finished(state: &AppState, sub_id: Uuid, vm_name: VirtualModelName, success: bool) {
     let _ = state.app_handle.emit(
         "route_attempt_finished",
-        serde_json::json!({
-            "subscription_id": sub_id.to_string(),
-            "virtual_model": vm_name.as_str(),
-            "success": success,
-        }),
+        route_attempt_payload(sub_id, vm_name, Some(success)),
     );
 }
 
