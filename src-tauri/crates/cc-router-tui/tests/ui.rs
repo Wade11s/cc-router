@@ -1478,12 +1478,16 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     assert_eq!(first, second, "picker 弹窗打开的状态应该幂等");
 
     // Task 1: 详情弹窗打开且已滚动 2 行的状态 (`DetailState::scroll` 参与相等比较, `draw` 每次都要
-    // 用同一份折行结果重算滚动条)。
+    // 用同一份折行结果重算滚动条)。`DetailState::new` 的 `last_total` 初值是 0, 在第一次
+    // `draw`/`render` 落地真实的 `last_rows`/`last_total` 之前 `max_scroll()` 恒为 0, 这时候按
+    // `j` 会被原地夹住——所以必须先画一帧, `j` 才会真的移动。
     let mut n = loaded(false);
     n.update(Action::OpenDetail(detail_fixture()));
+    let opened = render(&mut n, 80, 24);
     n.handle_key(key(KeyCode::Char('j')));
     n.handle_key(key(KeyCode::Char('j')));
     let first = render(&mut n, 80, 24);
+    assert_ne!(opened, first, "滚动后画面应该真的变了, 不能退化成又在测未滚动的状态");
     let second = render(&mut n, 80, 24);
     assert_eq!(first, second, "详情弹窗滚动后的状态应该幂等");
 
