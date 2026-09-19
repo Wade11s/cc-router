@@ -2,11 +2,11 @@
 """cc-router-tui 的伪终端冒烟测试 (仅 macOS / Linux)。
 
 单测用 TestBackend, 测不到「真的进备用屏幕、真的读键盘、真的退得出来」这一段。这个脚本:
-  1. 起一个假的 cc-router 后端 (11 个 command + 事件流), 在临时目录写一份 runtime.json, 记录
-     `update_subscription` / `update_virtual_model` 收到的原始请求体供事后断言;
+  1. 起一个假的 cc-router 后端 (12 个 command + 事件流), 在临时目录写一份 runtime.json, 记录
+     `update_subscription` / `update_virtual_model` / `list_requests` 收到的原始请求体供事后断言;
   2. 在 80x24 的伪终端里跑 TUI, 依次按
      2 / j / t / e / ? / Esc / ⏎⏎glm⏎ / q / n / Esc / y / ⏎⏎glm⏎ / s / 3 / l / J / m / s / 4 /
-     空格 / 空格 / 1 / q
+     空格 / 空格 / ⏎ / ⏎ / jj / Esc / 1 / q
      (2 = 订阅页; j 选中第二条 "Kimi 备用"; t = 测试连接, e = 就地启停;
      ⏎⏎glm⏎ 造一份草稿 (改 fable 槽模型) 之后先走一遍 fix round final (M9c) 加的放弃流程练习——
      q (脏页面上 q 会先问「确定放弃」) → n (选否, 草稿原样保留) → Esc (再问一次) → y (这次选是,
@@ -15,19 +15,26 @@
      `update_subscription`); 3 = 虚拟模型页, 真页面: l 从 Models 进 Members、J 把第一条订阅下移
      一位、m 切换调度模式 (Sequential -> RoundRobin, 同一份草稿), s 保存 (打一次假后端的
      `update_virtual_model`); 4 = 实时路由页 (Task 7 起是真页面): 空格暂停、再按一次空格继续
-     (`Live::toggle_pause` 是纯页面内状态, 不经 `Action`, 只能靠画面文字断言走过这条路径); 1 = 回
-     总览);
+     (`Live::toggle_pause` 是纯页面内状态, 不经 `Action`, 只能靠画面文字断言走过这条路径);
+     Task 8: ⏎ 跟随最新时目标是最后一个尝试 (haiku/示例中转, 没发 finished, 订阅 "3") ——跳到日志页
+     并带着这条订阅的过滤条件重新发起 `list_requests`; 日志页里再按 ⏎ 打开第一条 (成功, 带
+     effort/工具字段) 的详情弹窗、jj 往下滚两格 (露出「工具调用」小节)、Esc 关掉弹窗; 1 = 回总览);
   3. 断言: 退出码 0、进出过备用屏幕、几个页面的关键文字 (含就地操作的 toast 文案、确认放弃提示、
-     实时路由页的面板标题与暂停态) 都出现过、假后端真的收到了 `update_subscription` (fable 槽模型
-     是选中的 "glm-4.6", 见下面 "Kimi 备用" 的 `model_cache`) 和 `update_virtual_model` (调度模式
-     已经从 sequential 切到 round_robin、订阅顺序被重排) 的请求体、空闲 2 秒几乎不输出 (按需重绘,
-     且这个窗口不撞上任何 toast 的消散动效)。
+     实时路由页的面板标题与暂停态、日志页的总数与详情弹窗内容) 都出现过、假后端真的收到了
+     `update_subscription` (fable 槽模型是选中的 "glm-4.6", 见下面 "Kimi 备用" 的 `model_cache`)、
+     `update_virtual_model` (调度模式已经从 sequential 切到 round_robin、订阅顺序被重排) 与
+     `list_requests` (pageSize=50、按订阅 "3" 过滤) 的请求体、空闲 2 秒几乎不输出 (按需重绘, 且这个
+     窗口不撞上任何 toast 的消散动效)。
 
   Task 7: 假后端的 SSE 在 1.5 秒发出状态变更事件之后, 紧接着发三组 `route_attempt_*` 事件
   (started(model-sonnet, "1") + finished(true); started(model-opus, "2") + finished(false);
   started(model-haiku, "3"), 不发 finished——留一条常驻的「进行中」行), 给实时路由页 (键 `4`)
   一份看得见内容的假数据。切进这一页之后按两次空格验证暂停 / 继续 (`Live::toggle_pause` 不产出
   `Cmd`, 纯页面内状态, 只能靠画面文字断言)。
+
+  Task 8: 假后端新增 `list_requests`, 固定返回三条记录 (成功, 带 effort 与工具字段 / 失败 429,
+  带 error_message / 超时) 、`total: 3`, 不管请求体里的过滤条件是什么都返回同一份——与其它假
+  command 同一套「忽略参数, 返回固定数据」写法, 过滤条件本身只靠断言收到的请求体来验证。
 
 用法 (仓库根目录):
   cd src-tauri && cargo build -p cc-router-tui && cd ..
@@ -108,6 +115,35 @@ DATA = {
         {"name": "model-haiku", "mode": "sequential", "subscription_ids": []},
         {"name": "model-fallback", "mode": "sequential", "subscription_ids": ["3"]},
     ],
+    # Task 8: 日志页 (键 4 → ⏎ 跳过去) 的假数据。不管请求体里的 `filters` 是什么都返回同一份
+    # (与其它假 command 一致); 过滤条件本身只靠 `RECORDED["list_requests"]` 断言。三条分别是
+    # 成功 (带 effort + 工具字段, 供详情弹窗展示「工具调用」小节) / 失败 429 (带 error_message) /
+    # 超时。
+    "list_requests": {
+        "items": [
+            {
+                "id": "req-1", "timestamp": NOW_MS - 60000, "virtual_model_name": "model-haiku",
+                "subscription_id": "3", "provider_id": "p", "endpoint_id": "default",
+                "real_model_name": "c", "is_streaming": True, "status": "success", "http_status": 200,
+                "total_latency_ms": 1800, "input_tokens": 12300, "output_tokens": 3400,
+                "client_effort": "high", "effective_effort": "high", "effort_source": "slot",
+                "upstream_effort": "high", "stop_reason": "end_turn", "tools_offered_count": 2,
+                "tool_result_count": 1, "tool_use_count": 2, "tool_use_names": "[\"Read\",\"Bash\"]",
+            },
+            {
+                "id": "req-2", "timestamp": NOW_MS - 120000, "virtual_model_name": "model-opus",
+                "subscription_id": "2", "provider_id": "p", "endpoint_id": "default",
+                "real_model_name": "b", "is_streaming": False, "status": "error", "http_status": 429,
+                "error_message": "触发限流",
+            },
+            {
+                "id": "req-3", "timestamp": NOW_MS - 180000, "virtual_model_name": "model-haiku",
+                "subscription_id": "3", "provider_id": "p", "endpoint_id": "default",
+                "real_model_name": "c", "is_streaming": False, "status": "timeout",
+            },
+        ],
+        "total": 3,
+    },
 }
 
 # M9(b) (fix round final): 假后端把 `update_subscription` / `update_virtual_model` 真正收到的请求体
@@ -134,6 +170,11 @@ EXPECT = [
     "最近 60 秒",
     "已暂停",
     "→ 示例中转",
+    # Task 8: 从实时路由页 ⏎ 跳到日志页 (带着订阅 "3" 的过滤, 假后端固定返回 3 条) + 打开第一条
+    # (成功, 带工具字段) 的详情弹窗。
+    "共 3 条",
+    "请求详情",
+    "工具调用",
 ]
 
 
@@ -172,6 +213,13 @@ class Handler(BaseHTTPRequestHandler):
                     vm["mode"] = input_.get("mode", vm["mode"])
                     vm["subscription_ids"] = input_.get("subscription_ids", vm["subscription_ids"])
             body = json.dumps(None).encode()
+        elif name == "list_requests":
+            # Task 8: 记下收到的查询 (分页大小 + 过滤条件), 脚本事后断言它们真的是日志页发出的那份
+            # (只保留最后一次, 与 `update_subscription`/`update_virtual_model` 同一套约定)。不管
+            # 参数是什么都返回固定的三条假数据——过滤条件本身不在假后端里真的生效。
+            req = json.loads(raw or b"{}")
+            RECORDED["list_requests"] = req
+            body = json.dumps(DATA[name]).encode()
         else:
             body = json.dumps(DATA[name]).encode()
         self.send_response(200)
@@ -263,7 +311,12 @@ def main():
     #   ids 从 ["1","2"] 变成 ["2","1"]) → m 切换调度模式 (Sequential -> RoundRobin, 同一份草稿)
     #   → s 保存 (真的打一次假后端的 `update_virtual_model`, 等够 0.8s 让响应 + toast + 重拉都跑完);
     # 4 = 实时路由页 (Task 7 起是真页面, 期待「最近 60 秒」面板标题、haiku/示例中转 那条常驻的
-    #   「进行中」行): 空格暂停 (期待「已暂停」) → 空格再继续; 1 = 回总览。
+    #   「进行中」行): 空格暂停 (期待「已暂停」) → 空格再继续。
+    #
+    # Task 8: 仍在实时路由页, 跟随最新 (没有选中任何一行) → ⏎ 应该取最后一个可见尝试 (haiku/
+    #   示例中转, 订阅 "3") 的订阅, 跳到日志页并带着这条过滤重新发起 `list_requests` (等够 0.8s
+    #   让响应落地、期待「共 3 条」) → ⏎ 打开第一条 (成功, 带 effort/工具字段) 的详情弹窗 (期待
+    #   「请求详情」「工具调用」) → jj 往下滚两格 (露出「工具调用」小节, 单格还不够) → Esc 关掉弹窗; 1 = 回总览。
     for keys, wait in (
         (b"2", 0.6),
         (b"j", 0.6),
@@ -292,6 +345,13 @@ def main():
         (b"4", 0.6),
         (b" ", 0.4),  # Task 7: 暂停实时路由页
         (b" ", 0.4),  # 再按一次继续
+        (b"\r", 0.8),  # Task 8: 跟随最新时 ⏎ 跳到日志页 (目标订阅 "3"), 等响应落地
+        (b"\r", 0.4),  # 打开第一条的详情
+        # req-1 的「基本信息」+「思考强度」两节加起来就有 16 行, 正好填满 80×24 下详情弹窗一屏
+        # (last_rows=16)——「工具调用」小节的标题在这之后, 单按一次 j (scroll=1) 还看不到, 两次
+        # (scroll=2) 才够, 与 `widgets::detail::area`/`draw` 的行高计算对齐, 不是随手选的数字。
+        (b"jj", 0.3),
+        (b"\x1b", 0.4),  # 关掉详情弹窗
         (b"1", 0.6),
     ):
         os.write(fd, keys)
@@ -362,6 +422,18 @@ def main():
         if input_.get("subscription_ids") != ["2", "1"]:
             failures.append(f"update_virtual_model 的 subscription_ids 应该是 [\"2\", \"1\"] (J 下移过一次), 实际 {input_.get('subscription_ids')!r}")
 
+    # Task 8: 实时路由页 ⏎ 跳到日志页应该带着目标订阅的过滤重新发起 `list_requests` (page 1,
+    # pageSize 固定 50) ——同样直接断言收到的请求体, 不只看 toast/画面文字。
+    requests_payload = RECORDED.get("list_requests")
+    if not requests_payload:
+        failures.append("假后端没有收到 list_requests 请求")
+    else:
+        if requests_payload.get("pageSize") != 50:
+            failures.append(f"list_requests 的 pageSize 应该是 50, 实际 {requests_payload.get('pageSize')!r}")
+        sub_filter = requests_payload.get("filters", {}).get("subscription_id")
+        if sub_filter != "3":
+            failures.append(f"list_requests 的 filters.subscription_id 应该是 \"3\" (⏎ 跳转日志页时带的过滤), 实际 {sub_filter!r}")
+
     # 空闲时只有 250ms tick 带来的零星重绘 (冷却倒计时每秒变一格)。几 KB 以上说明在持续全速重画
     # (含撞上了某条 toast 还没放完的消散动效)。
     if idle_bytes > 4000:
@@ -370,6 +442,7 @@ def main():
     print(f"输出 {len(out)} 字节, 空闲 2 秒 {idle_bytes} 字节")
     print(f"记录的请求体: update_subscription={sub_payload}")
     print(f"记录的请求体: update_virtual_model={vm_payload}")
+    print(f"记录的请求体: list_requests={requests_payload}")
     if failures:
         sys.exit("冒烟失败:\n  " + "\n  ".join(failures))
     print("冒烟通过")

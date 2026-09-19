@@ -273,6 +273,22 @@ impl Live {
         }
     }
 
+    /// `⏎`: 选中的条目是尝试时取它的订阅; 跟随最新时取最后一个**可见**的尝试的订阅 (尊重当前的
+    /// 暂停 / 过滤状态——用户看到的最后一行是什么, 跳转就该跟着那一行走)。选中的是 `Gap`, 或者
+    /// 压根没有任何尝试, 返回 `None`。
+    fn target_subscription_for_logs(&self) -> Option<String> {
+        match self.selected {
+            Some(seq) => match &self.entries.iter().find(|e| e.seq == seq)?.kind {
+                EntryKind::Attempt { sub_id, .. } => Some(sub_id.clone()),
+                EntryKind::Gap => None,
+            },
+            None => self.visible_indices().iter().rev().find_map(|&i| match &self.entries[i].kind {
+                EntryKind::Attempt { sub_id, .. } => Some(sub_id.clone()),
+                EntryKind::Gap => None,
+            }),
+        }
+    }
+
     /// `/`: 打开过滤选择弹窗。虚拟模型名取 `store.virtual_models()` 的后端顺序; 未加载时改用
     /// 条目里出现过的虚拟模型名, 按首次出现排序。
     fn open_filter_picker(&self, store: &Store, s: &'static Strings) -> Action {
@@ -308,6 +324,13 @@ impl Live {
             Some(LiveFilter::Subscription(id)) => format!("sub:{id}"),
         };
         Action::OpenPicker(PickerSpec { tag: PickerTag::LiveFilter, title: s.live_filter_title.to_string(), items, allow_custom: false, initial })
+    }
+
+    /// 测试专用: 当前缓冲的条目数 (含 `Gap` 分隔行, 不受暂停 / 过滤影响)。Task 8 起用它取代已删除
+    /// 的 `Placeholder::seen`, 验证事件广播确实到达了不可见的实时路由页。
+    #[cfg(test)]
+    pub(crate) fn entry_count(&self) -> usize {
+        self.entries.len()
     }
 
     fn draw_spark(&self, frame: &mut Frame, area: Rect, ctx: &DrawCtx) {
@@ -518,6 +541,7 @@ impl Component for Live {
                 None
             }
             KeyCode::Char('/') => Some(self.open_filter_picker(store, s)),
+            KeyCode::Enter => self.target_subscription_for_logs().map(|subscription_id| Action::OpenLogsFor { subscription_id }),
             KeyCode::Esc => {
                 if self.filter.is_some() {
                     self.filter = None;
@@ -558,6 +582,7 @@ impl Component for Live {
         if self.selected.is_some() {
             hints.push(("G", s.key_latest));
         }
+        hints.push(("⏎", s.key_logs));
         hints.push(("/", s.key_filter));
         if self.filter.is_some() {
             hints.push(("Esc", s.key_clear_filter));
@@ -793,6 +818,44 @@ mod tests {
         assert_eq!(buckets[59], 1, "now-200ms 与 now 同一秒");
         assert_eq!(buckets[58], 2, "now-1500ms 落在前一秒, 两条");
         assert_eq!(buckets.iter().sum::<u64>(), 3, "61 秒前的那条应该被忽略");
+    }
+
+    /// Task 8: `⏎` 的跳转目标——跟随最新时取最后一个可见尝试的订阅, 选中某一行时取它自己的订阅,
+    /// 选中 `Gap` 或者压根没有任何尝试时返回 `None`。
+    #[test]
+    fn enter_targets_the_selected_subscription_or_the_last_visible_one_in_follow_mode() {
+        let mut live = Live::default();
+        let store = Store::default();
+
+        assert_eq!(live.handle_key(key(KeyCode::Enter), &store, &ZH), None, "没有任何尝试时应该返回 None");
+
+        send_started(&mut live, "model-sonnet", "sub-1", NOW);
+        send_started(&mut live, "model-opus", "sub-2", NOW + 10);
+
+        assert_eq!(
+            live.handle_key(key(KeyCode::Enter), &store, &ZH),
+            Some(Action::OpenLogsFor { subscription_id: "sub-2".into() }),
+            "跟随最新时应该取最后一个可见尝试的订阅"
+        );
+
+        live.handle_key(key(KeyCode::Up), &store, &ZH); // 选中最后一条 (sub-2)
+        assert_eq!(live.handle_key(key(KeyCode::Enter), &store, &ZH), Some(Action::OpenLogsFor { subscription_id: "sub-2".into() }));
+
+        live.handle_key(key(KeyCode::Up), &store, &ZH); // 选中 sub-1
+        assert_eq!(live.handle_key(key(KeyCode::Enter), &store, &ZH), Some(Action::OpenLogsFor { subscription_id: "sub-1".into() }));
+
+        send_lost(&mut live, NOW + 100); // 插入一条 Gap, 两条 Pending 都变成 Interrupted
+        assert_eq!(
+            live.handle_key(key(KeyCode::Enter), &store, &ZH),
+            Some(Action::OpenLogsFor { subscription_id: "sub-1".into() }),
+            "断线不该改变已经选中的这一行"
+        );
+
+        live.handle_key(key(KeyCode::Down), &store, &ZH); // 移到 sub-2
+        assert_eq!(live.handle_key(key(KeyCode::Enter), &store, &ZH), Some(Action::OpenLogsFor { subscription_id: "sub-2".into() }));
+
+        live.handle_key(key(KeyCode::Down), &store, &ZH); // 移到 Gap 行
+        assert_eq!(live.handle_key(key(KeyCode::Enter), &store, &ZH), None, "选中 Gap 应该返回 None");
     }
 
     #[test]

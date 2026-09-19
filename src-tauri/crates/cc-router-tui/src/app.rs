@@ -473,10 +473,10 @@ impl App {
                     if self.conn == Conn::Connected {
                         self.push_toast(Toast::new(ToastKind::Error, (self.s.toast_load_failed)(&message)));
                     }
-                    // 加载结果永远交给发起它的页面, 哪怕是失败——日志页 (Task 8 起) 要据此停掉
-                    // 「加载中」状态; 本 Task 里 `Tab::Logs` 还是占位页, 会忽略这条转发。其它三种
-                    // 加载没有任何页面需要在失败时收到通知 (Overview/Subscriptions/VirtualModels
-                    // 都只在 Ok 时才有事要做), 维持原样不转发。
+                    // 加载结果永远交给发起它的页面, 哪怕是失败——日志页 (Task 8) 据此停掉「加载中」
+                    // 状态 (toast 已经在上面弹过, 页面自己不用再弹一次)。其它三种加载没有任何页面
+                    // 需要在失败时收到通知 (Overview/Subscriptions/VirtualModels 都只在 Ok 时才有事
+                    // 要做), 维持原样不转发。
                     if fetch.kind() == FetchKind::Requests {
                         let action = Action::FetchDone { fetch, issued, result: Err(message) };
                         self.update_page(Tab::Logs, &action)
@@ -532,8 +532,8 @@ impl App {
                     }
                     Vec::new()
                 }
-                // 日志页 (Task 8 起) 自己的分页 / 过滤状态——不进 `Store`, 加载结果原样转给发起它
-                // 的页面; 本 Task 里 `Tab::Logs` 还是占位页, 会忽略这条转发。
+                // 日志页 (Task 8) 自己的分页 / 过滤状态——不进 `Store`, 加载结果原样转给发起它的
+                // 页面 (哪怕它此刻不可见: 用户翻页/改过滤之后立刻切走是常见操作)。
                 Ok(FetchData::Requests(page)) => {
                     debug_assert_eq!(fetch.kind(), FetchKind::Requests, "spawn_fetch 应该保证 FetchData::Requests 只配 Fetch::Requests");
                     let action = Action::FetchDone { fetch, issued, result: Ok(FetchData::Requests(page)) };
@@ -564,6 +564,16 @@ impl App {
             Action::Notify { kind, text } => {
                 self.push_toast(Toast::new(kind, text));
                 Vec::new()
+            }
+            Action::OpenLogsFor { subscription_id } => {
+                self.pages.logs.show_subscription(&subscription_id);
+                if self.tab == Tab::Logs {
+                    self.update_page(Tab::Logs, &Action::Refresh)
+                } else {
+                    // 切页本身会 (可见页变了 + 已连接) 补一次 `Refresh`, 这次会发出
+                    // `show_subscription` 刚设好的新查询——不需要在这里再手动拉一次。
+                    self.update(Action::SwitchTab(Tab::Logs))
+                }
             }
         }
     }
@@ -701,11 +711,11 @@ impl App {
     }
 }
 
-// 「未保存修改 → 先确认」流程靠 `pages::placeholder::Placeholder` 的 `#[cfg(test)]` 专用钩子
-// (`set_force_dirty`) 验证——那个钩子只在编译本 crate 的单测时存在 (见该文件顶部的注释),
-// `tests/ui.rs` 这样的集成测试够不到它, 所以这批用例必须留在这个 `mod tests` 里, 不能挪到
-// `tests/ui.rs`。不需要这个钩子的弹窗测试 (帮助弹窗按键、确认弹窗渲染、帮助高度守卫、快照) 仍然
-// 放在 `tests/ui.rs`, 跟其它界面测试一起维护。
+// 「未保存修改 → 先确认」流程靠 `pages::logs::Logs` 的 `#[cfg(test)]` 专用钩子 (`set_force_dirty`)
+// 验证——那个钩子只在编译本 crate 的单测时存在 (原样从已删除的 `pages::placeholder::Placeholder`
+// 搬过来, 见 `logs.rs` 顶部的注释), `tests/ui.rs` 这样的集成测试够不到它, 所以这批用例必须留在
+// 这个 `mod tests` 里, 不能挪到 `tests/ui.rs`。不需要这个钩子的弹窗测试 (帮助弹窗按键、确认弹窗
+// 渲染、帮助高度守卫、快照) 仍然放在 `tests/ui.rs`, 跟其它界面测试一起维护。
 #[cfg(test)]
 mod tests {
     use ratatui::backend::TestBackend;
@@ -713,7 +723,7 @@ mod tests {
 
     use super::*;
     use crate::action::Tab;
-    use crate::client::events::SUBSCRIPTION_STATE_CHANGED;
+    use crate::client::events::{ROUTE_ATTEMPT_STARTED, SUBSCRIPTION_STATE_CHANGED};
     use crate::i18n::ZH;
     use crate::widgets::detail::{DetailRow, DetailSpec, Tone};
     use crate::widgets::picker;
@@ -732,13 +742,13 @@ mod tests {
         })
     }
 
-    /// 切到占位页 (`Tab::Logs`) 并把它标记成 dirty——Task 7 起 `Tab::Live` 是真页面
-    /// (`pages::live::Live`), 不再挂占位组件, 够不着这个测试专用钩子; 现在只剩 `Tab::Logs`
-    /// 还是占位页 (Task 8 前)。
+    /// 切到日志页 (`Tab::Logs`) 并把它标记成 dirty——日志页本身是纯只读页面, 永远不会真的变脏,
+    /// `set_force_dirty` 是它从已删除的占位页原样带过来的测试专用钩子, 专门给这批「未保存修改 →
+    /// 先确认」流程的用例用。
     fn dirty_app() -> App {
         let mut a = app();
         a.update(Action::SwitchTab(Tab::Logs));
-        a.pages.placeholder.set_force_dirty(true);
+        a.pages.logs.set_force_dirty(true);
         a
     }
 
@@ -795,11 +805,11 @@ mod tests {
         let mut a = dirty_app();
         assert!(a.update(Action::SwitchTab(Tab::Overview)).is_empty(), "dirty 时切页应该先确认");
         assert_eq!(a.tab, Tab::Logs, "确认之前不该真的切走");
-        assert!(a.pages.placeholder.is_dirty());
+        assert!(a.pages.logs.is_dirty());
 
         a.update(Action::Confirmed(Box::new(Action::SwitchTab(Tab::Overview))));
         assert_eq!(a.tab, Tab::Overview, "y 之后应该真的切过去");
-        assert!(!a.pages.placeholder.is_dirty(), "y 之后原页面的草稿应该被丢弃");
+        assert!(!a.pages.logs.is_dirty(), "y 之后原页面的草稿应该被丢弃");
     }
 
     /// Fix round E: `guard_dirty` 之前只有 `Quit` / `SwitchTab` 两条路径被测过, `NextTab` /
@@ -824,9 +834,9 @@ mod tests {
     #[test]
     fn discard_draft_clears_the_current_pages_dirty_flag_without_a_cmd() {
         let mut a = dirty_app();
-        assert!(a.pages.placeholder.is_dirty());
+        assert!(a.pages.logs.is_dirty());
         assert!(a.update(Action::DiscardDraft).is_empty(), "不应该产出任何 Cmd");
-        assert!(!a.pages.placeholder.is_dirty(), "草稿应该被丢弃");
+        assert!(!a.pages.logs.is_dirty(), "草稿应该被丢弃");
     }
 
     /// Fix round C: 打开一个新弹窗 (确认 / picker) 时, 如果已经有另一个弹窗开着, 应该直接替换它,
@@ -867,25 +877,30 @@ mod tests {
         assert!(a.popup_area.is_none(), "同样应该清掉 picker 弹窗的 popup_area");
     }
 
-    /// Task 2: 事件流上的消息与断线要广播给**所有**页面 (含不可见的, 靠占位页
-    /// `pages::placeholder::Placeholder::seen` 这个测试专用钩子验证), 但只有可见页才产出 `Cmd`。
+    /// Task 2: 事件流上的消息与断线要广播给**所有**页面 (含不可见的), 但只有可见页才产出 `Cmd`。
     ///
-    /// Task 7 改写: `Tab::Live` 从这时起是真页面 (`pages::live::Live`), 不再挂占位组件——切进
-    /// 它会像订阅页/虚拟模型页一样触发一次 `Refresh`, 返回它自己的 `Cmd`; 占位页现在只服务
-    /// `Tab::Logs` (Task 8 前), 用它继续验证「广播到不可见页」这件事。
+    /// Task 8 改写: 占位页 (`pages::placeholder::Placeholder::seen`) 已经随 `Tab::Logs` 换成真正
+    /// 的日志页一起删除——「广播到不可见页」现在靠实时路由页的 `Live::entry_count` (Task 8 新增的
+    /// `#[cfg(test)]` 钩子) 验证: 总览页可见时发一条 `route_attempt_started`, 总览页不消费它 (不
+    /// 产出 `Cmd`), 但不可见的实时路由页应该已经把这次尝试记进了自己的缓冲。
     #[test]
     fn stream_events_reach_hidden_pages_but_only_the_visible_page_returns_cmds() {
         let mut a = app();
         a.update(Action::Connected { app_version: VERSION.into() });
         assert_eq!(a.tab, Tab::Overview, "准备: 当前标签是总览");
 
-        // 1) 总览可见: 订阅相关的事件应该让它产出一次 Fetch::Subscriptions, 占位页 (`Tab::Logs`,
-        //    此时不可见) 也应该收到同一条广播。
+        // 1) 总览可见: 订阅相关的事件应该让它产出一次 Fetch::Subscriptions。
         let cmds = a.update(Action::Sse { name: SUBSCRIPTION_STATE_CHANGED.into(), data: "\"1\"".into(), at_ms: NOW });
         assert_eq!(cmds, vec![Cmd::Fetch(Fetch::Subscriptions)]);
-        assert_eq!(a.pages.placeholder.seen, vec![SUBSCRIPTION_STATE_CHANGED.to_string()]);
 
-        // 2) 切到实时路由页 (真页面): 切页本身触发一次 Refresh, 返回它自己的两个 Fetch。
+        // 2) 一条路由尝试事件在总览页可见时不产出任何 Cmd (总览页不消费它), 但广播仍然发生——
+        //    不可见的实时路由页应该已经记下这次尝试。
+        let route_data = r#"{"subscription_id":"1","virtual_model":"model-sonnet"}"#;
+        let cmds = a.update(Action::Sse { name: ROUTE_ATTEMPT_STARTED.into(), data: route_data.into(), at_ms: NOW });
+        assert!(cmds.is_empty(), "总览页可见时这条 SSE 不该产出 Cmd");
+        assert_eq!(a.pages.live.entry_count(), 1, "实时路由页不可见也该记下这次尝试");
+
+        // 3) 切到实时路由页 (真页面): 切页本身触发一次 Refresh, 返回它自己的两个 Fetch。
         let switch_cmds = a.update(Action::SwitchTab(Tab::Live));
         assert_eq!(
             switch_cmds,
@@ -893,14 +908,14 @@ mod tests {
             "实时路由页切入时应该补拉订阅与虚拟模型"
         );
 
-        // 3) 同一个订阅事件在实时路由页可见时不该再产出任何 Cmd (它只在 Refresh/Poll/Connected
-        //    时拉数据, 不消费这类 SSE), 但广播仍然发生——占位页 (仍不可见) 的 seen 长度变成 2。
+        // 4) 同一个订阅事件在实时路由页可见时不该再产出任何 Cmd (它只在 Refresh/Poll/Connected
+        //    时拉数据, 不消费这类 SSE)。
         let cmds = a.update(Action::Sse { name: SUBSCRIPTION_STATE_CHANGED.into(), data: "\"1\"".into(), at_ms: NOW });
         assert!(cmds.is_empty(), "实时路由页可见时这条 SSE 不该产出 Cmd");
-        assert_eq!(a.pages.placeholder.seen.len(), 2);
 
-        // 4) 断线: 广播 Lost, 占位页记一条 "<lost>"。
+        // 5) 断线: 广播 Lost——实时路由页应该把那条 Pending 尝试标成中断并插入一条分隔行
+        //    (entry_count 从 1 变成 2)。
         a.update(Action::ConnectionLost);
-        assert_eq!(a.pages.placeholder.seen.last(), Some(&"<lost>".to_string()));
+        assert_eq!(a.pages.live.entry_count(), 2, "断线广播应该到达实时路由页, 插入一条分隔行");
     }
 }

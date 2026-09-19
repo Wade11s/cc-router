@@ -10,8 +10,9 @@ use cc_router_tui::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOut
 use cc_router_tui::app::{App, AppOptions, MIN_HEIGHT};
 use cc_router_tui::client::dto::{
     BalanceCache, BalanceEntry, BalanceSeverity, BalanceSnapshot, ModelCache, ModelInfo, ModelSlots, OverallStats, ProxyStatus,
-    QuotaPeriod, QuotaUsage, RefreshBalanceResult, RefreshModelsResult, RoutingMode, SeriesPoint, Settings, SlotEfforts, Subscription,
-    SubscriptionState, TestConnectionResult, VirtualModel, EFFORT_CHOICES,
+    QuotaPeriod, QuotaUsage, RefreshBalanceResult, RefreshModelsResult, RequestFilters, RequestLog, RequestPage, RequestQuery,
+    RequestStatus, RoutingMode, SeriesPoint, Settings, SlotEfforts, Subscription, SubscriptionState, TestConnectionResult, VirtualModel,
+    EFFORT_CHOICES,
 };
 use cc_router_tui::client::events::{ROUTE_ATTEMPT_FINISHED, ROUTE_ATTEMPT_STARTED};
 use cc_router_tui::format::Tz;
@@ -329,15 +330,6 @@ fn overview_120x40() {
 fn help_popup_80x24() {
     let mut a = loaded(false);
     a.update(Action::ToggleHelp);
-    insta::assert_snapshot!(render(&mut a, 80, 24));
-}
-
-#[test]
-fn placeholder_page_80x24() {
-    let mut a = loaded(false);
-    // 订阅页 (Tab::Subscriptions) 从 Task 3 起、虚拟模型页 (Tab::VirtualModels) 从 Task 6 起、
-    // 实时路由页 (Tab::Live) 从 Task 7 起都是真页面了, 占位快照换一个仍然占位的标签 (Tab::Logs)。
-    a.update(Action::SwitchTab(Tab::Logs));
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
@@ -1223,8 +1215,10 @@ fn popup_borders_survive_wide_glyphs_underneath() {
 #[test]
 fn tabs_wrap_around_and_returning_to_a_page_refreshes_it() {
     let mut a = loaded(false);
-    assert!(a.update(Action::PrevTab).is_empty(), "占位页不拉数据");
-    assert!(render(&mut a, 80, 24).contains(ZH.coming_soon));
+    // Task 8: 第 5 页 (`Tab::Logs`) 不再是不拉数据的占位页——从总览 `PrevTab` 绕到它应该像其它
+    // 真页面一样立刻补拉一次 (第 1 页、无过滤), 并且在没有数据落地之前显示 `s.loading`。
+    assert_eq!(a.update(Action::PrevTab), vec![Cmd::Fetch(Fetch::Requests(RequestQuery::default()))], "从总览 PrevTab 应该绕到日志页并补拉第一页");
+    assert!(render(&mut a, 80, 24).contains(ZH.loading));
     assert_eq!(a.update(Action::NextTab), vec![Cmd::Fetch(Fetch::Overview)], "从第 5 页绕回总览");
     assert!(a.update(Action::SwitchTab(Tab::Overview)).is_empty(), "已经在这一页");
 }
@@ -1242,12 +1236,13 @@ fn only_the_visible_page_polls_and_only_while_connected() {
     let quiet: usize = (41..=80).map(|i| a.update(Action::Tick { now_ms: NOW + i * 250 }).len()).sum();
     assert_eq!(quiet, 0, "断线期间不轮询");
 
-    // Task 7: `Tab::Live` 从这时起是真页面, 会像其它真页面一样轮询——用仍是占位页的 `Tab::Logs`
-    // 继续验证「占位页不轮询」这件事。
+    // Task 8: `Tab::Logs` 从这时起也是真页面, 停在第 1 页时同样会轮询——与下面的订阅页一起验证
+    // 「当前可见页」在 tick 时真的会发起自己的 Fetch (以前这里用仍是占位页的 `Tab::Logs` 验证
+    // 相反的事情: 「占位页不轮询」, 那条断言现在不成立了)。
     let mut b = loaded(false);
     b.update(Action::SwitchTab(Tab::Logs));
-    let hidden: usize = (1..=40).map(|i| b.update(Action::Tick { now_ms: NOW + i * 250 }).len()).sum();
-    assert_eq!(hidden, 0, "占位页不轮询");
+    let logs_fetches: Vec<Cmd> = (1..=20).flat_map(|i| b.update(Action::Tick { now_ms: NOW + i * 250 })).collect();
+    assert_eq!(logs_fetches, vec![Cmd::Fetch(Fetch::Requests(RequestQuery::default()))], "日志页第 1 页可见时轮询应该发 Fetch::Requests");
 
     // 停在订阅页时轮询发的是 Fetch::Subscriptions, 不是 Fetch::Overview。
     let mut c = loaded(false);
@@ -1569,6 +1564,27 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     let first = render(&mut p, 80, 24);
     let second = render(&mut p, 80, 24);
     assert_eq!(first, second, "实时路由页暂停应该幂等");
+
+    // Task 8: 日志页已加载且选中一行。
+    let mut q = logs_app(false);
+    q.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+    let first = render(&mut q, 80, 24);
+    let second = render(&mut q, 80, 24);
+    assert_eq!(first, second, "日志页已加载且选中一行应该幂等");
+
+    // Task 8: 日志详情弹窗已滚动。
+    let mut r = logs_app(false);
+    r.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+    render(&mut r, 80, 24);
+    let open_action = r.handle_key(key(KeyCode::Enter)).expect("⏎ 应该产出 Action::OpenDetail");
+    r.update(open_action);
+    let opened = render(&mut r, 80, 24);
+    r.handle_key(key(KeyCode::Char('j')));
+    r.handle_key(key(KeyCode::Char('j')));
+    let first = render(&mut r, 80, 24);
+    assert_ne!(opened, first, "滚动后画面应该真的变了");
+    let second = render(&mut r, 80, 24);
+    assert_eq!(first, second, "日志详情弹窗滚动后的状态应该幂等");
 }
 
 /// F3: 空列表加载时没有「旧」行可以比较, 不该把更早排队、还没画出来的闪烁带到后面某一帧。
@@ -3762,4 +3778,205 @@ fn live_filter_picker_lists_virtual_models_and_subscriptions() {
     }
     assert!(out.contains("智谱主号"), "{out}");
     assert!(out.contains("Kimi 备用"), "{out}");
+}
+
+/// Task 8: 实时路由页 `⏎` 应该产出 `Action::OpenLogsFor`, `App` 收到后跳到日志页并发出带着这条
+/// 订阅过滤的查询。
+#[test]
+fn enter_on_the_live_page_opens_logs_for_that_subscription() {
+    let mut a = live_app(false);
+    a.update(sse_started("model-sonnet", "1", NOW - 5_000));
+    a.update(sse_finished("model-sonnet", "1", true, NOW - 3_000));
+    a.handle_key(key(KeyCode::Up)); // 选中这一条 (订阅 "1")
+    let action = a.handle_key(key(KeyCode::Enter));
+    assert_eq!(action, Some(Action::OpenLogsFor { subscription_id: "1".into() }), "{action:?}");
+
+    let cmds = a.update(action.unwrap());
+    assert_eq!(
+        cmds,
+        vec![Cmd::Fetch(Fetch::Requests(RequestQuery {
+            page: 1,
+            filters: RequestFilters { subscription_id: Some("1".into()), virtual_model_name: None, status: None },
+        }))],
+        "应该带着这条订阅的过滤条件重新发起第 1 页的查询"
+    );
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(ZH.lg_title), "应该已经切到日志页\n{out}");
+}
+
+// ---------- 请求日志页 (Task 8) ----------
+
+fn base_log(id: &str, sub_id: &str, vm: &str, status: RequestStatus, ts: i64) -> RequestLog {
+    RequestLog {
+        id: id.into(),
+        timestamp: ts,
+        virtual_model_name: vm.into(),
+        subscription_id: sub_id.into(),
+        provider_id: "zhipu".into(),
+        endpoint_id: "default".into(),
+        real_model_name: "glm-4.6".into(),
+        response_model_name: None,
+        is_streaming: true,
+        status,
+        http_status: None,
+        total_latency_ms: None,
+        input_tokens: None,
+        output_tokens: None,
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
+        error_message: None,
+        upstream_response_body: None,
+        client_tool: None,
+        client_user_agent: None,
+        client_version: None,
+        client_ip: None,
+        entry_kind: None,
+        downstream_http_version: None,
+        client_effort: None,
+        effective_effort: None,
+        effort_source: None,
+        upstream_effort: None,
+        stop_reason: None,
+        tools_offered_count: None,
+        tool_result_count: None,
+        tool_use_count: None,
+        tool_use_names: None,
+    }
+}
+
+/// 快照/交互测试共用的四行: 成功 (字段填满, 供宽屏客户端列 / 详情弹窗滚动测试用) / 失败 (带错误
+/// 信息) / 超时 (字段稀疏, 模型名足够长以在窄屏 Fill 列里截断) / 非今天 (跨天时间戳, 覆盖
+/// `short_stamp` 的日期分支)。四条都关联 `logs_app()` 里的三条假订阅。
+fn logs_fixture_rows() -> Vec<RequestLog> {
+    let mut success = base_log("r1", "1", "model-sonnet", RequestStatus::Success, NOW - 400_000);
+    success.http_status = Some(200);
+    success.total_latency_ms = Some(1_800);
+    success.input_tokens = Some(12_300);
+    success.output_tokens = Some(3_400);
+    success.client_tool = Some("claude-code".into());
+    success.client_version = Some("1.2.3".into());
+    success.client_ip = Some("127.0.0.1".into());
+    success.client_user_agent = Some("cc/1.2.3".into());
+    success.entry_kind = Some("messages".into());
+    success.downstream_http_version = Some("HTTP/2".into());
+    success.client_effort = Some("high".into());
+    success.effective_effort = Some("high".into());
+    success.effort_source = Some("slot".into());
+    success.upstream_effort = Some("high".into());
+    success.stop_reason = Some("end_turn".into());
+    success.tools_offered_count = Some(2);
+    success.tool_result_count = Some(1);
+    success.tool_use_count = Some(2);
+    success.tool_use_names = Some(r#"["Read","Bash"]"#.into());
+    success.upstream_response_body = Some(r#"{"id":"msg_1","usage":{"input_tokens":12300,"output_tokens":3400}}"#.into());
+
+    let mut error = base_log("r2", "2", "model-opus", RequestStatus::Error, NOW - 600_000);
+    error.http_status = Some(429);
+    error.total_latency_ms = Some(400);
+    error.error_message = Some("上游返回 429 Too Many Requests, 已达到本分钟请求数上限".into());
+    error.real_model_name = "kimi-k2".into();
+
+    let mut timeout = base_log("r3", "3", "model-haiku", RequestStatus::Timeout, NOW - 900_000);
+    timeout.real_model_name = "claude-3-5-sonnet-20250219".into();
+
+    let mut yesterday = base_log("r4", "1", "model-sonnet", RequestStatus::Success, NOW - 7 * 3_600_000);
+    yesterday.http_status = Some(200);
+    yesterday.total_latency_ms = Some(2_000);
+    yesterday.input_tokens = Some(500);
+    yesterday.output_tokens = Some(200);
+
+    vec![success, error, timeout, yesterday]
+}
+
+fn requests_done(issued: u64, query: RequestQuery, items: Vec<RequestLog>, total: i64) -> Action {
+    Action::FetchDone { fetch: Fetch::Requests(query), issued, result: Ok(FetchData::Requests(RequestPage { items, total })) }
+}
+
+fn requests_failed(query: RequestQuery, issued: u64, message: &str) -> Action {
+    Action::FetchDone { fetch: Fetch::Requests(query), issued, result: Err(message.into()) }
+}
+
+/// 连上 + 切到日志页 + 喂三条订阅 (与 `live_app`/`subs_app` 同一批名字)。不自带任何请求数据——
+/// 测试各自决定要不要喂一份 `requests_done`。
+fn logs_app(fx_enabled: bool) -> App {
+    let mut a = app(fx_enabled);
+    a.update(Action::Connected { app_version: VERSION.into() });
+    a.update(Action::SwitchTab(Tab::Logs));
+    a.update(subs_done(
+        1,
+        vec![
+            sub("1", "智谱主号", SubscriptionState::Healthy),
+            sub("2", "Kimi 备用", SubscriptionState::RateLimited),
+            sub("3", "示例中转", SubscriptionState::AuthFailed),
+        ],
+    ));
+    a
+}
+
+#[test]
+fn logs_80x24() {
+    let mut a = logs_app(false);
+    a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+#[test]
+fn logs_120x40() {
+    let mut a = logs_app(false);
+    a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+    insta::assert_snapshot!(render(&mut a, 120, 40));
+}
+
+#[test]
+fn logs_detail_80x24() {
+    let mut a = logs_app(false);
+    a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+    a.handle_key(key(KeyCode::Down)); // 选中「失败」那一行
+    let action = a.handle_key(key(KeyCode::Enter)).expect("⏎ 应该产出 Action::OpenDetail");
+    a.update(action);
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+#[test]
+fn logs_filtered_80x24() {
+    let mut a = logs_app(false);
+    // 走真实的 PickerDone 落地流程 (与其它页面的既有测试同一套写法, 不直接开真弹窗): 先按订阅
+    // 过滤, 再按状态过滤——两次都应该把页码重置回 1。
+    a.update(Action::PickerDone { tag: PickerTag::LogsFilter, choice: PickerChoice::Item("sub:1".into()) });
+    a.update(Action::PickerDone { tag: PickerTag::LogsFilter, choice: PickerChoice::Item("status:error".into()) });
+    let query = RequestQuery {
+        page: 1,
+        filters: RequestFilters { subscription_id: Some("1".into()), virtual_model_name: None, status: Some(RequestStatus::Error) },
+    };
+    a.update(requests_done(1, query, vec![], 0));
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+/// 结果到达时日志页不可见, 切回来应该立刻能看到 (不用等新的一次加载)。
+#[test]
+fn request_results_reach_the_logs_page_while_it_is_hidden() {
+    let mut a = logs_app(false);
+    a.update(Action::SwitchTab(Tab::Overview)); // 切走, 日志页此刻不可见
+    a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+    a.update(Action::SwitchTab(Tab::Logs)); // 切回来
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains("智谱主号"), "{out}");
+}
+
+/// Task 8 review item #3: `FetchDone(Requests)` 的 `Err` 路径以前从没在 `App` 这一层测过——加载
+/// 失败要照常弹出错误 toast、日志页要停掉「加载中」指示、且不产出任何 `Cmd`。用「还没加载过」这
+/// 种状态 (`logs_app()` 切页之后立刻投递失败结果, 数据从未落地过) 覆盖: 这样「停掉加载指示」这件
+/// 事能单纯靠渲染文本断言 (`ZH.loading` 消失), 不用摸内部字段。
+#[test]
+fn a_failed_requests_fetch_stops_loading_and_toasts_but_returns_no_cmd() {
+    let mut a = logs_app(false);
+    let out_before = render(&mut a, 80, 24);
+    assert!(out_before.contains(ZH.loading), "还没有任何结果落地之前应该显示加载中\n{out_before}");
+
+    let cmds = a.update(requests_failed(RequestQuery::default(), 1, "网络错误"));
+    assert!(cmds.is_empty(), "失败的加载不该产出任何 Cmd");
+
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.toast_load_failed)("网络错误")), "应该弹出错误 toast\n{out}");
+    assert!(!out.contains(ZH.loading), "日志页应该停掉「加载中」状态\n{out}");
 }

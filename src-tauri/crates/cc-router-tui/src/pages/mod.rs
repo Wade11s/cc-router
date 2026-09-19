@@ -17,14 +17,14 @@ use crate::widgets::toast::ToastKind;
 
 pub mod draft;
 pub mod live;
+pub mod logs;
 pub mod overview;
-pub mod placeholder;
 pub mod subscriptions;
 pub mod virtual_models;
 
 use live::Live;
+use logs::Logs;
 use overview::Overview;
-use placeholder::Placeholder;
 use subscriptions::Subscriptions;
 use virtual_models::VirtualModels;
 
@@ -128,19 +128,19 @@ pub struct Pages {
     pub subscriptions: Subscriptions,
     pub virtual_models: VirtualModels,
     pub live: Live,
-    pub placeholder: Placeholder,
+    pub logs: Logs,
 }
 
 impl Pages {
     /// 按 `tab` 选一个页面的只读引用。穷尽 match, 不许 `_ =>`——新增 `Tab` 忘了在这里接住会编译
-    /// 失败, 而不是静默落到占位页。
+    /// 失败, 而不是静默落到某个页面上。
     pub fn get(&self, tab: Tab) -> &dyn Component {
         match tab {
             Tab::Overview => &self.overview,
             Tab::Subscriptions => &self.subscriptions,
             Tab::VirtualModels => &self.virtual_models,
             Tab::Live => &self.live,
-            Tab::Logs => &self.placeholder,
+            Tab::Logs => &self.logs,
         }
     }
 
@@ -151,19 +151,18 @@ impl Pages {
             Tab::Subscriptions => &mut self.subscriptions,
             Tab::VirtualModels => &mut self.virtual_models,
             Tab::Live => &mut self.live,
-            Tab::Logs => &mut self.placeholder,
+            Tab::Logs => &mut self.logs,
         }
     }
 
-    /// 给每个页面各恰好一次的机会 (占位页从 Task 7 起只被 `Tab::Logs` 一个 `Tab` 使用)。
-    /// `App::notify_subscriptions_changed` 用它取代手写的「一个个列出字段名」, 以后加新页面只改
-    /// 这一处。
+    /// 给每个页面各恰好一次的机会。`App::notify_subscriptions_changed` 用它取代手写的「一个个
+    /// 列出字段名」, 以后加新页面只改这一处。
     pub fn for_each_mut(&mut self, mut f: impl FnMut(&mut dyn Component)) {
         f(&mut self.overview);
         f(&mut self.subscriptions);
         f(&mut self.virtual_models);
         f(&mut self.live);
-        f(&mut self.placeholder);
+        f(&mut self.logs);
     }
 }
 

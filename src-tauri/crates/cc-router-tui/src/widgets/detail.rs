@@ -194,7 +194,9 @@ pub fn area(screen: Rect, spec: &DetailSpec, tz: Tz) -> Rect {
 
     let width = WIDTH_MAX.min(screen.width.saturating_sub(SCREEN_MARGIN));
     let content_width = width.saturating_sub(BORDER_PAD_H);
-    let total_rows = layout(spec, content_width as usize, tz).len() as u16;
+    // Task 8: 上游响应体可能有几万行, 折行总数能轻松超过 u16::MAX (65 536)——`as u16` 会静默环绕
+    // (比如 65 537 行变成 1 行), 用饱和转换钳在 u16::MAX, 不让巨大的行数绕回一个很小的值。
+    let total_rows = u16::try_from(layout(spec, content_width as usize, tz).len()).unwrap_or(u16::MAX);
     let height = screen.height.saturating_sub(SCREEN_MARGIN).min(total_rows.saturating_add(BORDER_PAD_V));
     screen.centered(Constraint::Length(width), Constraint::Length(height))
 }
@@ -216,7 +218,9 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut DetailState, theme: &Them
     state.last_total = total;
 
     super::clear_popup_area(frame, area);
-    frame.render_widget(Paragraph::new(rendered).block(block).scroll((state.scroll as u16, 0)), area);
+    // 同上: `scroll` 理论上可以超过 u16::MAX (巨大的上游响应体), 饱和转换而不是静默环绕。
+    let scroll_y = u16::try_from(state.scroll).unwrap_or(u16::MAX);
+    frame.render_widget(Paragraph::new(rendered).block(block).scroll((scroll_y, 0)), area);
 
     if total > rows {
         let mut sb_state = ScrollbarState::new(total.saturating_sub(rows)).position(state.scroll);
@@ -360,5 +364,30 @@ mod tests {
         assert_ne!(line_text(&east[0]), line_text(&utc[0]), "同一个 Stamp 在不同时区下应该渲染出不同的文本");
         assert!(line_text(&east[0]).contains("2023-11-15 06:13:20"), "{:?}", line_text(&east[0]));
         assert!(line_text(&utc[0]).contains("2023-11-14 22:13:20"), "{:?}", line_text(&utc[0]));
+    }
+
+    /// Task 8 review item #2: `area()` 的 `total_rows as u16` 与 `draw()` 的 `state.scroll as u16`
+    /// 曾经在折行数 / 滚动位置超过 `u16::MAX` (65 536) 时静默环绕 (比如 65 537 行变成 1 行)。
+    /// 日志页的上游响应体第一次把这么大的内容塞进详情弹窗——用一段 7 万行的 `Text` 验证两处都
+    /// 换成了饱和转换, 不 panic 也不会算出离谱的小值。
+    #[test]
+    fn a_huge_text_row_does_not_overflow_the_u16_casts() {
+        let huge_text: String = (0..70_000).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        let spec = DetailSpec { title: "详情".into(), rows: vec![DetailRow::Text { text: huge_text, tone: Tone::Normal }] };
+        let screen = Rect::new(0, 0, 80, 24);
+
+        let popup = area(screen, &spec, tz());
+        assert_eq!(popup.height, 20, "高度应该被上限夹住, 不因环绕而算出异常小的值");
+
+        let mut state = DetailState::new(spec.clone());
+        let t = theme();
+        let s = &ZH;
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, popup, &mut state, &t, s, tz())).unwrap();
+        assert!(state.last_total > 65_536, "折行总数应该真的超过 u16::MAX, last_total={}", state.last_total);
+
+        state.handle_key(key(KeyCode::Char('G')));
+        assert_eq!(state.scroll(), state.last_total - state.last_rows, "滚到底不该因为环绕而算错");
+        terminal.draw(|frame| draw(frame, popup, &mut state, &t, s, tz())).unwrap(); // 不 panic
     }
 }
