@@ -11,6 +11,7 @@ use crate::theme::Theme;
 
 pub mod badge;
 pub mod confirm;
+pub mod detail;
 pub mod gauge;
 pub mod help;
 pub mod keybar;

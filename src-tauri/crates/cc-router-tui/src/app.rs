@@ -18,12 +18,13 @@ use crate::client::dto::{RefreshBalanceResult, RefreshModelsResult};
 use crate::fx::{self, Dir, Fx};
 use crate::i18n::Strings;
 use crate::pages::{Component, DrawCtx, Pages};
-use crate::popup::{ConfirmState, Popup};
+use crate::popup::{ConfirmState, Popup, PopupCtx};
 use crate::store::Store;
 use crate::theme::Theme;
-use crate::widgets::picker::{self, PickerState};
+use crate::widgets::detail::DetailState;
+use crate::widgets::picker::PickerState;
 use crate::widgets::toast::{self, Toast, ToastKind};
-use crate::widgets::{confirm, help, keybar, spinner_state};
+use crate::widgets::{keybar, spinner_state};
 
 pub const MIN_WIDTH: u16 = 80;
 pub const MIN_HEIGHT: u16 = 24;
@@ -130,23 +131,11 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Some(Action::ForceQuit);
         }
-        // 弹窗打开时按变体各自决定按键含义; 键盘完全归弹窗, 到不了下面的全局键 / 页面。
-        // `&mut self.popup`: `Popup::Picker` 的按键 (打字 / 移动选中) 直接改 `PickerState` 自身,
-        // 不像 Help / Confirm 那样只读。
+        // 弹窗打开时按变体各自决定按键含义 (Task 1 起收进 `impl Popup::handle_key`); 键盘完全归
+        // 弹窗, 到不了下面的全局键 / 页面。`&mut self.popup`: `Popup::Picker`/`Popup::Detail` 的
+        // 按键 (打字 / 移动选中 / 滚动) 直接改自身状态, 不像 Help / Confirm 那样只读。
         if let Some(popup) = &mut self.popup {
-            return match popup {
-                Popup::Help => match key.code {
-                    KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => Some(Action::ClosePopup),
-                    _ => None,
-                },
-                Popup::Confirm(state) => match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => Some(Action::Confirmed(state.on_yes.clone())),
-                    // 默认 N: Esc / ⏎ 与显式的 n/N 一样只关弹窗, 不执行 on_yes。
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc | KeyCode::Enter => Some(Action::ClosePopup),
-                    _ => None,
-                },
-                Popup::Picker(state) => state.handle_key(key),
-            };
+            return popup.handle_key(key);
         }
         match key.code {
             KeyCode::Char('q') => Some(Action::Quit),
@@ -179,19 +168,16 @@ impl App {
         }
     }
 
-    fn open_confirm(&mut self, prompt: String, on_yes: Box<Action>) {
-        // Fix round C: 先走正常的关闭路径——如果已经有另一个弹窗开着, 这样才会清掉它的
-        // `popup_area` (不清的话, 如果新弹窗在第一次 draw() 之前就被关掉, 关闭动效会拿旧弹窗的
-        // 几何去播), 而不是直接覆盖 `self.popup` 留下不一致的状态。
+    /// 打开一个新弹窗, 替换掉已经打开的那个 (如果有)。`Action::OpenConfirm` / `Action::OpenPicker` /
+    /// `Action::OpenDetail` / `Action::ToggleHelp` 四个来源共用 (Task 1 合并; 原来 Confirm/Picker
+    /// 各有一份手写的 `open_confirm`/`open_picker`)。
+    ///
+    /// Fix round C: 先走正常的关闭路径——如果已经有另一个弹窗开着, 这样才会清掉它的 `popup_area`
+    /// (不清的话, 如果新弹窗在第一次 draw() 之前就被关掉, 关闭动效会拿旧弹窗的几何去播), 而不是
+    /// 直接覆盖 `self.popup` 留下不一致的状态。
+    fn open_popup(&mut self, popup: Popup) {
         self.close_popup();
-        self.popup = Some(Popup::Confirm(ConfirmState { prompt, on_yes }));
-        self.pending_popup_fx = Some(PopupFx::Open);
-    }
-
-    /// `Action::OpenPicker` 与 `open_confirm` 共用同一条「替换掉已经打开的弹窗」规则 (Fix round C)。
-    fn open_picker(&mut self, spec: picker::PickerSpec) {
-        self.close_popup();
-        self.popup = Some(Popup::Picker(PickerState::new(spec)));
+        self.popup = Some(popup);
         self.pending_popup_fx = Some(PopupFx::Open);
     }
 
@@ -202,7 +188,7 @@ impl App {
     fn guard_dirty(&mut self, action: Action, run: impl FnOnce(&mut Self) -> Vec<Cmd>) -> Vec<Cmd> {
         if self.pages.get(self.tab).is_dirty() {
             let prompt = self.s.confirm_discard.to_string();
-            self.open_confirm(prompt, Box::new(action));
+            self.open_popup(Popup::Confirm(ConfirmState { prompt, on_yes: Box::new(action) }));
             Vec::new()
         } else {
             run(self)
@@ -406,8 +392,7 @@ impl App {
                 if self.popup.is_some() {
                     self.close_popup();
                 } else {
-                    self.popup = Some(Popup::Help);
-                    self.pending_popup_fx = Some(PopupFx::Open);
+                    self.open_popup(Popup::Help);
                 }
                 Vec::new()
             }
@@ -416,7 +401,7 @@ impl App {
                 Vec::new()
             }
             Action::OpenConfirm { prompt, on_yes } => {
-                self.open_confirm(prompt, on_yes);
+                self.open_popup(Popup::Confirm(ConfirmState { prompt, on_yes }));
                 Vec::new()
             }
             Action::Confirmed(inner) => {
@@ -509,12 +494,16 @@ impl App {
             Action::Mutate(m) => self.start_mutation(m),
             Action::MutationDone { mutation, barrier, result } => self.finish_mutation(mutation, barrier, result),
             Action::OpenPicker(spec) => {
-                self.open_picker(spec);
+                self.open_popup(Popup::Picker(PickerState::new(spec)));
                 Vec::new()
             }
             Action::PickerDone { tag, choice } => {
                 self.close_popup();
                 self.update_page(self.tab, &Action::PickerDone { tag, choice })
+            }
+            Action::OpenDetail(spec) => {
+                self.open_popup(Popup::Detail(DetailState::new(spec)));
+                Vec::new()
             }
             Action::Notify { kind, text } => {
                 self.push_toast(Toast::new(kind, text));
@@ -625,28 +614,16 @@ impl App {
 
         self.draw_toast(frame, screen, content.y);
 
+        // 弹窗打开时才用得到, 但取值本身不依赖弹窗状态 (纯查表), 先取出来免得在下面的可变借用里
+        // 再跟 `self.pages` 打交道 (Task 1: 按 / 画 / 尺寸计算收进 `impl Popup` 之后, `App` 这里
+        // 只负责备好 `PopupCtx` 需要的环境)。
+        let page_help = self.pages.get(self.tab).help(s);
         if let Some(popup) = &mut self.popup {
             // 压暗背景用静态的 DIM 修饰符而不是动效: 16 色 / 无色终端下同样成立。
             frame.buffer_mut().set_style(screen, Style::new().add_modifier(Modifier::DIM));
-            // 穷尽 match: 以后加新弹窗变体忘了在这里接住会编译失败。
-            let area = match popup {
-                Popup::Help => {
-                    let page_rows = self.pages.get(self.tab).help(s);
-                    let area = help::area(screen, s, page_rows);
-                    help::draw(frame, area, &self.theme, s, page_rows);
-                    area
-                }
-                Popup::Confirm(state) => {
-                    let area = confirm::area(screen, &state.prompt);
-                    confirm::draw(frame, area, state, &self.theme, s);
-                    area
-                }
-                Popup::Picker(state) => {
-                    let area = picker::area(screen);
-                    picker::draw(frame, area, state, &self.theme, s);
-                    area
-                }
-            };
+            let ctx = PopupCtx { theme: &self.theme, s, page_help };
+            let area = popup.area(screen, &ctx);
+            popup.draw(frame, area, &ctx);
             self.popup_area = Some(area);
         }
 
@@ -680,6 +657,8 @@ mod tests {
     use super::*;
     use crate::action::Tab;
     use crate::i18n::ZH;
+    use crate::widgets::detail::{DetailRow, DetailSpec, Tone};
+    use crate::widgets::picker;
 
     const NOW: i64 = 1_700_000_000_000;
     const VERSION: &str = "9.9.9";
@@ -811,5 +790,15 @@ mod tests {
         }));
         assert!(matches!(a.popup, Some(Popup::Picker(_))), "应该直接替换成 picker 弹窗");
         assert!(a.popup_area.is_none(), "同样应该清掉 Confirm 弹窗的 popup_area");
+
+        // Task 1: `Action::OpenDetail` 应该遵守同一条「替换掉已经打开的弹窗」规则。
+        render(&mut a, 80, 24); // 记一次 picker 弹窗的 popup_area。
+        assert!(a.popup_area.is_some());
+        a.update(Action::OpenDetail(DetailSpec {
+            title: "详情".into(),
+            rows: vec![DetailRow::Field { label: "a".into(), value: "b".into(), tone: Tone::Normal }],
+        }));
+        assert!(matches!(a.popup, Some(Popup::Detail(_))), "应该直接替换成详情弹窗");
+        assert!(a.popup_area.is_none(), "同样应该清掉 picker 弹窗的 popup_area");
     }
 }

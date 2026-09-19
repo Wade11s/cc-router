@@ -16,6 +16,7 @@ use cc_router_tui::client::dto::{
 use cc_router_tui::i18n::ZH;
 use cc_router_tui::pages::Pages;
 use cc_router_tui::theme::{ColorMode, Theme};
+use cc_router_tui::widgets::detail::{DetailRow, DetailSpec, Tone};
 use cc_router_tui::widgets::picker::{self, PickerChoice, PickerItem, PickerSpec, PickerTag, Slot};
 use cc_router_tui::widgets::toast::ToastKind;
 use cc_router_tui::widgets::{confirm, help, toast};
@@ -277,6 +278,35 @@ fn picker_spec() -> PickerSpec {
         items: picker_items(),
         allow_custom: true,
         initial: String::new(),
+    }
+}
+
+/// Task 1: `Popup::Detail` 的快照/滚动测试共用的一份内容——「基本信息」8 个字段 (其中「端点」值
+/// 长到会折行), 「错误信息」两行 `Text`, 「上游响应」一段足够长的 `Text` 让内容超出一屏、逼出
+/// 滚动条。「上游响应」用递增的四位数字拼接 (而不是重复字符), 好让 `detail_popup_scrolls_and_closes`
+/// 断言「滚到底能看到末尾内容」时有真正区分度——重复字符滚到哪里看起来都一样。
+fn detail_fixture() -> DetailSpec {
+    DetailSpec {
+        title: "请求详情".into(),
+        rows: vec![
+            DetailRow::Section("基本信息".into()),
+            DetailRow::Field { label: "ID".into(), value: "req-12345".into(), tone: Tone::Normal },
+            DetailRow::Field { label: "时间".into(), value: "2026-09-20 10:00:00".into(), tone: Tone::Normal },
+            DetailRow::Field { label: "方法".into(), value: "POST".into(), tone: Tone::Normal },
+            DetailRow::Field { label: "路径".into(), value: "/v1/messages".into(), tone: Tone::Normal },
+            DetailRow::Field { label: "状态".into(), value: "200".into(), tone: Tone::Ok },
+            DetailRow::Field { label: "模型".into(), value: "model-sonnet".into(), tone: Tone::Normal },
+            DetailRow::Field { label: "订阅".into(), value: "智谱主号".into(), tone: Tone::Normal },
+            DetailRow::Field {
+                label: "端点".into(),
+                value: "https://open.bigmodel.cn/api/anthropic/v1/messages?stream=true&client=cc-router-tui".into(),
+                tone: Tone::Normal,
+            },
+            DetailRow::Section("错误信息".into()),
+            DetailRow::Text { text: "上游返回 429 Too Many Requests\n已达到本分钟请求数上限, 请稍后重试".into(), tone: Tone::Err },
+            DetailRow::Section("上游响应".into()),
+            DetailRow::Text { text: (0..500).map(|i| format!("{i:04}")).collect(), tone: Tone::Normal },
+        ],
     }
 }
 
@@ -1004,6 +1034,38 @@ fn confirm_popup_80x24() {
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
+/// Task 1: 只读详情弹窗——「基本信息」的 8 个字段 (含一个会折行的「端点」值)、「错误信息」的两行
+/// `Text`、「上游响应」超出一屏、逼出右侧滚动条。
+#[test]
+fn detail_popup_80x24() {
+    let mut a = loaded(false);
+    a.update(Action::OpenDetail(detail_fixture()));
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+/// Task 1: `j` 只改一行, 画面理应变化; `G` 应该滚到底, 能看到内容最后一段 (拼接的递增数字, 结尾是
+/// "0499"); `Esc` 应该关掉弹窗 (标题与底部键位提示都不再出现)。
+#[test]
+fn detail_popup_scrolls_and_closes() {
+    let mut a = loaded(false);
+    a.update(Action::OpenDetail(detail_fixture()));
+    let opened = render(&mut a, 80, 24);
+    assert!(!opened.contains("0499"), "第一帧还没滚动, 不该看到内容末尾\n{opened}");
+
+    a.handle_key(key(KeyCode::Char('j')));
+    let after_j = render(&mut a, 80, 24);
+    assert_ne!(opened, after_j, "j 之后第一行可见内容应该变了");
+
+    a.handle_key(key(KeyCode::Char('G')));
+    let after_g = render(&mut a, 80, 24);
+    assert!(after_g.contains("0499"), "G 应该滚到底, 看到内容的最后一段\n{after_g}");
+
+    let esc_action = a.handle_key(key(KeyCode::Esc)).expect("Esc 应该产出 Action::ClosePopup");
+    a.update(esc_action);
+    let closed = render(&mut a, 80, 24);
+    assert!(!closed.contains("请求详情") && !closed.contains(ZH.detail_keys), "Esc 之后弹窗应该已经关闭\n{closed}");
+}
+
 /// Task 3: 12 项列表, 输入 "gl" 过滤到只剩 glm 系列 + 置顶的「使用「gl」」自定义行。
 #[test]
 fn picker_popup_80x24() {
@@ -1414,6 +1476,16 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     let first = render(&mut g, 80, 24);
     let second = render(&mut g, 80, 24);
     assert_eq!(first, second, "picker 弹窗打开的状态应该幂等");
+
+    // Task 1: 详情弹窗打开且已滚动 2 行的状态 (`DetailState::scroll` 参与相等比较, `draw` 每次都要
+    // 用同一份折行结果重算滚动条)。
+    let mut n = loaded(false);
+    n.update(Action::OpenDetail(detail_fixture()));
+    n.handle_key(key(KeyCode::Char('j')));
+    n.handle_key(key(KeyCode::Char('j')));
+    let first = render(&mut n, 80, 24);
+    let second = render(&mut n, 80, 24);
+    assert_eq!(first, second, "详情弹窗滚动后的状态应该幂等");
 
     // Task 5: 宽屏下焦点在详情 (边框颜色跟 `self.focus` 走, `pane_border_style` 必须是纯函数)。
     let mut h = subs_app(false);

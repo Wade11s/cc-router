@@ -99,6 +99,9 @@ pub struct Strings {
     /// 兜底槽模型 picker 里置顶的「清空」选项 (对应 `id: ""`)。
     pub pick_clear_fallback: &'static str,
 
+    /// 只读详情弹窗 (`Popup::Detail`, Task 1; Task 8 起被请求日志详情页使用) 底部的键位提示。
+    pub detail_keys: &'static str,
+
     pub too_small: &'static str,
     pub coming_soon: &'static str,
     pub loading: &'static str,
@@ -328,6 +331,8 @@ pub const ZH: Strings = Strings {
     pick_model_title: |slot| format!("选择 {slot} 的模型"),
     pick_effort_title: |slot| format!("选择 {slot} 的思考档位"),
     pick_clear_fallback: "(清空兜底槽)",
+
+    detail_keys: "↑↓ 滚动   Esc 关闭",
 
     too_small: "请放大终端窗口（至少 80×24）",
     coming_soon: "此页面将在后续版本提供",

@@ -5,6 +5,7 @@ use crate::client::dto::{
     ModelSlots, OverallStats, ProxyStatus, RefreshBalanceResult, RefreshModelsResult, RoutingMode, SeriesPoint, Settings, SlotEfforts,
     Subscription, TestConnectionResult, VirtualModel,
 };
+use crate::widgets::detail::DetailSpec;
 use crate::widgets::picker::{PickerChoice, PickerSpec, PickerTag};
 use crate::widgets::toast::ToastKind;
 
@@ -196,6 +197,9 @@ pub enum Action {
     /// 转给当前页面的 `update`——页面据 `tag` 知道该把 `choice` 填到哪。Task 5 之前没有真正的消费者,
     /// 页面的 `update` 会直接忽略它。
     PickerDone { tag: PickerTag, choice: PickerChoice },
+    /// 打开一个只读可滚动的详情弹窗 (Task 1 新增; Task 8 起从日志页发起)。**如果已经有另一个弹窗
+    /// 打开着, 会直接替换它**——语义与 `OpenConfirm` / `OpenPicker` 相同 (Fix round C)。
+    OpenDetail(DetailSpec),
     /// 页面想弹一条 toast, 但自己不能直接碰 `App` 的 toast 队列 (Task 5)。只从
     /// `Component::handle_key` 的返回值这条路走——`update()` 内部想弹通知 (比如处理
     /// `PickerDone` 时发现输入为空) 用的是另一条路 (`Component::take_notice`, 见 `pages/mod.rs`),
