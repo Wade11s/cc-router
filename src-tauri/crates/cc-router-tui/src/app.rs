@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, BorderType, Tabs};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 
-use crate::action::{Action, BusyKey, Cmd, Fetch, FetchData, Mutation, MutationOutcome, Tab};
+use crate::action::{Action, BusyKey, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, Tab};
 use crate::client::dto::{RefreshBalanceResult, RefreshModelsResult};
 use crate::fx::{self, Dir, Fx};
 use crate::i18n::Strings;
@@ -328,9 +328,15 @@ impl App {
                 // 但空着这个分支是一个等真用上才会炸的洞, 先堵上。
                 Fetch::Subscriptions | Fetch::Overview => self.store.set_subscriptions_barrier(barrier),
                 Fetch::VirtualModels => self.store.set_virtual_models_barrier(barrier),
+                // 日志页 (Task 8) 自己管理分页状态, 不进 `Store`, 没有屏障可设——目前也没有任何
+                // `Mutation` 会把 `Fetch::Requests` 放进 `refetch()`, 空着这个分支同样是先堵上。
+                Fetch::Requests(_) => {}
             }
         }
-        let refetch_cmds: Vec<Cmd> = mutation.refetch().iter().copied().map(Cmd::Fetch).collect();
+        // `Fetch` 不再 `Copy` (Task 4: `Requests` 带查询参数), `refetch()` 返回的是 `&'static [Fetch]`
+        // 的只读切片, 这里需要各自拥有的所有权才能塞进 `Cmd::Fetch`——`.copied()` 不再适用, 换成
+        // `.cloned()`。
+        let refetch_cmds: Vec<Cmd> = mutation.refetch().iter().cloned().map(Cmd::Fetch).collect();
 
         let name = match &key {
             BusyKey::Subscription(id) => self.subscription_name(id),
@@ -447,7 +453,16 @@ impl App {
                     if self.conn == Conn::Connected {
                         self.push_toast(Toast::new(ToastKind::Error, (self.s.toast_load_failed)(&message)));
                     }
-                    Vec::new()
+                    // 加载结果永远交给发起它的页面, 哪怕是失败——日志页 (Task 8 起) 要据此停掉
+                    // 「加载中」状态; 本 Task 里 `Tab::Logs` 还是占位页, 会忽略这条转发。其它三种
+                    // 加载没有任何页面需要在失败时收到通知 (Overview/Subscriptions/VirtualModels
+                    // 都只在 Ok 时才有事要做), 维持原样不转发。
+                    if fetch.kind() == FetchKind::Requests {
+                        let action = Action::FetchDone { fetch, issued, result: Err(message) };
+                        self.update_page(Tab::Logs, &action)
+                    } else {
+                        Vec::new()
+                    }
                 }
                 // 总览一次整页加载: 订阅列表 `mem::take` 挪给 Store (不克隆——克隆一次给 Store、
                 // 整个 OverviewData 转给总览页时又整体克隆一次, 同一份列表会被复制两遍), 状态变了
@@ -492,6 +507,13 @@ impl App {
                         self.notify_store_changed();
                     }
                     Vec::new()
+                }
+                // 日志页 (Task 8 起) 自己的分页 / 过滤状态——不进 `Store`, 加载结果原样转给发起它
+                // 的页面; 本 Task 里 `Tab::Logs` 还是占位页, 会忽略这条转发。
+                Ok(FetchData::Requests(page)) => {
+                    debug_assert_eq!(fetch.kind(), FetchKind::Requests, "spawn_fetch 应该保证 FetchData::Requests 只配 Fetch::Requests");
+                    let action = Action::FetchDone { fetch, issued, result: Ok(FetchData::Requests(page)) };
+                    self.update_page(Tab::Logs, &action)
                 }
             },
             Action::Refresh | Action::Poll => self.update_page(self.tab, &action),

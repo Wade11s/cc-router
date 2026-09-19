@@ -3,7 +3,7 @@
 //!
 //! **双档渲染**: 平时只在有事件时重画 (空闲 CPU 接近零); 有动效在播时每 16ms 画一帧, 播完自动回落。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -12,9 +12,9 @@ use ratatui::crossterm::event::{Event, EventStream};
 use serde_json::json;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
-use crate::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOutcome, OverviewData};
+use crate::action::{Action, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, OverviewData};
 use crate::app::App;
-use crate::client::dto::{RefreshBalanceResult, RefreshModelsResult, Subscription, TestConnectionResult, VirtualModel};
+use crate::client::dto::{RefreshBalanceResult, RefreshModelsResult, RequestPage, Subscription, TestConnectionResult, VirtualModel};
 use crate::client::{commands, Client, ClientError};
 
 const TICK: Duration = Duration::from_millis(250);
@@ -64,7 +64,10 @@ async fn fetch_overview(client: &Client) -> Result<OverviewData, ClientError> {
 
 fn spawn_fetch(client: Arc<Client>, tx: UnboundedSender<Action>, fetch: Fetch, issued: u64) {
     tokio::spawn(async move {
-        let result = match fetch {
+        // 按引用匹配: `Fetch::Requests` 带的 `RequestQuery` 不是 `Copy`, `to_args()` 只需要 `&self`,
+        // 借一下就够——`fetch` 本身留到匹配结束之后原样送回 `Action::FetchDone`, 不需要为了送回去
+        // 而克隆一份。
+        let result = match &fetch {
             Fetch::Overview => fetch_overview(&client).await.map(|d| FetchData::Overview(Box::new(d))),
             Fetch::Subscriptions => client
                 .call::<Vec<Subscription>>(commands::LIST_SUBSCRIPTIONS, json!({}))
@@ -74,6 +77,7 @@ fn spawn_fetch(client: Arc<Client>, tx: UnboundedSender<Action>, fetch: Fetch, i
                 .call::<Vec<VirtualModel>>(commands::LIST_VIRTUAL_MODELS, json!({}))
                 .await
                 .map(FetchData::VirtualModels),
+            Fetch::Requests(q) => client.call::<RequestPage>(commands::LIST_REQUESTS, q.to_args()).await.map(FetchData::Requests),
         };
         let result = result.map_err(|e: ClientError| e.to_string());
         let _ = tx.send(Action::FetchDone { fetch, issued, result });
@@ -220,31 +224,37 @@ async fn sse_loop(client: Arc<Client>, tx: UnboundedSender<Action>) {
 
 /// 同一种加载同时只跑一个; 进行中又来了同种请求, 记一笔, 等这次回来后补跑一次 (G7:
 /// 否则会静默丢掉一次刷新请求, 比如断线重连期间某订阅状态变了, 要等下一次 5s 轮询才补上)。
+///
+/// Task 4: 去重按 [`FetchKind`], 不按整个 [`Fetch`] 值——`Fetch::Requests` 带查询参数, 两个页码
+/// 不同的请求仍然是「同一种」加载。进行中又来了同种请求, 只记最新那一笔 (`rerun` 是
+/// `HashMap<FetchKind, Fetch>` 而不是集合, 覆盖写入天然就是「最新为准」), 更早记下的那笔直接丢弃
+/// ——它对应的查询参数已经过时了, 没有必要为了它专门再跑一次。
 #[derive(Default)]
 struct Fetches {
-    in_flight: HashSet<Fetch>,
-    rerun: HashSet<Fetch>,
+    in_flight: HashSet<FetchKind>,
+    rerun: HashMap<FetchKind, Fetch>,
 }
 
 impl Fetches {
-    /// 要不要现在就发起? (false = 已有同种请求在跑, 已记下待补跑)
-    fn request(&mut self, fetch: Fetch) -> bool {
-        if self.in_flight.insert(fetch) {
+    /// 要不要现在就发起? (false = 已有同种请求在跑, 已记下待补跑——覆盖更早记下的同种请求)
+    fn request(&mut self, fetch: &Fetch) -> bool {
+        if self.in_flight.insert(fetch.kind()) {
             true
         } else {
-            self.rerun.insert(fetch);
+            self.rerun.insert(fetch.kind(), fetch.clone());
             false
         }
     }
 
-    /// 一次加载回来了; 返回 true 表示要立刻补跑一次 (调用方负责 spawn)。
-    fn finished(&mut self, fetch: Fetch) -> bool {
-        self.in_flight.remove(&fetch);
-        if self.rerun.remove(&fetch) {
-            self.in_flight.insert(fetch);
-            true
+    /// 这一种的一次加载回来了。有记下的待补跑请求 → 返回它 (调用方立刻以新序号发起, 这一种仍然
+    /// 算在跑); 没有 → `None`。
+    fn finished(&mut self, kind: FetchKind) -> Option<Fetch> {
+        self.in_flight.remove(&kind);
+        if let Some(fetch) = self.rerun.remove(&kind) {
+            self.in_flight.insert(kind);
+            Some(fetch)
         } else {
-            false
+            None
         }
     }
 }
@@ -277,15 +287,15 @@ fn process_action(
     // 在内, 否则会把自己刚发出去的补跑也挡住。
     stamp_barrier(&mut action, issued);
     if let Action::FetchDone { fetch, .. } = &action {
-        if fetches.finished(*fetch) {
-            spawn_fetch(client.clone(), tx.clone(), *fetch, issued.next());
+        if let Some(rerun) = fetches.finished(fetch.kind()) {
+            spawn_fetch(client.clone(), tx.clone(), rerun, issued.next());
         }
     }
     for cmd in app.update(action) {
         match cmd {
             Cmd::Quit => return true,
             Cmd::Fetch(fetch) => {
-                if fetches.request(fetch) {
+                if fetches.request(&fetch) {
                     spawn_fetch(client.clone(), tx.clone(), fetch, issued.next());
                 }
             }
@@ -468,19 +478,43 @@ mod tests {
     #[test]
     fn fetches_coalesces_concurrent_requests_of_the_same_kind() {
         let mut f = Fetches::default();
-        assert!(f.request(Fetch::Overview)); // 第一次: 发起
-        assert!(!f.request(Fetch::Overview)); // 还在跑: 只记一笔待补跑
-        assert!(f.finished(Fetch::Overview)); // 回来了: 之前记的那笔要补跑
-        assert!(!f.finished(Fetch::Overview)); // 这次是补跑的结果, 没有再记新的待补跑
+        assert!(f.request(&Fetch::Overview)); // 第一次: 发起
+        assert!(!f.request(&Fetch::Overview)); // 还在跑: 只记一笔待补跑
+        assert_eq!(f.finished(FetchKind::Overview), Some(Fetch::Overview)); // 回来了: 之前记的那笔要补跑
+        assert_eq!(f.finished(FetchKind::Overview), None); // 这次是补跑的结果, 没有再记新的待补跑
     }
 
     #[test]
     fn fetches_unrelated_kinds_do_not_interfere() {
         let mut f = Fetches::default();
-        assert!(f.request(Fetch::Overview));
-        assert!(f.request(Fetch::Subscriptions)); // 不同种类互不影响
-        assert!(!f.finished(Fetch::Subscriptions)); // 没有同种的待补跑
-        assert!(!f.finished(Fetch::Overview));
+        assert!(f.request(&Fetch::Overview));
+        assert!(f.request(&Fetch::Subscriptions)); // 不同种类互不影响
+        assert_eq!(f.finished(FetchKind::Subscriptions), None); // 没有同种的待补跑
+        assert_eq!(f.finished(FetchKind::Overview), None);
+    }
+
+    /// Task 4: `Fetch::Requests` 带查询参数, 去重按 `FetchKind` 不按整个值——进行中又来了两次同种
+    /// 请求, 只应该补跑最新那一次 (page 3), page 2 那次被直接丢弃, 不会「先补 page 2 再补 page 3」。
+    /// 另附带验证其它 kind 与这条链路互不影响。
+    #[test]
+    fn fetches_rerun_only_the_latest_request_of_a_kind() {
+        let mut f = Fetches::default();
+        let page = |page: u32| Fetch::Requests(crate::client::dto::RequestQuery { page, filters: Default::default() });
+        let p1 = page(1);
+        let p2 = page(2);
+        let p3 = page(3);
+
+        assert!(f.request(&p1)); // 第一次: 发起
+        // 另一种 kind 与此互不影响: 交叉操作不会串到 Requests 的去重状态里。
+        assert!(f.request(&Fetch::Overview));
+        assert!(!f.request(&p2)); // 还在跑: 记一笔待补跑 (page 2)
+        assert!(!f.request(&p3)); // 又来一次: 覆盖成 page 3, page 2 被丢弃
+
+        assert_eq!(f.finished(FetchKind::Requests), Some(p3), "应该补跑最新记下的那一笔 (page 3)");
+        assert_eq!(f.finished(FetchKind::Requests), None, "这次是补跑的结果, 没有再记新的待补跑");
+        // Overview 只 request 过一次 (没有第二次挤进来记待补跑), 它的加载回来时不该受 Requests
+        // 那条链路的去重状态影响, 照常是「没有待补跑」。
+        assert_eq!(f.finished(FetchKind::Overview), None, "Overview 的去重状态不受 Requests 影响");
     }
 
     fn write_runtime(dir: &std::path::Path, port: u16, secret: &str, app_version: &str) {
@@ -1002,5 +1036,54 @@ mod tests {
         assert_eq!(vms[1].name, "model-sonnet");
         assert_eq!(vms[1].mode, RoutingMode::RoundRobin);
         assert_eq!(vms[1].subscription_ids, vec!["1".to_string()]);
+    }
+
+    /// Task 4: `Fetch::Requests` 发出的请求体精确匹配 `RequestQuery::to_args()` 文档里的例子——
+    /// `body_json` 做结构化比对 (不是子集匹配), 咬得住「漏发一个过滤键」或者「拼错大小写」这类
+    /// 回归。默认查询 (无过滤) 时 `filters` 应该仍然是一个空对象, 不是被省略。
+    #[tokio::test]
+    async fn fetch_requests_sends_page_size_in_camel_case_and_filters_in_snake_case() {
+        use crate::client::dto::{RequestFilters, RequestQuery, RequestStatus};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/ui/api/cmd/list_requests"))
+            .and(body_json(json!({
+                "page": 2,
+                "pageSize": 50,
+                "filters": {
+                    "subscription_id": "s1",
+                    "virtual_model_name": "model-sonnet",
+                    "status": "error",
+                },
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [], "total": 0})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/ui/api/cmd/list_requests"))
+            .and(body_json(json!({"page": 1, "pageSize": 50, "filters": {}})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": [], "total": 0})))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        write_runtime(dir.path(), server.address().port(), "s", "9.9.9-test");
+        let client = Arc::new(Client::connect(dir.path()).unwrap());
+        let (tx, mut rx) = unbounded_channel::<Action>();
+
+        let filters = RequestFilters {
+            subscription_id: Some("s1".into()),
+            virtual_model_name: Some("model-sonnet".into()),
+            status: Some(RequestStatus::Error),
+        };
+        spawn_fetch(client.clone(), tx.clone(), Fetch::Requests(RequestQuery { page: 2, filters }), 1);
+        let done = rx.recv().await.expect("channel 关闭了");
+        let Action::FetchDone { result, .. } = done else { panic!("{done:?}") };
+        assert!(matches!(result, Ok(FetchData::Requests(_))), "{result:?}");
+
+        spawn_fetch(client, tx, Fetch::Requests(RequestQuery::default()), 2);
+        let done = rx.recv().await.expect("channel 关闭了");
+        let Action::FetchDone { result, .. } = done else { panic!("{done:?}") };
+        assert!(matches!(result, Ok(FetchData::Requests(_))), "{result:?}");
     }
 }

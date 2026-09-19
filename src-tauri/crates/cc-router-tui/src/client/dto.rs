@@ -369,6 +369,155 @@ pub fn hourly_buckets(points: &[SeriesPoint]) -> [u64; 24] {
     out
 }
 
+/// 与后端 `observability::request_log::RequestStatus` 对应。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestStatus {
+    Success,
+    Error,
+    Timeout,
+    /// 后端将来加了新状态时, 旧 TUI 不应该整页解析失败。
+    #[serde(other)]
+    Unknown,
+}
+
+impl RequestStatus {
+    /// 过滤条件里发给后端的值; 必须与后端 `RequestStatus::as_str` 逐字相同 (契约锁住)。Unknown → "unknown"
+    /// (不会被构造成过滤条件)。
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            RequestStatus::Success => "success",
+            RequestStatus::Error => "error",
+            RequestStatus::Timeout => "timeout",
+            RequestStatus::Unknown => "unknown",
+        }
+    }
+}
+
+/// `list_requests` 的一行。后端 `commands::requests::RequestLogDto` 的全部字段; `Option` 一律
+/// `#[serde(default)]`。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RequestLog {
+    pub id: String,
+    /// Unix 毫秒
+    pub timestamp: i64,
+    pub virtual_model_name: String,
+    pub subscription_id: String,
+    pub provider_id: String,
+    pub endpoint_id: String,
+    pub real_model_name: String,
+    #[serde(default)]
+    pub response_model_name: Option<String>,
+    pub is_streaming: bool,
+    pub status: RequestStatus,
+    #[serde(default)]
+    pub http_status: Option<i64>,
+    #[serde(default)]
+    pub total_latency_ms: Option<i64>,
+    #[serde(default)]
+    pub input_tokens: Option<i64>,
+    #[serde(default)]
+    pub output_tokens: Option<i64>,
+    #[serde(default)]
+    pub cache_creation_tokens: Option<i64>,
+    #[serde(default)]
+    pub cache_read_tokens: Option<i64>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub upstream_response_body: Option<String>,
+    #[serde(default)]
+    pub client_tool: Option<String>,
+    #[serde(default)]
+    pub client_user_agent: Option<String>,
+    #[serde(default)]
+    pub client_version: Option<String>,
+    #[serde(default)]
+    pub client_ip: Option<String>,
+    #[serde(default)]
+    pub entry_kind: Option<String>,
+    #[serde(default)]
+    pub downstream_http_version: Option<String>,
+    #[serde(default)]
+    pub client_effort: Option<String>,
+    #[serde(default)]
+    pub effective_effort: Option<String>,
+    #[serde(default)]
+    pub effort_source: Option<String>,
+    #[serde(default)]
+    pub upstream_effort: Option<String>,
+    #[serde(default)]
+    pub stop_reason: Option<String>,
+    #[serde(default)]
+    pub tools_offered_count: Option<i64>,
+    #[serde(default)]
+    pub tool_result_count: Option<i64>,
+    #[serde(default)]
+    pub tool_use_count: Option<i64>,
+    /// JSON 字符串数组 (可能以 `"…"` 结尾表示被截断), 原样保存, 由日志页解析。
+    #[serde(default)]
+    pub tool_use_names: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RequestPage {
+    pub items: Vec<RequestLog>,
+    pub total: i64,
+}
+
+/// 后端 `RequestLogFilters` 里 TUI 暴露的三个维度 (后端另有 provider_id / client_tool, TUI 不用)。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct RequestFilters {
+    pub subscription_id: Option<String>,
+    pub virtual_model_name: Option<String>,
+    pub status: Option<RequestStatus>,
+}
+
+impl RequestFilters {
+    pub fn is_empty(&self) -> bool {
+        self.subscription_id.is_none() && self.virtual_model_name.is_none() && self.status.is_none()
+    }
+}
+
+pub const REQUEST_PAGE_SIZE: u32 = 50;
+
+/// 日志页想看的那一页。`page` 从 1 起; `Default` = 第 1 页、无过滤。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RequestQuery {
+    pub page: u32,
+    pub filters: RequestFilters,
+}
+
+impl Default for RequestQuery {
+    fn default() -> Self {
+        RequestQuery { page: 1, filters: RequestFilters::default() }
+    }
+}
+
+impl RequestQuery {
+    /// `list_requests` 的参数。网页桥接按 **camelCase** 取顶层参数 (`pageSize`, 见
+    /// `src-tauri/src/proxy/web/api.rs` 的 `#[serde(rename_all = "camelCase")]`); `filters` 是后端
+    /// `RequestLogFilters`, 键是 **snake_case**; 值为 None 的维度不发, `filters` 恒为一个对象 (可能是
+    /// `{}`)。例: `{"page":2,"pageSize":50,"filters":{"subscription_id":"s1","virtual_model_name":"model-sonnet","status":"error"}}`
+    pub fn to_args(&self) -> serde_json::Value {
+        let mut filters = serde_json::Map::new();
+        if let Some(v) = &self.filters.subscription_id {
+            filters.insert("subscription_id".to_string(), serde_json::Value::String(v.clone()));
+        }
+        if let Some(v) = &self.filters.virtual_model_name {
+            filters.insert("virtual_model_name".to_string(), serde_json::Value::String(v.clone()));
+        }
+        if let Some(v) = self.filters.status {
+            filters.insert("status".to_string(), serde_json::Value::String(v.as_wire().to_string()));
+        }
+        serde_json::json!({
+            "page": self.page,
+            "pageSize": REQUEST_PAGE_SIZE,
+            "filters": serde_json::Value::Object(filters),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,5 +572,74 @@ mod tests {
         ];
         let b = hourly_buckets(&pts);
         assert_eq!((b[0], b[23], b.iter().sum::<u64>()), (3, 7, 10));
+    }
+
+    /// 只含必填字段的 JSON (后端老数据 / 大部分 Option 列为 NULL 时的真实形状) 应该解析成功;
+    /// 未来的状态值 (`brand_new`) 应该落到 `Unknown`, 不该让整页解析失败。
+    #[test]
+    fn request_log_tolerates_missing_optionals_and_unknown_status() {
+        let log: RequestLog = serde_json::from_str(
+            r#"{"id":"1","timestamp":1700000000000,"virtual_model_name":"model-sonnet",
+                "subscription_id":"s1","provider_id":"zhipu","endpoint_id":"default",
+                "real_model_name":"glm-4.6","is_streaming":false,"status":"brand_new"}"#,
+        )
+        .unwrap();
+        assert_eq!(log.id, "1");
+        assert_eq!(log.timestamp, 1_700_000_000_000);
+        assert_eq!(log.virtual_model_name, "model-sonnet");
+        assert_eq!(log.subscription_id, "s1");
+        assert_eq!(log.provider_id, "zhipu");
+        assert_eq!(log.endpoint_id, "default");
+        assert_eq!(log.real_model_name, "glm-4.6");
+        assert!(!log.is_streaming);
+        assert_eq!(log.status, RequestStatus::Unknown);
+        assert_eq!(log.response_model_name, None);
+        assert_eq!(log.http_status, None);
+        assert_eq!(log.total_latency_ms, None);
+        assert_eq!(log.input_tokens, None);
+        assert_eq!(log.output_tokens, None);
+        assert_eq!(log.cache_creation_tokens, None);
+        assert_eq!(log.cache_read_tokens, None);
+        assert_eq!(log.error_message, None);
+        assert_eq!(log.upstream_response_body, None);
+        assert_eq!(log.client_tool, None);
+        assert_eq!(log.client_user_agent, None);
+        assert_eq!(log.client_version, None);
+        assert_eq!(log.client_ip, None);
+        assert_eq!(log.entry_kind, None);
+        assert_eq!(log.downstream_http_version, None);
+        assert_eq!(log.client_effort, None);
+        assert_eq!(log.effective_effort, None);
+        assert_eq!(log.effort_source, None);
+        assert_eq!(log.upstream_effort, None);
+        assert_eq!(log.stop_reason, None);
+        assert_eq!(log.tools_offered_count, None);
+        assert_eq!(log.tool_result_count, None);
+        assert_eq!(log.tool_use_count, None);
+        assert_eq!(log.tool_use_names, None);
+    }
+
+    /// 默认查询与带全部三个过滤条件的查询, `to_args()` 精确等于文档里的例子——`pageSize` 驼峰、
+    /// `filters` 蛇形、`filters` 恒为对象 (可能是 `{}`)。
+    #[test]
+    fn request_query_args_shape() {
+        assert_eq!(RequestQuery::default().to_args(), serde_json::json!({"page": 1, "pageSize": 50, "filters": {}}));
+
+        let full = RequestQuery {
+            page: 2,
+            filters: RequestFilters {
+                subscription_id: Some("s1".into()),
+                virtual_model_name: Some("model-sonnet".into()),
+                status: Some(RequestStatus::Error),
+            },
+        };
+        assert_eq!(
+            full.to_args(),
+            serde_json::json!({
+                "page": 2,
+                "pageSize": 50,
+                "filters": {"subscription_id": "s1", "virtual_model_name": "model-sonnet", "status": "error"},
+            })
+        );
     }
 }

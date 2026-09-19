@@ -2,8 +2,8 @@
 //! `App::update` 是 `(状态, Action) → (新状态, Vec<Cmd>)` 的同步函数, 不碰网络也不碰终端, 所以能直接单测。
 
 use crate::client::dto::{
-    ModelSlots, OverallStats, ProxyStatus, RefreshBalanceResult, RefreshModelsResult, RoutingMode, SeriesPoint, Settings, SlotEfforts,
-    Subscription, TestConnectionResult, VirtualModel,
+    ModelSlots, OverallStats, ProxyStatus, RefreshBalanceResult, RefreshModelsResult, RequestPage, RequestQuery, RoutingMode, SeriesPoint,
+    Settings, SlotEfforts, Subscription, TestConnectionResult, VirtualModel,
 };
 use crate::widgets::detail::DetailSpec;
 use crate::widgets::picker::{PickerChoice, PickerSpec, PickerTag};
@@ -59,12 +59,34 @@ pub struct OverviewData {
     pub subscriptions: Vec<Subscription>,
 }
 
-/// 可去重、可补跑的加载。
+/// [`Fetch`] 去重用的键 (Task 4)。`Fetch::Requests` 带查询参数、不再 `Copy`, 去重按种类而不是按
+/// 整个值——两个页码不同的 `Requests` 仍然是「同一种」加载, 只应该让最新那次真的发出去。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FetchKind {
+    Overview,
+    Subscriptions,
+    VirtualModels,
+    Requests,
+}
+
+/// 可去重、可补跑的加载。**不再 `Copy`**: `Requests` 带着查询参数。去重按 [`FetchKind`], 不按参数。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fetch {
     Overview,
     Subscriptions,
     VirtualModels,
+    Requests(RequestQuery),
+}
+
+impl Fetch {
+    pub fn kind(&self) -> FetchKind {
+        match self {
+            Fetch::Overview => FetchKind::Overview,
+            Fetch::Subscriptions => FetchKind::Subscriptions,
+            Fetch::VirtualModels => FetchKind::VirtualModels,
+            Fetch::Requests(_) => FetchKind::Requests,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +94,7 @@ pub enum FetchData {
     Overview(Box<OverviewData>),
     Subscriptions(Vec<Subscription>),
     VirtualModels(Vec<VirtualModel>),
+    Requests(RequestPage),
 }
 
 /// 订阅页/虚拟模型页的就地操作。**永不去重、永不补跑** (与 [`Fetch`] 相反): `runtime.rs` 对每一个
@@ -112,6 +135,10 @@ impl Mutation {
 
     /// 这次变更完成后该重新拉取哪些加载。`UpdateVirtualModel` 额外影响虚拟模型列表本身 (顺序:
     /// 先虚拟模型后订阅, 与 `runtime.rs`/`tests/ui.rs` 断言的顺序一致); 其余都只影响订阅列表。
+    ///
+    /// `Fetch` 不再 `Copy` (Task 4: `Requests` 带查询参数带 `String`), 但数组字面量 `&[...]` 只出现
+    /// 不带参数的变体, 编译器仍然把它按常量提升成 `'static` 临时值——验证过若编译器将来不接受这个
+    /// 提升, 换成命名 `const`/`static` 项再借用即可, 语义不变。
     pub fn refetch(&self) -> &'static [Fetch] {
         match self {
             Mutation::UpdateVirtualModel { .. } => &[Fetch::VirtualModels, Fetch::Subscriptions],
@@ -214,6 +241,7 @@ pub enum Action {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::dto::RequestFilters;
 
     fn slots() -> ModelSlots {
         ModelSlots { fable: String::new(), opus: String::new(), sonnet: String::new(), haiku: String::new(), fallback: String::new() }
@@ -236,6 +264,18 @@ mod tests {
         let vm = Mutation::UpdateVirtualModel { name: "model-sonnet".into(), mode: RoutingMode::Sequential, subscription_ids: vec![] };
         assert_eq!(vm.busy_key(), BusyKey::VirtualModel("model-sonnet".into()), "虚拟模型编辑应该产出 VirtualModel 忙碌键");
         assert_eq!(vm.refetch(), &[Fetch::VirtualModels, Fetch::Subscriptions], "完成后应该先重拉虚拟模型再重拉订阅");
+    }
+
+    /// Task 4: 两个页码不同的 `Requests` 仍然是「同一种」加载——`Fetches` 按 `kind()` 去重, 不按
+    /// 整个 `Fetch` 值, 否则「第 1 页还没回来时又翻到第 2 页」会被当成两种不同的加载各自去重,
+    /// 而不是「同一种, 最新为准」。
+    #[test]
+    fn fetch_kind_ignores_parameters() {
+        let page1 = Fetch::Requests(RequestQuery { page: 1, filters: RequestFilters::default() });
+        let page2 = Fetch::Requests(RequestQuery { page: 2, filters: RequestFilters::default() });
+        assert_ne!(page1, page2, "两页本身应该不相等");
+        assert_eq!(page1.kind(), FetchKind::Requests);
+        assert_eq!(page1.kind(), page2.kind(), "kind() 应该忽略参数");
     }
 
     #[test]

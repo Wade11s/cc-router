@@ -20,6 +20,7 @@ pub mod commands {
     pub const UPDATE_SUBSCRIPTION: &str = "update_subscription";
     pub const LIST_VIRTUAL_MODELS: &str = "list_virtual_models";
     pub const UPDATE_VIRTUAL_MODEL: &str = "update_virtual_model";
+    pub const LIST_REQUESTS: &str = "list_requests";
     /// 契约测试遍历这张表; 加新 command 时同时加进来。
     pub const ALL: &[&str] = &[
         PROXY_STATUS,
@@ -34,6 +35,7 @@ pub mod commands {
         UPDATE_SUBSCRIPTION,
         LIST_VIRTUAL_MODELS,
         UPDATE_VIRTUAL_MODEL,
+        LIST_REQUESTS,
     ];
 }
 

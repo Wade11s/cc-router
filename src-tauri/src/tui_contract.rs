@@ -8,11 +8,13 @@ use cc_router_tui::client::{discovery, dto, http};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::commands::proxy::ProxyStatus;
+use crate::commands::requests::{ListRequestsResult, RequestLogDto, RequestLogFilters};
 use crate::commands::statistics::{DailySeriesPointDto, OverallStatsDto, StatsRange};
 use crate::commands::subscriptions::{
     RefreshBalanceResult, RefreshModelListResult, SubscriptionPatch, TestConnectionResult, ALLOWED_SLOT_EFFORTS,
 };
 use crate::commands::virtual_models::{UpdateVirtualModelInput, VirtualModelDto};
+use crate::observability::request_log::RequestStatus;
 use crate::provider::model::AuthType;
 use crate::runtime_file::RuntimeFile;
 use crate::settings::model::{ProxyMode, Settings};
@@ -457,4 +459,247 @@ fn tui_event_names_are_bridged() {
             "TUI 关心的事件 `{name}` 不在后端 BRIDGED_EVENTS 里"
         );
     }
+}
+
+/// `RequestLogDto` 全部字段为 `Some` 时, `dto::RequestLog` 逐字段接住 (Task 4)。
+#[test]
+fn request_log_matches() {
+    let real = RequestLogDto {
+        id: "r1".into(),
+        timestamp: 1_700_000_000_000,
+        virtual_model_name: "model-sonnet".into(),
+        subscription_id: "s1".into(),
+        provider_id: "zhipu".into(),
+        endpoint_id: "default".into(),
+        real_model_name: "glm-4.6".into(),
+        response_model_name: Some("glm-4.6-vision".into()),
+        is_streaming: true,
+        status: RequestStatus::Success.as_str().to_string(),
+        http_status: Some(200),
+        total_latency_ms: Some(1234),
+        input_tokens: Some(10),
+        output_tokens: Some(20),
+        cache_creation_tokens: Some(30),
+        cache_read_tokens: Some(40),
+        error_message: Some("boom".into()),
+        upstream_response_body: Some("{}".into()),
+        client_tool: Some("claude_code".into()),
+        client_user_agent: Some("ua".into()),
+        client_version: Some("1.2.3".into()),
+        client_ip: Some("127.0.0.1".into()),
+        entry_kind: Some("messages".into()),
+        downstream_http_version: Some("HTTP/1.1".into()),
+        client_effort: Some("high".into()),
+        effective_effort: Some("high".into()),
+        effort_source: Some("client".into()),
+        upstream_effort: Some("high".into()),
+        stop_reason: Some("end_turn".into()),
+        tools_offered_count: Some(3),
+        tool_result_count: Some(1),
+        tool_use_count: Some(2),
+        tool_use_names: Some(r#"["Read","Edit"]"#.into()),
+    };
+    let view: dto::RequestLog = through_json(&real);
+    assert_eq!(
+        view,
+        dto::RequestLog {
+            id: "r1".into(),
+            timestamp: 1_700_000_000_000,
+            virtual_model_name: "model-sonnet".into(),
+            subscription_id: "s1".into(),
+            provider_id: "zhipu".into(),
+            endpoint_id: "default".into(),
+            real_model_name: "glm-4.6".into(),
+            response_model_name: Some("glm-4.6-vision".into()),
+            is_streaming: true,
+            status: dto::RequestStatus::Success,
+            http_status: Some(200),
+            total_latency_ms: Some(1234),
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+            cache_creation_tokens: Some(30),
+            cache_read_tokens: Some(40),
+            error_message: Some("boom".into()),
+            upstream_response_body: Some("{}".into()),
+            client_tool: Some("claude_code".into()),
+            client_user_agent: Some("ua".into()),
+            client_version: Some("1.2.3".into()),
+            client_ip: Some("127.0.0.1".into()),
+            entry_kind: Some("messages".into()),
+            downstream_http_version: Some("HTTP/1.1".into()),
+            client_effort: Some("high".into()),
+            effective_effort: Some("high".into()),
+            effort_source: Some("client".into()),
+            upstream_effort: Some("high".into()),
+            stop_reason: Some("end_turn".into()),
+            tools_offered_count: Some(3),
+            tool_result_count: Some(1),
+            tool_use_count: Some(2),
+            tool_use_names: Some(r#"["Read","Edit"]"#.into()),
+        }
+    );
+
+    // 老数据 / 大部分字段为 NULL 的真实形状: 除必填字段外全部 None。
+    let sparse = RequestLogDto {
+        id: "r2".into(),
+        timestamp: 1,
+        virtual_model_name: "model-fable".into(),
+        subscription_id: "s2".into(),
+        provider_id: "openai".into(),
+        endpoint_id: "default".into(),
+        real_model_name: "gpt-5".into(),
+        response_model_name: None,
+        is_streaming: false,
+        status: RequestStatus::Error.as_str().to_string(),
+        http_status: None,
+        total_latency_ms: None,
+        input_tokens: None,
+        output_tokens: None,
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
+        error_message: None,
+        upstream_response_body: None,
+        client_tool: None,
+        client_user_agent: None,
+        client_version: None,
+        client_ip: None,
+        entry_kind: None,
+        downstream_http_version: None,
+        client_effort: None,
+        effective_effort: None,
+        effort_source: None,
+        upstream_effort: None,
+        stop_reason: None,
+        tools_offered_count: None,
+        tool_result_count: None,
+        tool_use_count: None,
+        tool_use_names: None,
+    };
+    let view: dto::RequestLog = through_json(&sparse);
+    assert_eq!(
+        view,
+        dto::RequestLog {
+            id: "r2".into(),
+            timestamp: 1,
+            virtual_model_name: "model-fable".into(),
+            subscription_id: "s2".into(),
+            provider_id: "openai".into(),
+            endpoint_id: "default".into(),
+            real_model_name: "gpt-5".into(),
+            response_model_name: None,
+            is_streaming: false,
+            status: dto::RequestStatus::Error,
+            http_status: None,
+            total_latency_ms: None,
+            input_tokens: None,
+            output_tokens: None,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
+            error_message: None,
+            upstream_response_body: None,
+            client_tool: None,
+            client_user_agent: None,
+            client_version: None,
+            client_ip: None,
+            entry_kind: None,
+            downstream_http_version: None,
+            client_effort: None,
+            effective_effort: None,
+            effort_source: None,
+            upstream_effort: None,
+            stop_reason: None,
+            tools_offered_count: None,
+            tool_result_count: None,
+            tool_use_count: None,
+            tool_use_names: None,
+        }
+    );
+}
+
+/// `ListRequestsResult` → `dto::RequestPage`: `items` 与 `total` 都原样接住。
+#[test]
+fn list_requests_result_matches() {
+    let real = ListRequestsResult {
+        items: vec![RequestLogDto {
+            id: "r1".into(),
+            timestamp: 1,
+            virtual_model_name: "model-sonnet".into(),
+            subscription_id: "s1".into(),
+            provider_id: "zhipu".into(),
+            endpoint_id: "default".into(),
+            real_model_name: "glm-4.6".into(),
+            response_model_name: None,
+            is_streaming: false,
+            status: RequestStatus::Timeout.as_str().to_string(),
+            http_status: None,
+            total_latency_ms: None,
+            input_tokens: None,
+            output_tokens: None,
+            cache_creation_tokens: None,
+            cache_read_tokens: None,
+            error_message: None,
+            upstream_response_body: None,
+            client_tool: None,
+            client_user_agent: None,
+            client_version: None,
+            client_ip: None,
+            entry_kind: None,
+            downstream_http_version: None,
+            client_effort: None,
+            effective_effort: None,
+            effort_source: None,
+            upstream_effort: None,
+            stop_reason: None,
+            tools_offered_count: None,
+            tool_result_count: None,
+            tool_use_count: None,
+            tool_use_names: None,
+        }],
+        total: 42,
+    };
+    let view: dto::RequestPage = through_json(&real);
+    assert_eq!(view.total, 42);
+    assert_eq!(view.items.len(), 1);
+    assert_eq!(view.items[0].id, "r1");
+    assert_eq!(view.items[0].status, dto::RequestStatus::Timeout);
+}
+
+/// 后端的每一个请求状态, TUI 都必须认得 (落到 `Unknown` 说明枚举漏了一个); 并且 TUI 发过滤条件
+/// 用的 `as_wire()` 必须与后端 `RequestStatus::as_str()` 逐字相同——这条契约既锁字符串值,
+/// 也锁住两边多加了状态时不会互相脱节。
+#[test]
+fn every_backend_request_status_is_known_to_the_tui() {
+    for status in [RequestStatus::Success, RequestStatus::Error, RequestStatus::Timeout] {
+        let wire = status.as_str();
+        let view: dto::RequestStatus = serde_json::from_value(serde_json::Value::String(wire.to_string()))
+            .unwrap_or_else(|e| panic!("TUI 读不了后端 RequestStatus::as_str() 吐出的 {wire:?}: {e}"));
+        assert_ne!(view, dto::RequestStatus::Unknown, "{wire:?}");
+        assert_eq!(view.as_wire(), wire, "TUI as_wire() 应该与后端 as_str() 逐字相同");
+    }
+}
+
+/// TUI 全过滤的 `RequestQuery::to_args()` 顶层键恰好是 `page` / `pageSize` / `filters` 三个
+/// (camelCase 只在顶层, `filters` 保持 snake_case); `filters` 必须能被后端 `RequestLogFilters`
+/// 反序列化, 三个字段值原样保留。
+#[test]
+fn request_query_args_deserialize_into_the_backend_filters() {
+    let query = dto::RequestQuery {
+        page: 3,
+        filters: dto::RequestFilters {
+            subscription_id: Some("s1".into()),
+            virtual_model_name: Some("model-sonnet".into()),
+            status: Some(dto::RequestStatus::Error),
+        },
+    };
+    let args = query.to_args();
+    let obj = args.as_object().expect("to_args() 应该是个 JSON 对象");
+    let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, vec!["filters", "page", "pageSize"]);
+
+    let filters: RequestLogFilters = serde_json::from_value(obj["filters"].clone())
+        .unwrap_or_else(|e| panic!("后端 RequestLogFilters 读不了 TUI 发的 filters: {e}"));
+    assert_eq!(filters.subscription_id.as_deref(), Some("s1"));
+    assert_eq!(filters.virtual_model_name.as_deref(), Some("model-sonnet"));
+    assert_eq!(filters.status.as_deref(), Some("error"));
 }
