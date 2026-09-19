@@ -37,6 +37,18 @@ const DEFAULT_PAGE_ROWS: usize = 10;
 const TIME_COL: usize = 8;
 const VM_COL: usize = 14;
 const ELAPSED_COL: usize = 7;
+/// 表的选中前缀 (`highlight_symbol("▌ ")`, `HighlightSpacing::Always`) 固定宽度, 用于手算
+/// `Constraint::Fill(1)` 那一列 (订阅名) 的实际宽度给 `format::fit`——与订阅页 `draw_list` 手算
+/// `sonnet_col`、日志页 `draw_table` 手算 `model_col` 同一个公式。
+const HIGHLIGHT_COL: u16 = 2;
+
+/// 超过这么久还没等到 `finished` 的尝试, 认为它的 `finished` 永远不会来了 (客户端中途断开,
+/// 比如用户在 Claude Code 里按 Esc 取消了请求)。FIFO 配对 (`on_finished`) 天然假设 `Pending`
+/// 按时间顺序被逐个结束——一旦有一条 `started` 永远等不到自己的 `finished`, 配对会永远错位一位:
+/// 每条更晚到达的 `finished` 都会先结束这条陈旧的 `Pending` (把两次尝试之间的间隔算成它的耗时),
+/// 而真正该配对的那条反而一直显示成 Pending 转圈。10 分钟是刻意留出的余量——非流式的长生成后端
+/// 只在整个响应体结束后才发一次 `finished`, 不能因为等太久就提前把它判成中断。
+const PENDING_STALE_MS: i64 = 600_000;
 
 /// 按虚拟模型或订阅过滤当前显示的尝试; `Gap` 行不受过滤影响, 总是可见。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +170,16 @@ impl Live {
     fn on_finished(&mut self, data: &str, at_ms: i64) {
         let Ok(attempt) = serde_json::from_str::<RouteAttempt>(data) else { return };
         let ok = attempt.success.unwrap_or(false);
+        // 配对前先让陈旧的 Pending 让位 (`PENDING_STALE_MS` 常量注释): 不这样做的话, 一条永远等
+        // 不到 finished 的 started 会让后面所有 (vm, sub_id) 相同的配对都错位一位。
+        let stale_before = at_ms - PENDING_STALE_MS;
+        for entry in self.entries.iter_mut() {
+            if let EntryKind::Attempt { outcome, .. } = &mut entry.kind {
+                if *outcome == Outcome::Pending && entry.at_ms < stale_before {
+                    *outcome = Outcome::Interrupted;
+                }
+            }
+        }
         // 找最早一条相同 (vm, sub_id) 且仍是 Pending 的尝试 (VecDeque 从队头到队尾正好是
         // 从最早到最新), 先进先出配对。找不到就自成一行。
         let idx = self.entries.iter().position(|e| {
@@ -396,7 +418,8 @@ impl Live {
 
         if idx.is_empty() {
             frame.render_widget(block, area);
-            let msg = Line::styled(s.live_empty, theme.muted_style()).centered();
+            let msg_text = if self.filter.is_some() { s.live_empty_filtered } else { s.live_empty };
+            let msg = Line::styled(msg_text, theme.muted_style()).centered();
             frame.render_widget(msg, inner.centered_vertically(Constraint::Length(1)));
             return;
         }
@@ -412,7 +435,14 @@ impl Live {
             }
         }
 
-        let rows: Vec<Row> = idx.iter().map(|&i| build_row(&self.entries[i], store, theme, s, tz, tick)).collect();
+        // `Constraint::Fill(1)` (订阅名) 的实际宽度: `inner.width` 已经减掉了边框 + 内距, 再减选中
+        // 前缀 (`HIGHLIGHT_COL`)、其余四个定宽列、以及列间距 (`column_spacing(2)`, 5 列 4 个间隔)——
+        // 不这样算的话 `format::fit` 不知道该截到多宽, 订阅名超长时 ratatui 会不带省略号地硬切
+        // (Finding 5)。
+        let fixed_cols = TIME_COL as u16 + VM_COL as u16 + 1 /* 结果符号列 */ + ELAPSED_COL as u16;
+        let sub_col = inner.width.saturating_sub(HIGHLIGHT_COL).saturating_sub(fixed_cols).saturating_sub(4 * 2) as usize;
+
+        let rows: Vec<Row> = idx.iter().map(|&i| build_row(&self.entries[i], store, theme, s, tz, tick, sub_col)).collect();
         let widths = [
             Constraint::Length(TIME_COL as u16),
             Constraint::Length(VM_COL as u16),
@@ -467,8 +497,10 @@ fn outcome_elapsed_span(outcome: Outcome, s: &'static Strings, theme: &Theme) ->
     }
 }
 
-/// 订阅名取 `store` 的 `display_name`, 找不到就用 id 前 8 位 (`muted`)。
-fn build_row(entry: &Entry, store: &Store, theme: &Theme, s: &'static Strings, tz: Tz, tick: u64) -> Row<'static> {
+/// 订阅名取 `store` 的 `display_name`, 找不到就用 id 前 8 位 (`muted`)。`sub_col`: `Fill(1)` 列的
+/// 实际宽度 (调用方按 `draw_table` 里的公式手算), 超长名字用 `fit` 截断补省略号, 不让 ratatui
+/// 不带提示地硬切 (Finding 5)。
+fn build_row(entry: &Entry, store: &Store, theme: &Theme, s: &'static Strings, tz: Tz, tick: u64, sub_col: usize) -> Row<'static> {
     let time_cell = Cell::from(fit(&clock(entry.at_ms, tz), TIME_COL));
     match &entry.kind {
         EntryKind::Gap => Row::new(vec![
@@ -485,7 +517,7 @@ fn build_row(entry: &Entry, store: &Store, theme: &Theme, s: &'static Strings, t
                 None => (sub_id.chars().take(8).collect::<String>(), true),
             };
             let sub_style = if muted { theme.muted_style() } else { Style::default() };
-            let sub_cell = Cell::from(Span::styled(format!("→ {name}"), sub_style));
+            let sub_cell = Cell::from(Span::styled(fit(&format!("→ {name}"), sub_col), sub_style));
             let result_cell = Cell::from(Line::from(outcome_result_span(*outcome, theme, tick)));
             let elapsed_cell = Cell::from(Line::from(outcome_elapsed_span(*outcome, s, theme)).right_aligned());
             Row::new(vec![time_cell, vm_cell, sub_cell, result_cell, elapsed_cell])
@@ -645,6 +677,55 @@ mod tests {
             live.entries[0].kind,
             EntryKind::Attempt { vm: "model-sonnet".into(), sub_id: "sub-1".into(), outcome: Outcome::Done { ok: true, elapsed_ms: Some(500) } },
             "最早一条应该先被结束, 耗时相对它自己的 started 时刻算"
+        );
+        assert_eq!(
+            live.entries[1].kind,
+            EntryKind::Attempt { vm: "model-sonnet".into(), sub_id: "sub-1".into(), outcome: Outcome::Pending },
+            "第二条仍应该是 Pending"
+        );
+    }
+
+    /// Finding 1: 一条 `started` 永远等不到自己的 `finished` (客户端中途断开) 不该永久错位后面的
+    /// 配对——过了 `PENDING_STALE_MS` 还没结束的 `Pending` 应该先被判成 `Interrupted`, 让位给更晚
+    /// 到达的 `finished` 正确配对到它自己的 `started`。
+    #[test]
+    fn a_stale_pending_stops_absorbing_later_finishes() {
+        let mut live = Live::default();
+        send_started(&mut live, "model-sonnet", "sub-1", NOW);
+        let b_start = NOW + PENDING_STALE_MS + 1;
+        send_started(&mut live, "model-sonnet", "sub-1", b_start);
+        send_finished(&mut live, "model-sonnet", "sub-1", true, b_start + 50);
+
+        assert_eq!(live.entries.len(), 2, "陈旧的 A 应该原地变成 Interrupted, 不该被 push 成新行");
+        assert_eq!(
+            live.entries[0].kind,
+            EntryKind::Attempt { vm: "model-sonnet".into(), sub_id: "sub-1".into(), outcome: Outcome::Interrupted },
+            "A 早已过期, 应该被判定为中断, 不再参与配对"
+        );
+        assert_eq!(
+            live.entries[1].kind,
+            EntryKind::Attempt { vm: "model-sonnet".into(), sub_id: "sub-1".into(), outcome: Outcome::Done { ok: true, elapsed_ms: Some(50) } },
+            "B 应该配对到它自己的 finished, 耗时是 B 自己的间隔而不是 A 被顶替后算出来的间隔"
+        );
+    }
+
+    /// Finding 1: 仍在阈值内的陈旧 `Pending` 不该被误伤——FIFO 规则照常生效。
+    #[test]
+    fn a_pending_within_the_threshold_still_pairs_fifo() {
+        let mut live = Live::default();
+        send_started(&mut live, "model-sonnet", "sub-1", NOW);
+        send_started(&mut live, "model-sonnet", "sub-1", NOW + 100);
+        send_finished(&mut live, "model-sonnet", "sub-1", true, NOW + PENDING_STALE_MS - 1);
+
+        assert_eq!(live.entries.len(), 2);
+        assert_eq!(
+            live.entries[0].kind,
+            EntryKind::Attempt {
+                vm: "model-sonnet".into(),
+                sub_id: "sub-1".into(),
+                outcome: Outcome::Done { ok: true, elapsed_ms: Some(PENDING_STALE_MS - 1) },
+            },
+            "仍在阈值内的最早一条应该正常配对, 不该被误判成过期"
         );
         assert_eq!(
             live.entries[1].kind,

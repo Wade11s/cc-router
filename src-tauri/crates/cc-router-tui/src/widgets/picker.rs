@@ -43,7 +43,8 @@ pub enum PickerTag {
     SlotModel { sub_id: String, slot: Slot },
     SlotEffort { sub_id: String, slot: Slot },
     VmAddSubscription { vm: String },
-    /// 实时路由页 (Task 7) 按虚拟模型或订阅过滤; 日志页 (Task 8) 会复用。
+    /// 实时路由页 (Task 7) 按虚拟模型或订阅过滤; 日志页 (Task 8) 不复用这个变体, 用的是自己的
+    /// `LogsFilter` (见下)。
     LiveFilter,
     /// 日志页 (Task 8) 按订阅 / 虚拟模型 / 状态过滤; 与 `LiveFilter` 分开是因为可选值的形状不同
     /// (多了状态维度)。

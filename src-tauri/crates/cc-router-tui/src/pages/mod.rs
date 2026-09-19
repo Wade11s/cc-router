@@ -46,7 +46,8 @@ pub struct DrawCtx<'a> {
     /// 每条订阅最近一次就地操作的结果 (与对应 toast 同一份文本), 键是订阅 id; 发起新操作时移除
     /// (`App::start_mutation`)。订阅详情页拿它在「状态」行后面画一条「上次操作」(I1 fix)。
     pub last_outcome: &'a HashMap<String, (ToastKind, String)>,
-    /// 显示时间用的时区 (Task 6 起)。本 Task 没有页面用到, Task 7 起的实时路由页才用。
+    /// 显示时间用的时区 (Task 6 起加的字段); 实时路由页 (Task 7) 与日志页 (Task 8) 都靠它把毫秒
+    /// 时间戳格式化成本地时刻。
     pub tz: Tz,
 }
 

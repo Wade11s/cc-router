@@ -34,12 +34,19 @@ const CLIENT_COL: usize = 10;
 const LATENCY_COL: usize = 6;
 const TOKENS_COL: usize = 11;
 const WIDE_THRESHOLD: u16 = 120;
+/// 表的选中前缀 (`highlight_symbol("▌ ")`, `HighlightSpacing::Always`) 固定宽度, 用于手算
+/// `Constraint::Fill(1)` 那一列 (模型名) 的实际宽度给 `format::fit`——与订阅页 `draw_list` 手算
+/// `sonnet_col`、实时路由页 `draw_table` 手算 `sub_col` 同一个公式。
+const HIGHLIGHT_COL: u16 = 2;
 
 #[derive(Default)]
 pub struct Logs {
     /// 当前想看的查询 (分页 + 过滤条件)。
     query: RequestQuery,
-    /// 最近一次接受的结果, 连同它对应的查询——`draw`/`⏎` 都要按这份查询的形状来解释 `items`。
+    /// 最近一次接受的结果, 连同它对应的查询——只有这份查询与当前的 `query` 一致时才当作"已加载"
+    /// (见 `current_page`); 查询已经变了 (比如断线期间 `show_subscription` 换了过滤但发不出新的
+    /// fetch) 就当作还没加载, 不能把上一次查询的行/计数展示在新过滤下面 (Finding 2)。`draw`/`⏎`
+    /// 都经 `current_page`/`current_items` 读取, 天然遵守这条规则, 不需要各自再判一次。
     data: Option<(RequestQuery, RequestPage)>,
     /// 已接受结果的 `issued`, 挡住晚到的旧结果。
     accepted: u64,
@@ -80,12 +87,23 @@ impl Logs {
         self.selected_id = None;
     }
 
+    /// `self.data` 里存的查询与当前 `self.query` 一致时才返回它的内容——否则说明 `self.query`
+    /// 已经变了 (比如 `show_subscription` 换了过滤, 但断线期间 `App::switch_tab` 发不出新的
+    /// fetch, 见 Finding 2), 旧结果不该被当成这份新查询的答案。`current_items`/`total_pages`/
+    /// `draw_table` 统一走这一个函数, 不能各自判一次而漏掉某处。
+    fn current_page(&self) -> Option<&RequestPage> {
+        match &self.data {
+            Some((q, page)) if *q == self.query => Some(page),
+            _ => None,
+        }
+    }
+
     fn current_items(&self) -> &[RequestLog] {
-        self.data.as_ref().map(|(_, page)| page.items.as_slice()).unwrap_or(&[])
+        self.current_page().map(|page| page.items.as_slice()).unwrap_or(&[])
     }
 
     fn total_pages(&self) -> u32 {
-        let Some((_, page)) = &self.data else { return 1 };
+        let Some(page) = self.current_page() else { return 1 };
         let total = page.total.max(0) as u64;
         let size = u64::from(REQUEST_PAGE_SIZE);
         (total.div_ceil(size).max(1)) as u32
@@ -255,7 +273,7 @@ impl Logs {
         let wide = area.width >= WIDE_THRESHOLD;
 
         let dims = self.filter_dims(store, s);
-        let total = self.data.as_ref().map(|(_, p)| p.total).unwrap_or(0);
+        let total = self.current_page().map(|p| p.total).unwrap_or(0);
         let mut page_text = (s.lg_page)(self.query.page, self.total_pages(), total);
         if self.loading {
             let glyph = Throbber::default().throbber_set(BRAILLE_SIX).to_symbol_span(&spinner_state(ctx.tick));
@@ -276,13 +294,15 @@ impl Logs {
         let capacity = inner.height.saturating_sub(1) as usize; // 减掉表头一行
         self.last_page_rows = capacity.max(1);
 
-        // `data` 为 None 时一律显示加载中 (与 `Subscriptions::draw_placeholder` 同一套约定), 不看
-        // `loading`——`switch_tab` 只在已连接时才发 `Refresh` (`App::switch_tab`), 断线/重连期间
-        // `loading` 一直是 false, 这时候如果退化成「没有记录」的空态文案就是在撒谎; 加载失败之后
-        // 同理 (`accept_fetch` 的 `Err` 分支只清 `loading`, 不产出任何占位数据), 一直显示加载中直到
-        // 下一次轮询/手动刷新真的成功——错误信息本身已经由 `App` 弹过 toast, 断线时头部也已经在
-        // 显示「重连中」, 不需要这里再额外区分。
-        if self.data.is_none() {
+        // `current_page()` 为 `None` 时一律显示加载中 (与 `Subscriptions::draw_placeholder` 同一套
+        // 约定), 不看 `loading`——`switch_tab` 只在已连接时才发 `Refresh` (`App::switch_tab`), 断线/
+        // 重连期间 `loading` 一直是 false, 这时候如果退化成「没有记录」的空态文案就是在撒谎; 加载
+        // 失败之后同理 (`accept_fetch` 的 `Err` 分支只清 `loading`, 不产出任何占位数据), 一直显示
+        // 加载中直到下一次轮询/手动刷新真的成功——错误信息本身已经由 `App` 弹过 toast, 断线时头部
+        // 也已经在显示「重连中」, 不需要这里再额外区分。`data` 存的查询与当前 `self.query` 不一致
+        // (Finding 2, 比如断线期间 `show_subscription` 换了过滤但发不出新的 fetch) 时同样当作还没
+        // 加载, 不能把上一次查询的行展示在新过滤下面。
+        if self.current_page().is_none() {
             frame.render_widget(block, area);
             let mut state = spinner_state(ctx.tick);
             let throbber = Throbber::default().label(s.loading).throbber_set(BRAILLE_SIX).style(theme.muted_style());
@@ -298,6 +318,19 @@ impl Logs {
         }
 
         let sub_col = if wide { SUB_COL_WIDE } else { SUB_COL };
+        // `Constraint::Fill(1)` (模型名) 的实际宽度: `inner.width` 已经减掉了边框 + 内距, 再减选中
+        // 前缀 (`HIGHLIGHT_COL`)、其余定宽列、以及列间距 (`column_spacing(1)`, 列数 - 1 个间隔)——
+        // 不这样算的话 `format::fit` 不知道该截到多宽, 模型名超长时 ratatui 会不带省略号地硬切
+        // (Finding 5)。
+        let fixed_cols = TIME_COL as u16
+            + STATUS_COL as u16
+            + VM_COL as u16
+            + sub_col as u16
+            + if wide { CLIENT_COL as u16 } else { 0 }
+            + LATENCY_COL as u16
+            + TOKENS_COL as u16;
+        let gap_count: u16 = if wide { 7 } else { 6 }; // 8 (wide) / 7 (窄) 列各少 1 个间隔
+        let model_col = inner.width.saturating_sub(HIGHLIGHT_COL).saturating_sub(fixed_cols).saturating_sub(gap_count) as usize;
         let mut header_cells =
             vec![Cell::from(fit(s.lg_col_time, TIME_COL)), Cell::from(fit(s.lg_col_status, STATUS_COL)), Cell::from(fit(s.lg_col_vm, VM_COL)), Cell::from(fit(s.lg_col_sub, sub_col))];
         if wide {
@@ -317,7 +350,7 @@ impl Logs {
         widths.push(Constraint::Length(LATENCY_COL as u16));
         widths.push(Constraint::Length(TOKENS_COL as u16));
 
-        let rows: Vec<Row> = items.iter().map(|item| build_row(item, store, theme, s, ctx.now_ms, ctx.tz, wide, sub_col)).collect();
+        let rows: Vec<Row> = items.iter().map(|item| build_row(item, store, theme, s, ctx.now_ms, ctx.tz, wide, sub_col, model_col)).collect();
 
         let idx = self.selected_id.as_deref().and_then(|id| items.iter().position(|r| r.id == id));
         self.table_state.select(idx);
@@ -400,8 +433,20 @@ fn subscription_text(item: &RequestLog, store: &Store) -> (String, bool) {
     }
 }
 
+/// `model_col`: `Fill(1)` 列的实际宽度 (调用方按 `draw_table` 里的公式手算), 超长模型名用 `fit`
+/// 截断补省略号, 不让 ratatui 不带提示地硬切 (Finding 5)。
 #[allow(clippy::too_many_arguments)] // 与订阅页 / 实时路由页的表格行构造函数同一条先例
-fn build_row(item: &RequestLog, store: &Store, theme: &Theme, s: &'static Strings, now_ms: i64, tz: crate::format::Tz, wide: bool, sub_col: usize) -> Row<'static> {
+fn build_row(
+    item: &RequestLog,
+    store: &Store,
+    theme: &Theme,
+    s: &'static Strings,
+    now_ms: i64,
+    tz: crate::format::Tz,
+    wide: bool,
+    sub_col: usize,
+    model_col: usize,
+) -> Row<'static> {
     let time_cell = Cell::from(fit(&short_stamp(item.timestamp, now_ms, tz), TIME_COL));
     let status_style = status_cell_style(item.status, theme);
     let status_cell = Cell::from(ratatui::text::Span::styled(fit(&status_cell_text(item, s), STATUS_COL), status_style));
@@ -415,7 +460,7 @@ fn build_row(item: &RequestLog, store: &Store, theme: &Theme, s: &'static String
         let client = item.client_tool.as_deref().unwrap_or("—");
         cells.push(Cell::from(fit(client, CLIENT_COL)));
     }
-    cells.push(Cell::from(item.real_model_name.clone()));
+    cells.push(Cell::from(fit(&item.real_model_name, model_col)));
     let latency = item.total_latency_ms.map(duration).unwrap_or_else(|| "—".to_string());
     cells.push(Cell::from(fit(&latency, LATENCY_COL)));
     cells.push(Cell::from(fit(&tokens_text(item), TOKENS_COL)));
@@ -691,11 +736,37 @@ impl Component for Logs {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
     use super::*;
     use crate::client::dto::Subscription;
+    use crate::format::Tz;
+    use crate::fx::Fx;
     use crate::i18n::ZH;
+    use crate::theme::ColorMode;
 
     const NOW: i64 = 1_700_000_000_000;
+
+    /// 只用来渲染 `Logs::draw` 本身的最小 `DrawCtx` 环境——日志页不用 `fx`/`busy`/`last_outcome`,
+    /// 这几项给空值即可 (Finding 2 的渲染断言需要真的画一帧, 不能只看内部状态)。
+    fn render(logs: &mut Logs, store: &Store, width: u16, height: u16) -> String {
+        let theme = Theme::new(ColorMode::TrueColor);
+        let mut fx = Fx::new(false);
+        let busy = HashMap::new();
+        let last_outcome = HashMap::new();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let mut ctx = DrawCtx { theme: &theme, s: &ZH, now_ms: NOW, tick: 0, fx: &mut fx, store, busy: &busy, last_outcome: &last_outcome, tz: Tz::Fixed(8 * 3600) };
+                logs.draw(f, area, &mut ctx);
+            })
+            .unwrap();
+        terminal.backend().to_string()
+    }
 
     fn store_with(subs: Vec<Subscription>) -> Store {
         let mut store = Store::default();
@@ -904,6 +975,45 @@ mod tests {
 
         assert_eq!(logs.handle_key(key(KeyCode::Char('n')), &store, s), Some(Action::Refresh));
         assert_eq!(logs.query.page, 2);
+    }
+
+    /// Finding 2: 切换过滤之后, 在匹配的结果真的落地之前, `total_pages()` 不该继续信任上一个查询
+    /// 算出来的页数——否则 `n` 会在还没加载的新过滤下面把用户翻到一个凭空算出来的「第 2 页」。
+    #[test]
+    fn paging_is_bounded_by_the_current_querys_total() {
+        let store = Store::default();
+        let s = &ZH;
+        let mut logs = Logs::default();
+        let q = logs.query.clone();
+        logs.accept_fetch(&q, 1, &Ok(FetchData::Requests(page(vec![log("a", "1", RequestStatus::Success, NOW)], 120))));
+        assert_eq!(logs.total_pages(), 3, "准备: 无过滤时应该有 3 页");
+
+        logs.update(&Action::PickerDone { tag: PickerTag::LogsFilter, choice: PickerChoice::Item("status:error".into()) }, &store, s);
+        assert_eq!(logs.total_pages(), 1, "查询已经变了, 旧查询算出来的 total 不该再被信任");
+        assert_eq!(logs.handle_key(key(KeyCode::Char('n')), &store, s), None, "匹配结果落地之前 n 不该翻页");
+
+        let q2 = logs.query.clone();
+        logs.accept_fetch(&q2, 2, &Ok(FetchData::Requests(page(vec![log("b", "1", RequestStatus::Error, NOW)], 120))));
+        assert_eq!(logs.total_pages(), 3, "匹配的结果落地后应该恢复");
+        assert_eq!(logs.handle_key(key(KeyCode::Char('n')), &store, s), Some(Action::Refresh), "落地后 n 应该恢复正常翻页");
+    }
+
+    /// Finding 2: `show_subscription` (实时路由页 `⏎` 跳转过来) 直接改 `query`, 断线期间发不出新
+    /// 的 fetch, `data` 还留着上一个查询的结果——渲染必须当作「还没加载」, 不能把旧查询的行 (以及
+    /// 旧查询的订阅备注名) 展示在新过滤下面。
+    #[test]
+    fn rows_of_another_query_are_not_shown_under_the_new_filter() {
+        let store = store_with(vec![sub("1", "智谱主号"), sub("3", "另一条订阅")]);
+        let mut logs = Logs::default();
+        let q = logs.query.clone();
+        logs.accept_fetch(&q, 1, &Ok(FetchData::Requests(page(vec![log("a", "1", RequestStatus::Success, NOW)], 1))));
+        assert_eq!(logs.current_items().len(), 1, "准备: 应该先有一页无过滤的数据落地");
+
+        logs.show_subscription("3");
+
+        let out = render(&mut logs, &store, 100, 24);
+        assert!(out.contains(ZH.loading), "过滤已经变了但还没发出新的 fetch, 应该显示加载中\n{out}");
+        assert!(!out.contains("智谱主号"), "旧查询 (订阅 1) 的行不该出现在新过滤 (订阅 3) 下面\n{out}");
     }
 
     #[test]

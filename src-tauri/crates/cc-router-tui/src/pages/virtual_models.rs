@@ -407,8 +407,10 @@ impl Component for VirtualModels {
         }
         let idx = self.selected_index.min(vms.len() - 1);
         let vm = &vms[idx];
-        // I4: 订阅列表还没加载完 (或一直加载失败) 时, `a`/`x`/`J`/`K`/`s` 都依赖它才能判断"这个 id
-        // 是不是真的已删除" / "能不能加入", 统一拒绝——不能在这段时间把找不到的 id 误判成"已删除"。
+        // I4: 订阅列表还没加载完 (或一直加载失败) 时, `a`/`x`/`J`/`K` 都依赖它才能判断"这个 id 是
+        // 不是真的已删除" / "能不能加入", 统一拒绝——不能在这段时间把找不到的 id 误判成"已删除"。
+        // `s` 不在这条规则里 (Task 5 起): 它的拒绝判定挪进了 `save_action`, 按当前成员列表是否
+        // 为空来定 (空列表没有 id 需要核对订阅是否存在, 没加载完也允许保存)。
         let subs_loaded = store.subscriptions_loaded();
 
         match self.focus {

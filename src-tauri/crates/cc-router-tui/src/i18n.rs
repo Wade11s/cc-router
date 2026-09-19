@@ -245,6 +245,9 @@ pub struct Strings {
     pub live_title: &'static str,
     /// 还没有任何路由事件时, 表格区域居中显示的一行提示。
     pub live_empty: &'static str,
+    /// 有过滤条件、但没有任何事件符合时的提示——不能用 `live_empty` 那句"还没有事件", 那是假的,
+    /// 只是被过滤掉了 (与日志页的 `lg_empty_filtered` 同一条先例)。
+    pub live_empty_filtered: &'static str,
     /// 未暂停且跟随最新时的底栏文案。
     pub live_following: &'static str,
     /// 暂停时的底栏文案, 参数是暂停后新增、且符合过滤的尝试数。
@@ -562,6 +565,7 @@ pub const ZH: Strings = Strings {
     live_spark_total: |n| format!("{n} 次"),
     live_title: "实时路由",
     live_empty: "还没有路由事件，Claude Code 发出请求后会出现在这里",
+    live_empty_filtered: "没有符合过滤条件的事件 · Esc 清除过滤",
     live_following: "跟随最新",
     live_paused: |n| format!("已暂停 · 新增 {n} 条"),
     live_count: |n| format!("共 {n} 条"),
@@ -586,7 +590,7 @@ pub const ZH: Strings = Strings {
         ("⏎", "查看该订阅的请求日志"),
         ("/", "按虚拟模型或订阅过滤"),
         ("Esc", "清除过滤 / 回到最新"),
-        ("耗时", "从发起到上游开始响应, 不含生成时间"),
+        ("耗时", "流式到上游开始响应, 非流式到响应结束"),
         ("并发", "同一虚拟模型 + 订阅的并发尝试按先后配对"),
     ],
 

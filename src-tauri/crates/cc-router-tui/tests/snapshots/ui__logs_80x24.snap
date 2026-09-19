@@ -9,7 +9,7 @@ expression: "render(&mut a, 80, 24)"
 "│   时间        状态   虚拟模型       订阅         模型     耗时   Token 入/出 │" Hidden by multi-width symbols: [(5, " "), (7, " "), (17, " "), (19, " "), (24, " "), (26, " "), (28, " "), (30, " "), (39, " "), (41, " "), (52, " "), (54, " "), (61, " "), (63, " "), (74, " "), (77, " ")]
 "│ ▌ 06:06:40    ✓ 200  model-sonnet   智谱主号     glm-4.6  1.8s   12.3K/3.4K  │" Hidden by multi-width symbols: [(39, " "), (41, " "), (43, " "), (45, " ")]
 "│   06:03:20    ✕ 429  model-opus     Kimi 备用    kimi-k2  400ms  —           │" Hidden by multi-width symbols: [(44, " "), (46, " ")]
-"│   05:58:20    ✕ 超时 model-haiku    示例中转     claude-3 —      —           │" Hidden by multi-width symbols: [(19, " "), (21, " "), (39, " "), (41, " "), (43, " "), (45, " ")]
+"│   05:58:20    ✕ 超时 model-haiku    示例中转     claude-… —      —           │" Hidden by multi-width symbols: [(19, " "), (21, " "), (39, " "), (41, " "), (43, " "), (45, " ")]
 "│   11-14 23:13 ✓ 200  model-sonnet   智谱主号     glm-4.6  2.0s   500/200     │" Hidden by multi-width symbols: [(39, " "), (41, " "), (43, " "), (45, " ")]
 "│                                                                              │"
 "│                                                                              │"
