@@ -260,6 +260,9 @@ pub struct Strings {
     pub filter_summary: fn(what: &str) -> String,
     pub filter_dim_vm: &'static str,
     pub filter_dim_sub: &'static str,
+    /// 空格键的显示名 (实时路由页 `hints()` 用它当键名, 不能像 "↑↓"/"m" 那样直接写死符号——
+    /// "空格" 本身是中文, 必须走 `Strings`)。
+    pub key_space: &'static str,
     pub key_pause: &'static str,
     pub key_resume: &'static str,
     pub key_latest: &'static str,
@@ -505,6 +508,7 @@ pub const ZH: Strings = Strings {
     filter_summary: |what| format!("过滤 {what}"),
     filter_dim_vm: "虚拟模型",
     filter_dim_sub: "订阅",
+    key_space: "空格",
     key_pause: "暂停",
     key_resume: "继续",
     key_latest: "最新",

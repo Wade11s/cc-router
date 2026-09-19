@@ -553,7 +553,8 @@ impl Component for Live {
     }
 
     fn hints(&self, s: &'static Strings) -> Vec<Hint<'static>> {
-        let mut hints = vec![if self.paused_at.is_some() { ("空格", s.key_resume) } else { ("空格", s.key_pause) }, ("↑↓", s.key_select)];
+        let space_hint = if self.paused_at.is_some() { s.key_resume } else { s.key_pause };
+        let mut hints = vec![(s.key_space, space_hint), ("↑↓", s.key_select)];
         if self.selected.is_some() {
             hints.push(("G", s.key_latest));
         }
