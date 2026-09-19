@@ -45,6 +45,19 @@ pub enum PickerTag {
     VmAddSubscription { vm: String },
 }
 
+impl PickerTag {
+    /// 这个弹窗是为哪条订阅开的; 与订阅无关的 (`VmAddSubscription`, 以及 Task 7/8 加的过滤弹窗)
+    /// → `None`。Task 5: `App` 据此判断一个已经打开的选择器是否该在它所属的订阅消失时自动关掉——
+    /// 不依赖任何页面主动发出通知 (弹窗打开之后、用户还没在里面选任何值之前, 页面自己压根没有
+    /// 草稿, 不会触发那类通知)。
+    pub fn subscription_id(&self) -> Option<&str> {
+        match self {
+            PickerTag::SlotModel { sub_id, .. } | PickerTag::SlotEffort { sub_id, .. } => Some(sub_id.as_str()),
+            PickerTag::VmAddSubscription { .. } => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickerSpec {
     pub tag: PickerTag,
@@ -96,6 +109,11 @@ impl PartialEq for PickerState {
 }
 
 impl PickerState {
+    /// 这次弹窗是为哪个实体开的 (Task 5 起供 `App` 在订阅列表刷新后核对是否该自动关闭)。
+    pub fn tag(&self) -> &PickerTag {
+        &self.spec.tag
+    }
+
     pub fn new(spec: PickerSpec) -> Self {
         // I2(a) (fix round final): 输入框不再预填 `initial`——旧版预填之后用户第一次打字会变成
         // "追加在预填值后面" (I2 的问题描述: 输入 "glm" 实际变成 "dglm"); `initial` 现在只用来

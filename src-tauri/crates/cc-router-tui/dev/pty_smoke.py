@@ -15,9 +15,10 @@
      一位、m 切换调度模式 (Sequential -> RoundRobin, 同一份草稿), s 保存 (打一次假后端的
      `update_virtual_model`); 4 = 实时路由, 仍是占位; 1 = 回总览);
   3. 断言: 退出码 0、进出过备用屏幕、几个页面的关键文字 (含就地操作的 toast 文案、确认放弃提示)
-     都出现过、假后端真的收到了 `update_subscription` (fable 槽模型是选中的 "glm") 和
-     `update_virtual_model` (调度模式已经从 sequential 切到 round_robin、订阅顺序被重排) 的请求体、
-     空闲 2 秒几乎不输出 (按需重绘, 且这个窗口不撞上任何 toast 的消散动效)。
+     都出现过、假后端真的收到了 `update_subscription` (fable 槽模型是选中的 "glm-4.6", 见下面
+     "Kimi 备用" 的 `model_cache`) 和 `update_virtual_model` (调度模式已经从 sequential 切到
+     round_robin、订阅顺序被重排) 的请求体、空闲 2 秒几乎不输出 (按需重绘, 且这个窗口不撞上任何
+     toast 的消散动效)。
 
 用法 (仓库根目录):
   cd src-tauri && cargo build -p cc-router-tui && cd ..
@@ -48,15 +49,18 @@ def quota(limit, used):
             "cache_read": 0, "period_start_ms": 0, "exceeded": used >= limit}
 
 
-def sub(sid, name, state, dispatchable, usage=None, cooldown=None):
+def sub(sid, name, state, dispatchable, usage=None, cooldown=None, model_cache=None):
     # provider_id / base_url / auth_type / model_slots 是 Task 2 加的订阅详情字段, dto::Subscription
     # 里没有 #[serde(default)], 缺了任何一个都会让 list_subscriptions 反序列化失败, 订阅页 (Task 3
-    # 起是真页面) 整页转圈圈。
-    return {"id": sid, "display_name": name, "provider_display_name": "p", "enabled": True, "state": state,
-            "cooldown_until": cooldown, "last_error_message": None, "is_dispatchable": dispatchable,
-            "quota_usage": [usage] if usage else [],
-            "provider_id": "p", "base_url": "https://example.invalid", "auth_type": "api_key",
-            "model_slots": {"fable": "d", "opus": "a", "sonnet": "b", "haiku": "c"}}
+    # 起是真页面) 整页转圈圈。model_cache 有 #[serde(default)], 缺省 (None) 时干脆不带这个 key。
+    d = {"id": sid, "display_name": name, "provider_display_name": "p", "enabled": True, "state": state,
+         "cooldown_until": cooldown, "last_error_message": None, "is_dispatchable": dispatchable,
+         "quota_usage": [usage] if usage else [],
+         "provider_id": "p", "base_url": "https://example.invalid", "auth_type": "api_key",
+         "model_slots": {"fable": "d", "opus": "a", "sonnet": "b", "haiku": "c"}}
+    if model_cache is not None:
+        d["model_cache"] = model_cache
+    return d
 
 
 DATA = {
@@ -69,7 +73,12 @@ DATA = {
     "get_daily_series": [{"day": "2026-01-01", "hour": h, "request_count": abs(h - 12) * 3 + 1} for h in range(24)],
     "list_subscriptions": [
         sub("1", "智谱主号", "healthy", True, quota(100, 62)),
-        sub("2", "Kimi 备用", "rate_limited", False, quota(100, 91), NOW_MS + 42000),
+        # Task 5: 补上 model_cache, 好让脚本覆盖 picker「匹配项排在自定义行前面」这条 (以前 Kimi
+        # 备用没有缓存过模型, 输入 "glm" 只会出现「使用「glm」」一个候选, 测不出排序)。
+        sub("2", "Kimi 备用", "rate_limited", False, quota(100, 91), NOW_MS + 42000, model_cache={
+            "fetched_at": NOW_MS,
+            "models": [{"id": "glm-4.6", "display_name": None}, {"id": "glm-4.5-air", "display_name": None}],
+        }),
         sub("3", "示例中转", "auth_failed", False),
     ],
     # Task 4 的四个就地操作: 这里只挑 test_connection / set_subscription_enabled 两个真的按一遍
@@ -210,16 +219,17 @@ def main():
     # t = 测试连接 (等够 0.8s 让假后端的响应 + toast + 重拉列表都跑完), e = 就地启停 (同样等 0.8s);
     # ? / Esc = 帮助弹窗开关; 此时仍在订阅页且选中 "Kimi 备用":
     #   ⏎ 进详情 (焦点落在 fable 槽) → ⏎ 打开 fable 槽的模型 picker (I2 起输入框不再预填当前值,
-    #   打开时是空的) → 输入 "glm" (Kimi 备用没有缓存过模型列表, 只会出现「使用「glm」」这一个
-    #   候选) → ⏎ 选中它, 写进草稿 (fable 槽 = "glm")。
+    #   打开时是空的) → 输入 "glm" (Task 5 起 Kimi 备用缓存了两个模型 glm-4.6/glm-4.5-air, "glm"
+    #   两个都能匹配上, 匹配到的项排在「使用「glm」」自定义行前面) → ⏎ 选中排在最前的匹配项,
+    #   写进草稿 (fable 槽 = "glm-4.6")。
     #
     # M9(c): 造完草稿先不急着保存, 练一遍放弃流程 (旧版这条脚本从没走过这条路径, 只在
     # `TestBackend` 单测里测过): q (脏页面按 q 会先问「确定放弃」, 不立即退出) → n (选否, 草稿
     # 原样保留, 弹窗关掉) → Esc (在 Detail 焦点上脏着按 Esc 同样会问一遍「确定放弃」) → y (这次
     # 选是, `Action::Confirmed(DiscardDraft)` 真的丢弃草稿, 焦点退回列表)。
     #
-    # 放弃之后重新走一遍 ⏎⏎glm⏎ 造一份新草稿, 这次真的按 s 保存 (打一次假后端的
-    # `update_subscription`, 等够 0.8s 让响应 + toast + 重拉列表都跑完)。
+    # 放弃之后重新走一遍 ⏎⏎glm⏎ 造一份新草稿 (同样落在 "glm-4.6"), 这次真的按 s 保存 (打一次
+    # 假后端的 `update_subscription`, 等够 0.8s 让响应 + toast + 重拉列表都跑完)。
     #
     # 3 = 虚拟模型页 (Task 6 起是真页面, 默认选中 model-fable / Models 焦点):
     #   l 切到 Members 焦点 (选中 model-fable 的成员列表) → J 把第一条订阅下移一位 (造一个草稿,
@@ -308,8 +318,9 @@ def main():
         failures.append("假后端没有收到 update_subscription 请求")
     else:
         fable = sub_payload.get("patch", {}).get("model_slots", {}).get("fable")
-        if fable != "glm":
-            failures.append(f"update_subscription 的 fable 槽应该是 \"glm\" (放弃流程练习之后重新选的), 实际 {fable!r}")
+        if fable != "glm-4.6":
+            failures.append(f"update_subscription 的 fable 槽应该是 \"glm-4.6\" (放弃流程练习之后重新选的, 缓存里 "
+                             f"「glm」匹配到的第一项), 实际 {fable!r}")
 
     vm_payload = RECORDED.get("update_virtual_model")
     if not vm_payload:

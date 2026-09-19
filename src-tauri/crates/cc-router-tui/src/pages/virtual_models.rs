@@ -213,7 +213,20 @@ impl VirtualModels {
     /// 草稿里如果还有 `Store` 找不到的 id (「已删除」的订阅) 也拒绝——发给后端只会换回一句裸 uuid
     /// 的英文报错, 不如就地引导用户先按 `x` 移除。断线 / 忙碌由 `App::start_mutation` 统一处理,
     /// 这里不用重复判断。
+    ///
+    /// Task 5: 订阅列表还没加载完时 `s` 的拒绝逻辑挪进这里 (原来在 `handle_key` 的两处 `s` 分支各
+    /// 挡一次)——判定改按**当前 (草稿或原始) 的成员列表是否为空**, 不再是「订阅列表没加载完就一律
+    /// 拒绝」: 成员为空 (比如 `model-haiku` 这种「只改模式」的草稿) 没有任何 id 需要核对是否已
+    /// 删除, 不该被这条守卫挡住。用 `effective_subscription_ids` 而不是只看 `draft.subscription_ids`
+    /// ——这样即使没有草稿 (比如手滑按了 `s`, `is_dirty()` 恒假, 本来就是 no-op) 也维持旧版「订阅
+    /// 列表没加载完时非空成员一律先提示」的覆盖范围, 不因为这次重构悄悄改变这类 no-op 按键的表现
+    /// (见 `members_are_not_called_deleted_before_subscriptions_load`)。
     fn save_action(&self, s: &'static Strings, store: &Store) -> Option<Action> {
+        let vms = store.virtual_models();
+        let vm = vms.get(self.selected_index.min(vms.len().saturating_sub(1)))?;
+        if !store.subscriptions_loaded() && !self.effective_subscription_ids(vm).is_empty() {
+            return Some(Action::Notify { kind: ToastKind::Info, text: s.vm_subs_not_loaded.to_string() });
+        }
         if !self.is_dirty() {
             return None;
         }
@@ -221,9 +234,7 @@ impl VirtualModels {
         // I5: 防御性地要求草稿的 `name` 等于当前选中项 (与订阅详情页 `save_action` 同一条道理)——
         // 理论上不该发生 (选中项在有草稿时不能被换掉, 见 `move_model_selection`), 但绝不能把一个
         // 不在屏幕上的虚拟模型的草稿发出去。
-        let vms = store.virtual_models();
-        let selected_name = vms.get(self.selected_index.min(vms.len().saturating_sub(1))).map(|vm| vm.name.as_str());
-        if selected_name != Some(draft.name.as_str()) {
+        if vm.name != draft.name {
             return None;
         }
         if draft.mode == RoutingMode::Unknown {
@@ -419,13 +430,12 @@ impl Component for VirtualModels {
                     None
                 }
                 // I3: `s`/`Esc` 现在 Models 焦点下也可用, 不用先进 Members 才能保存/放弃——同一份
-                // 草稿两个焦点都能碰到 (`m` 早就是这样), 保存/放弃理应对称。
+                // 草稿两个焦点都能碰到 (`m` 早就是这样), 保存/放弃理应对称。Task 5: `subs_loaded`
+                // 的拒绝判定挪进了 `save_action` (按当前成员列表是否为空, 不再是订阅列表没加载完
+                // 就一律拒绝)。
                 KeyCode::Char('s') => {
                     if self.is_saving() {
                         return Some(Self::saving_notice(s));
-                    }
-                    if !subs_loaded {
-                        return Some(Action::Notify { kind: ToastKind::Info, text: s.vm_subs_not_loaded.to_string() });
                     }
                     self.save_action(s, store)
                 }
@@ -515,12 +525,10 @@ impl Component for VirtualModels {
                         self.draft.edit(&base, |d| d.mode = d.mode.next());
                         None
                     }
+                    // Task 5: 同上, `subs_loaded` 的拒绝判定挪进了 `save_action`。
                     KeyCode::Char('s') => {
                         if self.is_saving() {
                             return Some(Self::saving_notice(s));
-                        }
-                        if !subs_loaded {
-                            return Some(Action::Notify { kind: ToastKind::Info, text: s.vm_subs_not_loaded.to_string() });
                         }
                         self.save_action(s, store)
                     }

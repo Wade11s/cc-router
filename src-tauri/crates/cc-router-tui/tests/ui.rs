@@ -2704,6 +2704,38 @@ fn a_picker_result_for_a_vanished_subscription_is_ignored() {
     assert!(!out.contains("m3"), "更不该把结果错误地写进现在选中的另一条订阅\n{out}");
 }
 
+/// P3b 遗留项 (Task 5): 选择器弹窗打开时 (用户还没在里面选过任何值, **没有草稿**) 它所属的订阅从
+/// `Store` 消失了——旧版靠订阅详情页发出的 `sub_gone` 通知按文案特判着关弹窗, 那条通知只在已经有
+/// 草稿时才会产出, 这个场景根本不会触发, 弹窗会一直挂着一条已经不存在的订阅。`App` 现在直接查
+/// 弹窗自己的 `tag().subscription_id()`, 不依赖任何页面通知。顺带断言只有一条 `sub_gone` toast
+/// (订阅页自己因为没有草稿, `sync_draft_with_store` 提前 return, 不会重复发出同一条)——推进
+/// `Tick` 超过 `toast::LIFETIME_MS` 之后这条应该彻底消失, 不会有第二条排在后面顶上来。
+#[test]
+fn a_picker_closes_when_its_subscription_disappears_even_without_a_draft() {
+    let mut a = subs_app(false); // 默认选中 "1" (智谱主号)
+    render(&mut a, 80, 24);
+    a.handle_key(key(KeyCode::Enter)); // List -> Detail{Fable}
+    let open_action = a.handle_key(key(KeyCode::Enter)).expect("第二次 ⏎ 应该打开 picker");
+    match &open_action {
+        Action::OpenPicker(spec) => assert_eq!(spec.tag, PickerTag::SlotModel { sub_id: "1".into(), slot: Slot::Fable }),
+        other => panic!("{other:?}"),
+    }
+    a.update(open_action); // 弹窗打开, 还没有任何草稿
+    assert!(opened_picker_title_visible(&render(&mut a, 80, 24)), "准备: 弹窗应该已经打开");
+
+    let mut without_zhipu = detail_subs();
+    without_zhipu.remove(0);
+    a.update(subs_done(2, without_zhipu));
+
+    let out = render(&mut a, 80, 24);
+    assert!(!opened_picker_title_visible(&out), "订阅消失后弹窗应该被自动关掉\n{out}");
+    assert!(out.contains(ZH.sub_gone), "应该弹出 sub_gone 提示\n{out}");
+
+    a.update(Action::Tick { now_ms: NOW + toast::LIFETIME_MS + 1 });
+    let out2 = render(&mut a, 80, 24);
+    assert!(!out2.contains(ZH.sub_gone), "toast 过期之后不该还看得到, 证明没有第二条排在后面\n{out2}");
+}
+
 /// I5: 虚拟模型页同理——弹窗结果里的 `vm` 对不上当前选中的虚拟模型时静默忽略。虚拟模型固定只有
 /// 5 个、选中项在有草稿时也换不掉, 这个场景理论上走不到, 但 `PickerTag` 已经带着 `vm` 字段, 这里
 /// 直接注入一条不一致的 `PickerDone` 覆盖这条防御性分支。
@@ -2911,6 +2943,47 @@ fn members_are_not_called_deleted_before_subscriptions_load() {
     a.update(subs_done(1, vm_subs()));
     let out2 = render(&mut a, 80, 24);
     assert!(out2.contains(ZH.vm_missing), "订阅列表到了之后应该正常显示已删除\n{out2}");
+}
+
+/// P3b 遗留项 (Task 5): 上面这条用例覆盖的「订阅列表没加载完时 `s` 一律拒绝」只是旧版的整体行为
+/// ——真正没有 id 需要核对是否已删除的场景 (成员为空、只改了调度模式的草稿) 不该被这条守卫挡住。
+/// `model-haiku` 没有成员, 同样的 `m`/`s` 操作在 `model-fable` (有成员) 上仍然被拒绝, 与旧行为
+/// 保持一致。两个场景各起一个全新的 `App`, 避免「先在 model-haiku 上造出草稿, 再切到 model-fable」
+/// 这一步本身会被 `move_model_selection` 的脏页面确认拦住, 与本用例想验证的东西无关。
+#[test]
+fn a_mode_only_save_of_an_empty_virtual_model_is_allowed_before_subscriptions_load() {
+    // model-haiku (无成员): 只改模式的草稿应该允许保存。
+    let mut haiku_app = app(false);
+    haiku_app.update(Action::Connected { app_version: VERSION.into() });
+    haiku_app.update(Action::SwitchTab(Tab::VirtualModels));
+    haiku_app.update(vm_done(1, vm_list())); // 虚拟模型列表到了, 订阅列表还没到
+    render(&mut haiku_app, 80, 24);
+    for _ in 0..3 {
+        haiku_app.handle_key(key(KeyCode::Down)); // fable -> opus -> sonnet -> haiku (无成员)
+    }
+    assert_eq!(haiku_app.handle_key(key(KeyCode::Char('m'))), None, "m 只改草稿, 不产出 Action");
+    assert_eq!(
+        haiku_app.handle_key(key(KeyCode::Char('s'))),
+        Some(Action::Mutate(Mutation::UpdateVirtualModel {
+            name: "model-haiku".into(),
+            mode: RoutingMode::RoundRobin,
+            subscription_ids: vec![],
+        })),
+        "成员为空时, 订阅列表未加载也该允许保存"
+    );
+
+    // model-fable (有成员): 同样的操作仍然被拒绝。
+    let mut fable_app = app(false);
+    fable_app.update(Action::Connected { app_version: VERSION.into() });
+    fable_app.update(Action::SwitchTab(Tab::VirtualModels));
+    fable_app.update(vm_done(1, vm_list()));
+    render(&mut fable_app, 80, 24); // 默认选中 model-fable (ids: ["1", ghost])
+    assert_eq!(fable_app.handle_key(key(KeyCode::Char('m'))), None, "m 只改草稿, 不产出 Action");
+    assert_eq!(
+        fable_app.handle_key(key(KeyCode::Char('s'))),
+        Some(Action::Notify { kind: ToastKind::Info, text: ZH.vm_subs_not_loaded.into() }),
+        "成员非空时, 订阅列表未加载应该仍然拒绝"
+    );
 }
 
 #[test]

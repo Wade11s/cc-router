@@ -203,6 +203,12 @@ impl App {
     /// 草稿对应的订阅这一刻从 `Store` 里消失了) —— 这条通知不是从 `Component::update()` 触发的,
     /// 不会被 `update_page` 那条轮询路径捡到, 所以这里也照 `update_page` 的规矩轮询一次取走,
     /// 不然要等下一次真正的 `update()` 调用才会显示, 违背"立刻生效"的本意。
+    ///
+    /// Task 5: 以前这里还顺带按文案 (`text == s.sub_gone`) 特判着关掉当前弹窗——那条特判依赖
+    /// 页面凑巧发出了一条同名通知, 而这条通知只在**已经有草稿**时才会产出, 弹窗打开之后、用户
+    /// 还没在里面选过任何值 (没有草稿) 就轮到这条订阅消失时压根不会触发, 弹窗会一直挂着一条已经
+    /// 不存在的订阅。这部分职责现在挪到了 [`App::close_picker_if_subscription_vanished`], 由调用方
+    /// 在 `Store` 接受新列表之后单独调用, 不再依赖这里的通知内容。
     fn notify_subscriptions_changed(&mut self, changed: &[String]) {
         let store = &self.store;
         let s = self.s;
@@ -214,17 +220,26 @@ impl App {
             }
         });
         for (kind, text) in notices {
-            // I5 (fix round final): `sub_gone` 是订阅详情页在"草稿对应的订阅这一刻从 Store 消失"
-            // 时产出的通知——如果这一刻正好有个弹窗开着 (通常是这条订阅的槽位/思考档位 picker),
-            // 它引用的订阅已经没有意义了, 不主动关掉的话弹窗会一直挂着 (`apply_picker_choice` 虽然
-            // 会因为 `sub_id` 对不上而静默忽略这次结果, 但用户还在对着一个死弹窗操作)。挑这条通知
-            // 本身当信号是最小的改动: 它已经是"这条订阅消失了"事件的权威来源, 不需要再新开一条
-            // `Action` 或 `Component` 方法专门传递"该关弹窗了"这件事。
-            if text == s.sub_gone {
-                self.close_popup();
-            }
             self.push_toast(Toast::new(kind, text));
         }
+    }
+
+    /// Task 5: `Store` 刚**接受**了一份订阅列表之后调用 (`FetchDone` 两个分支共用, 紧跟在
+    /// `notify_subscriptions_changed` / `notify_store_changed` 之后) —— 如果当前弹窗是选择器
+    /// (模型 / 思考档位), 且它是为某条订阅开的 (`PickerTag::subscription_id()`), 而这条订阅这一刻
+    /// 已经不在 `Store` 里了 (被别处删除), 就关掉它并提示。取代了原来 `notify_subscriptions_changed`
+    /// 里按文案判断的特判——直接查弹窗自己的 `tag()`, 不依赖任何页面主动发出通知, 弹窗打开之后、
+    /// 用户还没选过任何值 (没有草稿) 的场景也能正确关闭。
+    fn close_picker_if_subscription_vanished(&mut self) {
+        let Some(Popup::Picker(state)) = &self.popup else { return };
+        let Some(sub_id) = state.tag().subscription_id() else { return };
+        if self.store.subscription(sub_id).is_some() {
+            return;
+        }
+        self.close_popup();
+        // 与订阅页自己发出的 `sub_gone` 通知同类型同文案 (草稿存在时那条仍会照常从
+        // `notify_subscriptions_changed` 产出), `push_toast` 的去重规则会把两条合并成一条。
+        self.push_toast(Toast::new(ToastKind::Info, self.s.sub_gone));
     }
 
     /// M1 (fix round final): `Store` 刚**接受**了一份订阅列表或虚拟模型列表 (不管内容变没变)——
@@ -476,6 +491,8 @@ impl App {
                         self.notify_subscriptions_changed(changed);
                         // M1: `Store` 接受了这份订阅列表, 广播给全部页面核对草稿。
                         self.notify_store_changed();
+                        // Task 5: 再核对一遍当前打开的选择器弹窗 (如果有) 是否还指着一条存在的订阅。
+                        self.close_picker_if_subscription_vanished();
                     }
                     let action = Action::FetchDone { fetch, issued, result: Ok(FetchData::Overview(data)) };
                     // 加载结果永远交给发起它的页面, 哪怕用户已经切走了; 总览页目前不产出通知,
@@ -491,6 +508,8 @@ impl App {
                     if let Some(changed) = &changed {
                         self.notify_subscriptions_changed(changed);
                         self.notify_store_changed();
+                        // Task 5: 同上——SSE 触发的单独订阅列表刷新同样要核对选择器弹窗。
+                        self.close_picker_if_subscription_vanished();
                     }
                     Vec::new()
                 }
