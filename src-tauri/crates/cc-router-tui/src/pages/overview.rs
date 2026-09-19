@@ -12,6 +12,7 @@ use tui_big_text::{BigText, PixelSize};
 use super::{Component, DrawCtx};
 use crate::action::{Action, Cmd, Fetch, FetchData, OverviewData};
 use crate::client::dto::{hourly_buckets, OverallStats, ProxyStatus, Subscription};
+use crate::client::events::SUBSCRIPTION_CHANGES;
 use crate::format::{compact, fit, percent, thousands};
 use crate::i18n::Strings;
 use crate::store::Store;
@@ -33,8 +34,6 @@ const MIN_HEALTH_HEIGHT: u16 = 5;
 const STATUS_COL: usize = 22;
 const QUOTA_LABEL_COL: usize = 8;
 const PERCENT_COL: usize = 5;
-
-const SSE_REFETCH: [&str; 2] = ["subscription_state_changed", "subscription_quota_reached"];
 
 #[derive(Default)]
 pub struct Overview {
@@ -256,8 +255,8 @@ impl Component for Overview {
 
     fn update(&mut self, action: &Action, _store: &Store, _s: &'static Strings) -> Vec<Cmd> {
         match action {
-            Action::Refresh | Action::Connected { .. } => vec![Cmd::Fetch(Fetch::Overview)],
-            Action::Sse { name, .. } if SSE_REFETCH.contains(&name.as_str()) => vec![Cmd::Fetch(Fetch::Subscriptions)],
+            Action::Refresh | Action::Poll | Action::Connected { .. } => vec![Cmd::Fetch(Fetch::Overview)],
+            Action::Sse { name, .. } if SUBSCRIPTION_CHANGES.contains(&name.as_str()) => vec![Cmd::Fetch(Fetch::Subscriptions)],
             Action::FetchDone { fetch: Fetch::Overview, result: Ok(FetchData::Overview(data)), .. } => {
                 self.apply((**data).clone());
                 Vec::new()

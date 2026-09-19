@@ -179,8 +179,12 @@ pub enum Action {
     Connected { app_version: String },
     /// 事件流断了, 主循环正在退避重连。
     ConnectionLost,
-    /// 后端推来的事件; `data` 是原始 JSON 文本。
-    Sse { name: String, data: String },
+    /// 后端推来的事件; `data` 是原始 JSON 文本。`at_ms`: TUI 收到它的时刻 (Unix 毫秒), 由 runtime.rs 盖——
+    /// 实时路由页据此计时 (App 自己的 now_ms 只按 250ms tick 前进, 精度不够)。
+    Sse { name: String, data: String, at_ms: i64 },
+    /// 可见页面每 5 秒一次的自动刷新 (以前复用 `Refresh`)。与 `Refresh` 分开, 是因为日志页翻到第 2 页以后
+    /// 只认用户按的 `r` (Task 8)。
+    Poll,
     /// `issued`: 主循环发起这次加载时盖的单调递增序号。
     FetchDone { fetch: Fetch, issued: u64, result: Result<FetchData, String> },
     /// 订阅页的一次就地操作。

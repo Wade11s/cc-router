@@ -1252,10 +1252,11 @@ fn only_the_visible_page_polls_and_only_while_connected() {
 }
 
 /// 订阅相关的 SSE 事件在总览页 / 订阅页 (Task 5) / 虚拟模型页 (Task 6) 都会重拉订阅列表——三个
-/// 页面都在 `update()` 里消费 `SSE_REFETCH`; 只有仍是占位的标签 (`Tab::Live`) 才会忽略它。
+/// 页面都在 `update()` 里消费 `client::events::SUBSCRIPTION_CHANGES`; 只有仍是占位的标签
+/// (`Tab::Live`) 才会忽略它。
 #[test]
 fn subscription_events_refetch_the_list_only_on_the_overview() {
-    let ev = |name: &str| Action::Sse { name: name.into(), data: "\"1\"".into() };
+    let ev = |name: &str| Action::Sse { name: name.into(), data: "\"1\"".into(), at_ms: NOW };
     let mut a = loaded(false);
     assert_eq!(a.update(ev("subscription_state_changed")), vec![Cmd::Fetch(Fetch::Subscriptions)]);
     assert_eq!(a.update(ev("subscription_quota_reached")), vec![Cmd::Fetch(Fetch::Subscriptions)]);

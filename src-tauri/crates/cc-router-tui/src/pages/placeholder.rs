@@ -5,7 +5,7 @@ use ratatui::layout::{Constraint, Rect};
 use ratatui::text::Line;
 use ratatui::Frame;
 
-use super::{Component, DrawCtx};
+use super::{Component, DrawCtx, StreamEvent};
 use crate::action::{Action, Cmd};
 use crate::i18n::Strings;
 use crate::store::Store;
@@ -20,6 +20,11 @@ pub struct Placeholder {
     /// 任何办法把这个开关误用在生产路径上 (不给生产代码加 feature / 公开 API)。
     #[cfg(test)]
     force_dirty: bool,
+    /// 测试专用记录器 (Task 2): `on_event` 收到 `Message` 记事件名, 收到 `Lost` 记 `"<lost>"`——
+    /// 与 `force_dirty` 同一条「仅单测可见」规则, Task 8 连同 `Placeholder` 一起删掉。
+    /// `pub(crate)`: `app.rs::tests` 直接读 `a.pages.placeholder.seen`, 不经过访问方法。
+    #[cfg(test)]
+    pub(crate) seen: Vec<String>,
 }
 
 #[cfg(test)]
@@ -62,6 +67,20 @@ impl Component for Placeholder {
         #[cfg(test)]
         {
             self.force_dirty = false;
+        }
+    }
+
+    fn on_event(&mut self, ev: StreamEvent<'_>) {
+        #[cfg(test)]
+        {
+            self.seen.push(match ev {
+                StreamEvent::Message { name, .. } => name.to_string(),
+                StreamEvent::Lost { .. } => "<lost>".to_string(),
+            });
+        }
+        #[cfg(not(test))]
+        {
+            let _ = ev;
         }
     }
 }

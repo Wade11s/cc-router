@@ -181,7 +181,7 @@ async fn run_once(client: &Client, tx: &UnboundedSender<Action>, ever_connected:
         return up.elapsed();
     }
     while let Ok(Some(ev)) = stream.next().await {
-        if tx.send(Action::Sse { name: ev.name, data: ev.data }).is_err() {
+        if tx.send(Action::Sse { name: ev.name, data: ev.data, at_ms: unix_ms() }).is_err() {
             break;
         }
     }
@@ -499,10 +499,11 @@ mod tests {
         let task = tokio::spawn(sse_loop(client, tx));
 
         assert_eq!(rx.recv().await, Some(Action::Connected { app_version: "9.9.9-test".into() }));
-        assert_eq!(
-            rx.recv().await,
-            Some(Action::Sse { name: "subscription_state_changed".into(), data: "\"1\"".into() })
-        );
+        let sse = rx.recv().await.expect("channel 关闭了");
+        let Action::Sse { name, data, at_ms } = sse else { panic!("{sse:?}") };
+        assert_eq!(name, "subscription_state_changed");
+        assert_eq!(data, "\"1\"");
+        assert!(at_ms > 0, "at_ms 应该是 run_once 收到事件那一刻盖的 unix 毫秒时间戳");
         // 上游发完这一条就关闭了连接 (set_body_raw 是有限响应体) → 下一次 next() 读到 EOF。
         assert_eq!(rx.recv().await, Some(Action::ConnectionLost));
 
@@ -570,10 +571,11 @@ mod tests {
         assert!(ever_connected);
         assert!(lived < STABLE_AFTER, "一次快速的连上又断不该被算成「稳定过」, 实际 {lived:?}");
         assert_eq!(rx.recv().await, Some(Action::Connected { app_version: "9.9.9-test".into() }));
-        assert_eq!(
-            rx.recv().await,
-            Some(Action::Sse { name: "subscription_state_changed".into(), data: "\"1\"".into() })
-        );
+        let sse = rx.recv().await.expect("channel 关闭了");
+        let Action::Sse { name, data, at_ms } = sse else { panic!("{sse:?}") };
+        assert_eq!(name, "subscription_state_changed");
+        assert_eq!(data, "\"1\"");
+        assert!(at_ms > 0, "at_ms 应该是 run_once 收到事件那一刻盖的 unix 毫秒时间戳");
     }
 
     /// 上游卡住不响应 (mock 延迟 2s) 时, `run_once` 必须按传入的 `connect_deadline` (这里给

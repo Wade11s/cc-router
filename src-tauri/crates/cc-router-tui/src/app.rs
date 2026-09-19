@@ -17,7 +17,7 @@ use crate::action::{Action, BusyKey, Cmd, Fetch, FetchData, Mutation, MutationOu
 use crate::client::dto::{RefreshBalanceResult, RefreshModelsResult};
 use crate::fx::{self, Dir, Fx};
 use crate::i18n::Strings;
-use crate::pages::{Component, DrawCtx, Pages};
+use crate::pages::{Component, DrawCtx, Pages, StreamEvent};
 use crate::popup::{ConfirmState, Popup, PopupCtx};
 use crate::store::Store;
 use crate::theme::Theme;
@@ -420,7 +420,7 @@ impl App {
                     self.toasts.pop_front();
                 }
                 if self.conn == Conn::Connected && self.tick.is_multiple_of(POLL_EVERY_TICKS) {
-                    self.update_page(self.tab, &Action::Refresh)
+                    self.update_page(self.tab, &Action::Poll)
                 } else {
                     Vec::new()
                 }
@@ -435,6 +435,10 @@ impl App {
             }
             Action::ConnectionLost => {
                 self.conn = Conn::Reconnecting;
+                // 每次都广播, 不判断是不是刚发生状态切换——重连期间这条 action 会反复到来, 页面
+                // 处理它必须幂等 (Task 2)。
+                let at_ms = self.now_ms;
+                self.pages.for_each_mut(|page| page.on_event(StreamEvent::Lost { at_ms }));
                 Vec::new()
             }
             Action::FetchDone { fetch, issued, result } => match result {
@@ -490,7 +494,13 @@ impl App {
                     Vec::new()
                 }
             },
-            Action::Refresh | Action::Sse { .. } => self.update_page(self.tab, &action),
+            Action::Refresh | Action::Poll => self.update_page(self.tab, &action),
+            Action::Sse { ref name, ref data, at_ms } => {
+                // 先广播给所有页面 (含不可见的), 再照旧转给可见页的 update——广播只能改页面自己的
+                // 状态, 能产出 Cmd 的反应仍然只走后面这一步 (Task 2)。
+                self.pages.for_each_mut(|page| page.on_event(StreamEvent::Message { name, data, at_ms }));
+                self.update_page(self.tab, &action)
+            }
             Action::Mutate(m) => self.start_mutation(m),
             Action::MutationDone { mutation, barrier, result } => self.finish_mutation(mutation, barrier, result),
             Action::OpenPicker(spec) => {
@@ -656,6 +666,7 @@ mod tests {
 
     use super::*;
     use crate::action::Tab;
+    use crate::client::events::SUBSCRIPTION_STATE_CHANGED;
     use crate::i18n::ZH;
     use crate::widgets::detail::{DetailRow, DetailSpec, Tone};
     use crate::widgets::picker;
@@ -800,5 +811,31 @@ mod tests {
         }));
         assert!(matches!(a.popup, Some(Popup::Detail(_))), "应该直接替换成详情弹窗");
         assert!(a.popup_area.is_none(), "同样应该清掉 picker 弹窗的 popup_area");
+    }
+
+    /// Task 2: 事件流上的消息与断线要广播给**所有**页面 (含不可见的, 靠占位页
+    /// `pages::placeholder::Placeholder::seen` 这个测试专用钩子验证), 但只有可见页才产出 `Cmd`。
+    #[test]
+    fn stream_events_reach_hidden_pages_but_only_the_visible_page_returns_cmds() {
+        let mut a = app();
+        a.update(Action::Connected { app_version: VERSION.into() });
+        assert_eq!(a.tab, Tab::Overview, "准备: 当前标签是总览");
+
+        // 1) 总览可见: 订阅相关的事件应该让它产出一次 Fetch::Subscriptions, 占位页 (此时不可见)
+        //    也应该收到同一条广播。
+        let cmds = a.update(Action::Sse { name: SUBSCRIPTION_STATE_CHANGED.into(), data: "\"1\"".into(), at_ms: NOW });
+        assert_eq!(cmds, vec![Cmd::Fetch(Fetch::Subscriptions)]);
+        assert_eq!(a.pages.placeholder.seen, vec![SUBSCRIPTION_STATE_CHANGED.to_string()]);
+
+        // 2) 切到占位页 (现在可见): 同一个事件不该再产出任何 Cmd (占位页的 update 什么都不做),
+        //    但广播仍然发生——seen 长度变成 2。
+        a.update(Action::SwitchTab(Tab::Live));
+        let cmds = a.update(Action::Sse { name: SUBSCRIPTION_STATE_CHANGED.into(), data: "\"1\"".into(), at_ms: NOW });
+        assert!(cmds.is_empty(), "占位页可见时这条 SSE 不该产出 Cmd");
+        assert_eq!(a.pages.placeholder.seen.len(), 2);
+
+        // 3) 断线: 广播 Lost, 占位页记一条 "<lost>"。
+        a.update(Action::ConnectionLost);
+        assert_eq!(a.pages.placeholder.seen.last(), Some(&"<lost>".to_string()));
     }
 }

@@ -18,6 +18,7 @@ use super::draft::Draft;
 use super::{Component, DrawCtx};
 use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation};
 use crate::client::dto::{RoutingMode, VirtualModel};
+use crate::client::events::SUBSCRIPTION_CHANGES;
 use crate::format::fit;
 use crate::i18n::Strings;
 use crate::store::Store;
@@ -39,8 +40,6 @@ const MODE_COL: usize = 5;
 const MEMBER_SYMBOL_COL: usize = 2;
 const MEMBER_NAME_COL: usize = 18;
 const MEMBER_PROVIDER_COL: usize = 10;
-
-const SSE_REFETCH: [&str; 2] = ["subscription_state_changed", "subscription_quota_reached"];
 
 /// 两栏的键盘焦点。左右两栏一直都画 (不像订阅页窄屏时只画一栏), 焦点只影响哪一栏的边框是
 /// `theme.accent`, 以及方向键作用在哪个列表上。
@@ -545,8 +544,10 @@ impl Component for VirtualModels {
         match action {
             // 右栏要订阅名 / 厂商 / badge, 所以两个 Fetch 都要——被 `Fetches` 去重, 每 5 秒都发也
             // 没关系。
-            Action::Refresh | Action::Connected { .. } => vec![Cmd::Fetch(Fetch::VirtualModels), Cmd::Fetch(Fetch::Subscriptions)],
-            Action::Sse { name, .. } if SSE_REFETCH.contains(&name.as_str()) => vec![Cmd::Fetch(Fetch::Subscriptions)],
+            Action::Refresh | Action::Poll | Action::Connected { .. } => {
+                vec![Cmd::Fetch(Fetch::VirtualModels), Cmd::Fetch(Fetch::Subscriptions)]
+            }
+            Action::Sse { name, .. } if SUBSCRIPTION_CHANGES.contains(&name.as_str()) => vec![Cmd::Fetch(Fetch::Subscriptions)],
             Action::PickerDone { tag: PickerTag::VmAddSubscription { vm }, choice } => {
                 self.apply_add_choice(vm, choice, store, s);
                 Vec::new()

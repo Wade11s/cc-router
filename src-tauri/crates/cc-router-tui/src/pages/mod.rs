@@ -45,6 +45,15 @@ pub struct DrawCtx<'a> {
     pub last_outcome: &'a HashMap<String, (ToastKind, String)>,
 }
 
+/// 事件流上发生的事。`App` 把它广播给**所有**页面 (含不可见的); 页面只能据此改自己的状态, 不能产出
+/// `Cmd`——要发加载的反应仍走可见页的 `update(&Action::Sse { .. })`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamEvent<'a> {
+    Message { name: &'a str, data: &'a str, at_ms: i64 },
+    /// 事件流断了; 重连之前的事件都收不到。重连期间会反复到来, 页面处理必须幂等。
+    Lost { at_ms: i64 },
+}
+
 pub trait Component {
     /// 页面自己的键位。全局键 (切页 / 帮助 / 退出 / 刷新) 由 `App` 先处理, 到不了这里。`s`:
     /// Task 5 起页面自己需要拼装本地化文案 (比如 picker 标题、拒绝操作的 toast) 才加的参数,
@@ -98,6 +107,11 @@ pub trait Component {
     fn take_notice(&mut self) -> Option<(ToastKind, String)> {
         None
     }
+
+    /// 事件流上发生的事 (Task 2): `App` 对**所有**页面 (含不可见的) 各调一次, 只能改页面自己的
+    /// 状态, 不能产出 `Cmd`——要发加载的反应仍走可见页的 `update(&Action::Sse { .. })`。默认什么
+    /// 都不做。
+    fn on_event(&mut self, _ev: StreamEvent<'_>) {}
 }
 
 /// 三个页面的集合, 取代散字段 + 两个手写的 `select_page` / `select_page_ref` helper。字段公开是

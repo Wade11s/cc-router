@@ -446,3 +446,15 @@ fn commands_are_registered() {
         assert!(REGISTERED.contains(name), "TUI 调用的 command `{name}` 不在 web_commands! 表里");
     }
 }
+
+/// TUI 关心的每个事件名都必须还在后端 `BRIDGED_EVENTS` 里 (Task 2) —— 否则事件发生了但永远推不到
+/// TUI, `/ui/api/events` 那条 SSE 连接上什么都不会来。
+#[test]
+fn tui_event_names_are_bridged() {
+    for name in cc_router_tui::client::events::ALL {
+        assert!(
+            crate::proxy::web::events::BRIDGED_EVENTS.contains(name),
+            "TUI 关心的事件 `{name}` 不在后端 BRIDGED_EVENTS 里"
+        );
+    }
+}

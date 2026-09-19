@@ -19,6 +19,7 @@ use super::draft::Draft;
 use super::{Component, DrawCtx};
 use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation};
 use crate::client::dto::{BalanceSeverity, ModelSlots, QuotaUsage, Slot, SlotEfforts, Subscription, EFFORT_CHOICES};
+use crate::client::events::SUBSCRIPTION_CHANGES;
 use crate::format::{compact, fit};
 use crate::i18n::Strings;
 use crate::store::Store;
@@ -61,8 +62,6 @@ const LAST_ACTION_ROWS: u16 = 3;
 const PENDING_MODEL: &str = "(pending)";
 /// `PageUp` / `PageDown` 在第一帧画出来之前没有真实的可视行数可用, 先给个不至于原地不动的默认值。
 const DEFAULT_PAGE_ROWS: usize = 10;
-
-const SSE_REFETCH: [&str; 2] = ["subscription_state_changed", "subscription_quota_reached"];
 
 /// 详情面板的一行: 大多数是普通文本, 限额行要嵌一个真正的 `LineGauge` widget (不是文本能表示
 /// 的), 「上次操作」/「最近错误」这类自由文本可能超宽折成好几行 (`Wrapped`)。`height` 在构造
@@ -690,8 +689,8 @@ impl Component for Subscriptions {
         // `sync_draft_with_store`)。放在 match 之前, 不管这次具体是哪个 action。
         self.sync_draft_with_store(store, s);
         match action {
-            Action::Refresh | Action::Connected { .. } => vec![Cmd::Fetch(Fetch::Subscriptions)],
-            Action::Sse { name, .. } if SSE_REFETCH.contains(&name.as_str()) => vec![Cmd::Fetch(Fetch::Subscriptions)],
+            Action::Refresh | Action::Poll | Action::Connected { .. } => vec![Cmd::Fetch(Fetch::Subscriptions)],
+            Action::Sse { name, .. } if SUBSCRIPTION_CHANGES.contains(&name.as_str()) => vec![Cmd::Fetch(Fetch::Subscriptions)],
             Action::PickerDone { tag, choice } => {
                 self.apply_picker_choice(tag, choice, store, s);
                 Vec::new()

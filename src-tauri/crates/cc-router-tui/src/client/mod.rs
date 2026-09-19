@@ -36,3 +36,16 @@ pub mod commands {
         UPDATE_VIRTUAL_MODEL,
     ];
 }
+
+/// TUI 关心的后端事件名。集中在这里是为了让主 crate 的契约测试
+/// (`src/tui_contract.rs::tui_event_names_are_bridged`) 能逐个核对它们仍在 `BRIDGED_EVENTS` 里。
+pub mod events {
+    pub const SUBSCRIPTION_STATE_CHANGED: &str = "subscription_state_changed";
+    pub const SUBSCRIPTION_QUOTA_REACHED: &str = "subscription_quota_reached";
+    pub const ROUTE_ATTEMPT_STARTED: &str = "route_attempt_started";
+    pub const ROUTE_ATTEMPT_FINISHED: &str = "route_attempt_finished";
+    /// 订阅列表可能变了、该重拉的两个事件 (总览 / 订阅 / 虚拟模型三页共用, 取代各自的 `SSE_REFETCH`)。
+    pub const SUBSCRIPTION_CHANGES: &[&str] = &[SUBSCRIPTION_STATE_CHANGED, SUBSCRIPTION_QUOTA_REACHED];
+    /// TUI 关心的全部事件名; `tui_contract.rs` 断言每一个都在后端 `BRIDGED_EVENTS` 里。
+    pub const ALL: &[&str] = &[SUBSCRIPTION_STATE_CHANGED, SUBSCRIPTION_QUOTA_REACHED, ROUTE_ATTEMPT_STARTED, ROUTE_ATTEMPT_FINISHED];
+}
