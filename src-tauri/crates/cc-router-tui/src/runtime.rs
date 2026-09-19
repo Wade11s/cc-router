@@ -408,6 +408,7 @@ mod tests {
             fx_enabled: false,
             now_ms: 0,
             tui_version: "9.9.9-test",
+            tz: crate::format::Tz::Fixed(8 * 3600),
         })
     }
 
@@ -836,6 +837,7 @@ mod tests {
             fx_enabled: false,
             now_ms: 0,
             tui_version: "9.9.9-test",
+            tz: crate::format::Tz::Fixed(8 * 3600),
         });
         app.update(crate::action::Action::SwitchTab(crate::action::Tab::Subscriptions));
 

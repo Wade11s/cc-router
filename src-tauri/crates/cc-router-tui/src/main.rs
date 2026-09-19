@@ -9,6 +9,7 @@ use cc_router_tui::app::{App, AppOptions};
 use cc_router_tui::client::discovery::{default_data_dir, Platform};
 use cc_router_tui::client::dto::{ProxyStatus, Settings, Subscription};
 use cc_router_tui::client::{commands, Client, ClientError};
+use cc_router_tui::format::Tz;
 use cc_router_tui::i18n::{strings, Lang};
 use cc_router_tui::runtime;
 use cc_router_tui::theme::{ColorMode, Theme};
@@ -134,6 +135,7 @@ async fn ui(client: Client, no_fx: bool) -> Result<(), Failure> {
         fx_enabled,
         now_ms: runtime::unix_ms(),
         tui_version: env!("CARGO_PKG_VERSION"),
+        tz: Tz::Local,
     });
     runtime::run(Arc::new(client), app).await.map_err(Failure::Terminal)
 }

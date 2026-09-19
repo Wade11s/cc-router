@@ -1,6 +1,73 @@
 //! 数字 / 时间 / 定宽文本的格式化。全部是纯函数。
 
+use chrono::{DateTime, FixedOffset, Local, TimeZone};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+/// 显示时间用的时区。生产 `Local` (系统时区, 按每个时间戳自己的偏移算, 夏令时正确); 测试用 `Fixed`,
+/// 快照不随机器时区变化。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tz {
+    Local,
+    /// 相对 UTC 的偏移, 秒, 东正。
+    Fixed(i32),
+}
+
+/// `ms` 按 `tz` 格式化成 `fmt`; 时间戳超出 chrono 可表示范围或 `Fixed` 偏移非法时返回 `None`。
+/// `Tz::Local` 每次都重新查一次偏移 (不缓存), 保证跨 DST 边界的时间戳偏移正确。
+fn try_format(ms: i64, tz: Tz, fmt: &str) -> Option<String> {
+    match tz {
+        Tz::Local => Local.timestamp_millis_opt(ms).single().map(|dt| dt.format(fmt).to_string()),
+        Tz::Fixed(offset_secs) => {
+            let offset = FixedOffset::east_opt(offset_secs)?;
+            let utc = DateTime::from_timestamp_millis(ms)?;
+            Some(utc.with_timezone(&offset).format(fmt).to_string())
+        }
+    }
+}
+
+/// 同上, 但只要本地日历日 (给 `short_stamp` 比较用)。
+fn try_local_date(ms: i64, tz: Tz) -> Option<chrono::NaiveDate> {
+    match tz {
+        Tz::Local => Local.timestamp_millis_opt(ms).single().map(|dt| dt.date_naive()),
+        Tz::Fixed(offset_secs) => {
+            let offset = FixedOffset::east_opt(offset_secs)?;
+            let utc = DateTime::from_timestamp_millis(ms)?;
+            Some(utc.with_timezone(&offset).date_naive())
+        }
+    }
+}
+
+/// `"14:02:31"`。超出可表示范围 (或 `Fixed` 偏移非法) 时返回 `"—"`, 不 panic。
+pub fn clock(ms: i64, tz: Tz) -> String {
+    try_format(ms, tz, "%H:%M:%S").unwrap_or_else(|| "—".into())
+}
+
+/// 与 `now_ms` 同一本地日 (按 `tz` 的日历日比较) → `"14:02:31"`; 否则 `"09-18 14:02"`。两种都 ≤ 11 列。
+pub fn short_stamp(ms: i64, now_ms: i64, tz: Tz) -> String {
+    match (try_local_date(ms, tz), try_local_date(now_ms, tz)) {
+        (Some(d), Some(now_d)) if d == now_d => clock(ms, tz),
+        (Some(_), Some(_)) => try_format(ms, tz, "%m-%d %H:%M").unwrap_or_else(|| "—".into()),
+        _ => "—".into(),
+    }
+}
+
+/// `"2026-09-19 14:02:31"`。超出可表示范围 (或 `Fixed` 偏移非法) 时返回 `"—"`, 不 panic。
+pub fn full_stamp(ms: i64, tz: Tz) -> String {
+    try_format(ms, tz, "%Y-%m-%d %H:%M:%S").unwrap_or_else(|| "—".into())
+}
+
+/// 耗时: `< 1000` → `"850ms"`; `< 60_000` → 一位小数 `"1.8s"`; 其余 `"2m05s"`; 负数按 0。
+pub fn duration(ms: i64) -> String {
+    let ms = ms.max(0);
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        let total_secs = ms / 1000;
+        format!("{}m{:02}s", total_secs / 60, total_secs % 60)
+    }
+}
 
 /// `1284` → `1,284`
 pub fn thousands(n: i64) -> String {
@@ -145,5 +212,44 @@ mod tests {
         assert_eq!(wrap("", 10), vec![""]);
         assert_eq!(wrap("智", 1), vec!["智"]);
         assert_eq!(wrap("ab\ncd", 0), vec!["ab", "cd"]);
+    }
+
+    /// `2023-11-15 06:13:20 +08:00` == `2023-11-14 22:13:20 UTC`。
+    const NOW: i64 = 1_700_000_000_000;
+
+    #[test]
+    fn clock_and_stamps_use_the_given_offset() {
+        assert_eq!(clock(NOW, Tz::Fixed(8 * 3600)), "06:13:20");
+        assert_eq!(full_stamp(NOW, Tz::Fixed(8 * 3600)), "2023-11-15 06:13:20");
+
+        assert_eq!(clock(NOW, Tz::Fixed(0)), "22:13:20");
+        assert_eq!(full_stamp(NOW, Tz::Fixed(0)), "2023-11-14 22:13:20");
+    }
+
+    #[test]
+    fn short_stamp_shows_the_date_only_for_other_days() {
+        let tz = Tz::Fixed(8 * 3600);
+        assert_eq!(short_stamp(NOW - 3_600_000, NOW, tz), "05:13:20", "同一天只显示时刻");
+        assert_eq!(short_stamp(NOW - 7 * 3_600_000, NOW, tz), "11-14 23:13", "跨天要带上日期");
+    }
+
+    #[test]
+    fn local_tz_formats_without_panicking() {
+        assert_eq!(clock(NOW, Tz::Local).len(), 8, "无论机器时区, \"HH:MM:SS\" 都是 8 个字符");
+    }
+
+    #[test]
+    fn out_of_range_timestamps_render_a_dash() {
+        assert_eq!(clock(i64::MAX, Tz::Fixed(0)), "—");
+    }
+
+    #[test]
+    fn duration_formats() {
+        assert_eq!(duration(0), "0ms");
+        assert_eq!(duration(850), "850ms");
+        assert_eq!(duration(1_849), "1.8s");
+        assert_eq!(duration(59_949), "59.9s");
+        assert_eq!(duration(125_000), "2m05s");
+        assert_eq!(duration(-5), "0ms");
     }
 }

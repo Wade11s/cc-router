@@ -14,6 +14,7 @@ use ratatui::layout::Rect;
 use ratatui::Frame;
 
 use crate::action::Action;
+use crate::format::Tz;
 use crate::i18n::Strings;
 use crate::theme::Theme;
 use crate::widgets::detail::DetailState;
@@ -43,6 +44,8 @@ pub struct PopupCtx<'a> {
     pub s: &'static Strings,
     /// 当前页面的键位 (只有 `Help` 用)。
     pub page_help: &'static [(&'static str, &'static str)],
+    /// 显示时间用的时区, `Popup::Detail` 的 `Stamp` 行拿它调用 `full_stamp`。
+    pub tz: Tz,
 }
 
 impl Popup {
@@ -70,7 +73,7 @@ impl Popup {
             Popup::Help => help::area(screen, ctx.s, ctx.page_help),
             Popup::Confirm(state) => confirm::area(screen, &state.prompt),
             Popup::Picker(_) => picker::area(screen),
-            Popup::Detail(state) => detail::area(screen, state.spec()),
+            Popup::Detail(state) => detail::area(screen, state.spec(), ctx.tz),
         }
     }
 
@@ -80,7 +83,7 @@ impl Popup {
             Popup::Help => help::draw(frame, area, ctx.theme, ctx.s, ctx.page_help),
             Popup::Confirm(state) => confirm::draw(frame, area, state, ctx.theme, ctx.s),
             Popup::Picker(state) => picker::draw(frame, area, state, ctx.theme, ctx.s),
-            Popup::Detail(state) => detail::draw(frame, area, state, ctx.theme, ctx.s),
+            Popup::Detail(state) => detail::draw(frame, area, state, ctx.theme, ctx.s, ctx.tz),
         }
     }
 }

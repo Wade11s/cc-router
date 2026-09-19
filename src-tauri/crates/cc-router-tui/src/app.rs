@@ -15,6 +15,7 @@ use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 
 use crate::action::{Action, BusyKey, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, Tab};
 use crate::client::dto::{RefreshBalanceResult, RefreshModelsResult};
+use crate::format::Tz;
 use crate::fx::{self, Dir, Fx};
 use crate::i18n::Strings;
 use crate::pages::{Component, DrawCtx, Pages, StreamEvent};
@@ -55,6 +56,8 @@ pub struct AppOptions {
     pub now_ms: i64,
     /// 生产传 `env!("CARGO_PKG_VERSION")`。做成参数是为了快照测试不随发版改版本号而失效。
     pub tui_version: &'static str,
+    /// 显示时间用的时区。生产传 `Tz::Local`; 测试传 `Tz::Fixed`, 快照不随机器时区变化。
+    pub tz: Tz,
 }
 
 pub struct App {
@@ -75,6 +78,7 @@ pub struct App {
     app_version: Option<String>,
     now_ms: i64,
     tick: u64,
+    tz: Tz,
     /// 正在进行的就地操作, 键是 [`BusyKey`] (目前只会出现 `Subscription` 变体)。**按
     /// `Mutation::busy_key()` 判重, 不按 `Mutation` 整体** —— 同一条订阅同时只能有一个操作在跑,
     /// 但不同操作 (比如先 `t` 再 `e`) 仍然互斥, 不是各自独立排队。
@@ -105,6 +109,7 @@ impl App {
             app_version: None,
             now_ms: opts.now_ms,
             tick: 0,
+            tz: opts.tz,
             busy: HashMap::new(),
             last_outcome: HashMap::new(),
         }
@@ -656,6 +661,7 @@ impl App {
             store: &self.store,
             busy: &self.busy,
             last_outcome: &self.last_outcome,
+            tz: self.tz,
         };
         let page = self.pages.get_mut(self.tab);
         page.draw(frame, content, &mut ctx);
@@ -672,7 +678,7 @@ impl App {
         if let Some(popup) = &mut self.popup {
             // 压暗背景用静态的 DIM 修饰符而不是动效: 16 色 / 无色终端下同样成立。
             frame.buffer_mut().set_style(screen, Style::new().add_modifier(Modifier::DIM));
-            let ctx = PopupCtx { theme: &self.theme, s, page_help };
+            let ctx = PopupCtx { theme: &self.theme, s, page_help, tz: self.tz };
             let area = popup.area(screen, &ctx);
             popup.draw(frame, area, &ctx);
             self.popup_area = Some(area);
@@ -716,7 +722,14 @@ mod tests {
     const VERSION: &str = "9.9.9";
 
     fn app() -> App {
-        App::new(AppOptions { strings: &ZH, theme: Theme::new(crate::theme::ColorMode::TrueColor), fx_enabled: false, now_ms: NOW, tui_version: VERSION })
+        App::new(AppOptions {
+            strings: &ZH,
+            theme: Theme::new(crate::theme::ColorMode::TrueColor),
+            fx_enabled: false,
+            now_ms: NOW,
+            tui_version: VERSION,
+            tz: Tz::Fixed(8 * 3600),
+        })
     }
 
     /// 切到一个占位页 (`Tab::Live`) 并把它标记成 dirty——`Live`/`Logs` 两个占位 tab 共用同一个

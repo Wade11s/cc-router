@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Scrollbar, Scrollb
 use ratatui::Frame;
 
 use crate::action::Action;
-use crate::format::{fit, wrap};
+use crate::format::{fit, full_stamp, wrap, Tz};
 use crate::i18n::Strings;
 use crate::theme::Theme;
 
@@ -41,6 +41,9 @@ pub enum DetailRow {
     Section(String),
     Field { label: String, value: String, tone: Tone },
     Text { text: String, tone: Tone },
+    /// 与 `Field` 同样排版, 值是按 `PopupCtx.tz` 显示的 `full_stamp(ms)`——这样组装详情的页面
+    /// (Task 7 起的实时路由页、Task 8 起的请求日志详情页) 不需要知道时区, 只管把毫秒时间戳塞进来。
+    Stamp { label: String, ms: i64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,7 +117,7 @@ enum Content {
 }
 
 /// `width`: 正文可用宽度 (不含边框/内距)。
-fn layout(spec: &DetailSpec, width: usize) -> Vec<Content> {
+fn layout(spec: &DetailSpec, width: usize, tz: Tz) -> Vec<Content> {
     let mut out = Vec::new();
     for (i, row) in spec.rows.iter().enumerate() {
         match row {
@@ -132,6 +135,17 @@ fn layout(spec: &DetailSpec, width: usize) -> Vec<Content> {
                         out.push(Content::FieldFirst { label: label.clone(), text: part, tone: *tone });
                     } else {
                         out.push(Content::FieldCont { text: part, tone: *tone });
+                    }
+                }
+            }
+            DetailRow::Stamp { label, ms } => {
+                let value = full_stamp(*ms, tz);
+                let value_width = width.saturating_sub(LABEL_COL);
+                for (j, part) in wrap(&value, value_width).into_iter().enumerate() {
+                    if j == 0 {
+                        out.push(Content::FieldFirst { label: label.clone(), text: part, tone: Tone::Normal });
+                    } else {
+                        out.push(Content::FieldCont { text: part, tone: Tone::Normal });
                     }
                 }
             }
@@ -155,9 +169,10 @@ fn tone_style(tone: Tone, theme: &Theme) -> ratatui::style::Style {
     }
 }
 
-/// 折好行的全部内容 (纯函数, `area` / `draw` / 测试共用)。`width` = 正文可用宽度。
-pub fn lines(spec: &DetailSpec, width: u16, theme: &Theme) -> Vec<Line<'static>> {
-    layout(spec, width as usize)
+/// 折好行的全部内容 (纯函数, `area` / `draw` / 测试共用)。`width` = 正文可用宽度。`tz`: `Stamp`
+/// 行按它格式化, 其余行忽略。
+pub fn lines(spec: &DetailSpec, width: u16, theme: &Theme, tz: Tz) -> Vec<Line<'static>> {
+    layout(spec, width as usize, tz)
         .into_iter()
         .map(|c| match c {
             Content::Blank => Line::raw(""),
@@ -171,19 +186,20 @@ pub fn lines(spec: &DetailSpec, width: u16, theme: &Theme) -> Vec<Line<'static>>
         .collect()
 }
 
-/// 居中。宽 = `min(screen.width − 4, 100)`; 高 = `min(screen.height − 4, 折行后总行数 + 4)`。
-pub fn area(screen: Rect, spec: &DetailSpec) -> Rect {
+/// 居中。宽 = `min(screen.width − 4, 100)`; 高 = `min(screen.height − 4, 折行后总行数 + 4)`。`tz`:
+/// `Stamp` 行的格式化文本长度 (进而折行行数) 依赖它, 与 `lines` 必须传同一个值才能得到一致的几何。
+pub fn area(screen: Rect, spec: &DetailSpec, tz: Tz) -> Rect {
     const WIDTH_MAX: u16 = 100;
     const SCREEN_MARGIN: u16 = 4;
 
     let width = WIDTH_MAX.min(screen.width.saturating_sub(SCREEN_MARGIN));
     let content_width = width.saturating_sub(BORDER_PAD_H);
-    let total_rows = layout(spec, content_width as usize).len() as u16;
+    let total_rows = layout(spec, content_width as usize, tz).len() as u16;
     let height = screen.height.saturating_sub(SCREEN_MARGIN).min(total_rows.saturating_add(BORDER_PAD_V));
     screen.centered(Constraint::Length(width), Constraint::Length(height))
 }
 
-pub fn draw(frame: &mut Frame, area: Rect, state: &mut DetailState, theme: &Theme, s: &Strings) {
+pub fn draw(frame: &mut Frame, area: Rect, state: &mut DetailState, theme: &Theme, s: &Strings, tz: Tz) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(theme.border_style())
@@ -192,7 +208,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut DetailState, theme: &Them
         .padding(Padding::new(2, 2, 1, 1));
     let inner = block.inner(area);
     let rows = inner.height.max(1) as usize;
-    let rendered = lines(&state.spec, inner.width, theme);
+    let rendered = lines(&state.spec, inner.width, theme, tz);
     let total = rendered.len();
 
     state.scroll = state.scroll.min(total.saturating_sub(rows));
@@ -226,6 +242,10 @@ mod tests {
         Theme::new(ColorMode::TrueColor)
     }
 
+    fn tz() -> Tz {
+        Tz::Fixed(8 * 3600)
+    }
+
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -240,7 +260,7 @@ mod tests {
             title: "详情".into(),
             rows: vec![DetailRow::Field { label: "值".into(), value: "x".repeat(100), tone: Tone::Normal }],
         };
-        let rendered = lines(&spec, 40, &theme());
+        let rendered = lines(&spec, 40, &theme(), tz());
         assert!(rendered.len() > 1, "100 字符在 40 列宽下应该折成多行\n{rendered:?}");
         for line in &rendered[1..] {
             let text = line_text(line);
@@ -258,7 +278,7 @@ mod tests {
                 DetailRow::Section("第二节".into()),
             ],
         };
-        let rendered = lines(&spec, 40, &theme());
+        let rendered = lines(&spec, 40, &theme(), tz());
         assert_eq!(line_text(&rendered[0]), "第一节", "第一行是第一个小节, 前面不该有空行\n{rendered:?}");
         assert_eq!(line_text(&rendered[2]), "", "第二个小节前面应该有一行空行\n{rendered:?}");
         assert_eq!(line_text(&rendered[3]), "第二节", "{rendered:?}");
@@ -267,7 +287,7 @@ mod tests {
     #[test]
     fn text_rows_keep_their_own_newlines() {
         let spec = DetailSpec { title: "详情".into(), rows: vec![DetailRow::Text { text: "第一行\n第二行".into(), tone: Tone::Err }] };
-        let rendered = lines(&spec, 40, &theme());
+        let rendered = lines(&spec, 40, &theme(), tz());
         assert_eq!(rendered.len(), 2, "{rendered:?}");
         assert_eq!(line_text(&rendered[0]), "第一行");
         assert_eq!(line_text(&rendered[1]), "第二行");
@@ -284,12 +304,12 @@ mod tests {
                 DetailRow::Field { label: "c".into(), value: "3".into(), tone: Tone::Normal },
             ],
         };
-        let a = area(screen, &short);
+        let a = area(screen, &short, tz());
         assert_eq!((a.width, a.height), (76, 7), "3 行短内容: 76 x 7");
 
         let long =
             DetailSpec { title: "详情".into(), rows: (0..100).map(|i| DetailRow::Text { text: format!("row {i}"), tone: Tone::Normal }).collect() };
-        let b = area(screen, &long);
+        let b = area(screen, &long, tz());
         assert_eq!(b.height, 20, "100 行内容应该被高度上限夹住");
     }
 
@@ -305,8 +325,8 @@ mod tests {
         let t = theme();
         let s = &ZH;
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        let popup = area(Rect::new(0, 0, 80, 24), &spec);
-        terminal.draw(|frame| draw(frame, popup, &mut state, &t, s)).unwrap();
+        let popup = area(Rect::new(0, 0, 80, 24), &spec, tz());
+        terminal.draw(|frame| draw(frame, popup, &mut state, &t, s, tz())).unwrap();
         assert!(state.last_total > state.last_rows, "测试前提: 内容要超出一屏, last_total={} last_rows={}", state.last_total, state.last_rows);
 
         for _ in 0..20 {
@@ -327,5 +347,18 @@ mod tests {
         assert_eq!(state.handle_key(key(KeyCode::Char('q'))), Some(Action::ClosePopup));
         assert_eq!(state.handle_key(key(KeyCode::Enter)), Some(Action::ClosePopup));
         assert_eq!(state.handle_key(key(KeyCode::Char('x'))), None);
+    }
+
+    /// Task 6: `Stamp` 行不自带时区, 同一个 spec 在不同 `PopupCtx.tz` 下要渲染出不同的文本——
+    /// 这样组装详情的页面不需要知道时区。
+    #[test]
+    fn stamp_rows_use_the_popup_tz() {
+        const NOW: i64 = 1_700_000_000_000;
+        let spec = DetailSpec { title: "详情".into(), rows: vec![DetailRow::Stamp { label: "时间".into(), ms: NOW }] };
+        let east = lines(&spec, 40, &theme(), Tz::Fixed(8 * 3600));
+        let utc = lines(&spec, 40, &theme(), Tz::Fixed(0));
+        assert_ne!(line_text(&east[0]), line_text(&utc[0]), "同一个 Stamp 在不同时区下应该渲染出不同的文本");
+        assert!(line_text(&east[0]).contains("2023-11-15 06:13:20"), "{:?}", line_text(&east[0]));
+        assert!(line_text(&utc[0]).contains("2023-11-14 22:13:20"), "{:?}", line_text(&utc[0]));
     }
 }

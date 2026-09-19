@@ -13,6 +13,7 @@ use cc_router_tui::client::dto::{
     QuotaPeriod, QuotaUsage, RefreshBalanceResult, RefreshModelsResult, RoutingMode, SeriesPoint, Settings, SlotEfforts, Subscription,
     SubscriptionState, TestConnectionResult, VirtualModel, EFFORT_CHOICES,
 };
+use cc_router_tui::format::Tz;
 use cc_router_tui::i18n::ZH;
 use cc_router_tui::pages::Pages;
 use cc_router_tui::theme::{ColorMode, Theme};
@@ -36,6 +37,7 @@ fn app(fx_enabled: bool) -> App {
         fx_enabled,
         now_ms: NOW,
         tui_version: VERSION,
+        tz: Tz::Fixed(8 * 3600),
     })
 }
 

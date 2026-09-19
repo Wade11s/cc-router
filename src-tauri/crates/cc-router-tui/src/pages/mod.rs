@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::Frame;
 
 use crate::action::{Action, BusyKey, Cmd, Mutation, Tab};
+use crate::format::Tz;
 use crate::fx::Fx;
 use crate::i18n::Strings;
 use crate::store::Store;
@@ -43,6 +44,8 @@ pub struct DrawCtx<'a> {
     /// 每条订阅最近一次就地操作的结果 (与对应 toast 同一份文本), 键是订阅 id; 发起新操作时移除
     /// (`App::start_mutation`)。订阅详情页拿它在「状态」行后面画一条「上次操作」(I1 fix)。
     pub last_outcome: &'a HashMap<String, (ToastKind, String)>,
+    /// 显示时间用的时区 (Task 6 起)。本 Task 没有页面用到, Task 7 起的实时路由页才用。
+    pub tz: Tz,
 }
 
 /// 事件流上发生的事。`App` 把它广播给**所有**页面 (含不可见的); 页面只能据此改自己的状态, 不能产出

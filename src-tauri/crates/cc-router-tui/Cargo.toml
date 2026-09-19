@@ -14,6 +14,8 @@ name = "cc-router-tui-bin"
 path = "src/main.rs"
 
 [dependencies]
+# 本地时区显示时间。与主 crate 同一版本 (0.4.45, 2026-06-04); 只要 Local 时钟, 不要默认的 oldtime / wasmbind。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # event-stream: 异步读键盘。ratatui 再导出的就是这个 crate, 这里只是为了打开 feature (cargo 会合并)。
 crossterm = { version = "0.29", features = ["event-stream"] }
 futures-util = { version = "0.3", default-features = false }
