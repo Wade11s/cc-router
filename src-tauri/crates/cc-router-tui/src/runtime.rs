@@ -12,9 +12,9 @@ use ratatui::crossterm::event::{Event, EventStream};
 use serde_json::json;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
-use crate::action::{Action, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, OverviewData};
+use crate::action::{Action, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, OverviewData, WizardCmd, WizardResult};
 use crate::app::App;
-use crate::client::dto::{RefreshBalanceResult, RefreshModelsResult, RequestPage, Subscription, TestConnectionResult, VirtualModel};
+use crate::client::dto::{Provider, RefreshBalanceResult, RefreshModelsResult, RequestPage, Subscription, TestConnectionResult, VirtualModel};
 use crate::client::{commands, Client, ClientError};
 
 const TICK: Duration = Duration::from_millis(250);
@@ -137,6 +137,30 @@ fn spawn_mutation(client: Arc<Client>, tx: UnboundedSender<Action>, mutation: Mu
         // 消息的那一刻补盖, 用的是那一刻的发起计数器, 不是 spawn 这一刻的 (两者之间可能已经又issued
         // 出去好几次加载, 全都得算进屏障)。
         let _ = tx.send(Action::MutationDone { mutation, barrier: 0, result });
+    });
+}
+
+/// 按 [`WizardCmd`] 分派到对应 command。P5 Task 2 只有 `LoadProviders` 一个分支; 其余四个
+/// (`create_subscription` / `refresh_model_list` / `probe_custom_models` / `update_subscription`)
+/// 依赖 Task 3 才引入的 DTO (`CreateInput` / `ProbeInput` / …), 由 Task 3 补齐。`"list_providers"`
+/// 这里先写字面量: 给 `client::commands` 加 `LIST_PROVIDERS` 常量是 Task 3 的改动范围 (见计划
+/// File Structure 表, `client/mod.rs` 只在 Task 3/7 touch), Task 3 补齐其余分支时会顺带把这一行
+/// 换成 `commands::LIST_PROVIDERS`。
+async fn call_wizard(client: &Client, cmd: &WizardCmd) -> WizardResult {
+    match cmd {
+        WizardCmd::LoadProviders => {
+            let result = client.call::<Vec<Provider>>("list_providers", json!({})).await;
+            WizardResult::Providers(result.map_err(|e: ClientError| e.to_string()))
+        }
+    }
+}
+
+/// 向导的请求。与 `spawn_mutation` 一样**不去重、不补跑**, 判重在向导自己那一层
+/// (`Wizard` 的 `pending` 状态, Task 3 起真正用到)。
+fn spawn_wizard(client: Arc<Client>, tx: UnboundedSender<Action>, cmd: WizardCmd) {
+    tokio::spawn(async move {
+        let result = call_wizard(&client, &cmd).await;
+        let _ = tx.send(Action::WizardDone(Box::new(result)));
     });
 }
 
@@ -303,6 +327,9 @@ fn process_action(
             // `large_enum_variant`); `spawn_mutation` 本身不需要跟着改签名, 这里解引用一次拿回
             // 所有权就够了。
             Cmd::Mutate(mutation) => spawn_mutation(client.clone(), tx.clone(), *mutation),
+            // 同上, `Cmd::Wizard` 的负载也是 `Box` (P5 Task 2), 同样只是为了避免 `Vec<Cmd>` 的
+            // 每个元素都按最大变体分配, 不需要 `spawn_wizard` 跟着收 `Box`。
+            Cmd::Wizard(cmd) => spawn_wizard(client.clone(), tx.clone(), *cmd),
         }
     }
     false
@@ -1038,6 +1065,63 @@ mod tests {
         assert_eq!(vms[1].name, "model-sonnet");
         assert_eq!(vms[1].mode, RoutingMode::RoundRobin);
         assert_eq!(vms[1].subscription_ids, vec!["1".to_string()]);
+    }
+
+    /// P5 Task 2: `WizardCmd::LoadProviders` 打对了 `list_providers`, 把响应体正确解析进
+    /// `WizardResult::Providers(Ok(..))`——尤其是 `auth` 的键名 (`type`, 不是 `auth_type`) 与
+    /// `Provider` 声明的字段形状对得上。
+    #[tokio::test]
+    async fn wizard_load_providers_reports_back() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/ui/api/cmd/list_providers"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "id": "zhipu",
+                "display_name": "智谱",
+                "description": null,
+                "endpoints": [{"id": "default", "label": "默认", "base_url": "https://open.bigmodel.cn/api/anthropic"}],
+                "default_endpoint": "default",
+                "auth": {"type": "api_key"},
+                "model_discovery": {"enabled": true, "example_models": ["glm-4.6"]},
+            }])))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        write_runtime(dir.path(), server.address().port(), "s", "9.9.9-test");
+        let client = Arc::new(Client::connect(dir.path()).unwrap());
+        let (tx, mut rx) = unbounded_channel::<Action>();
+
+        spawn_wizard(client, tx, WizardCmd::LoadProviders);
+
+        let done = rx.recv().await.expect("channel 关闭了");
+        let Action::WizardDone(result) = done else { panic!("{done:?}") };
+        let WizardResult::Providers(providers) = *result;
+        let providers = providers.expect("应该成功");
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "zhipu");
+        assert_eq!(providers[0].auth.auth_type, "api_key");
+        assert_eq!(providers[0].endpoints[0].base_url, "https://open.bigmodel.cn/api/anthropic");
+        assert_eq!(providers[0].model_discovery.example_models, vec!["glm-4.6".to_string()]);
+    }
+
+    /// 请求失败时 (这里让 `list_providers` 直接 404) 应该落进 `WizardResult::Providers(Err(..))`,
+    /// 而不是让整个 `spawn_wizard` 任务 panic——与 `call_mutation`/`call_wizard` 其它分支同一条
+    /// 「上游/网络错误都转成 `String` 装进结果」的约定。
+    #[tokio::test]
+    async fn wizard_load_providers_reports_the_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/ui/api/cmd/list_providers")).respond_with(ResponseTemplate::new(500)).mount(&server).await;
+        let dir = tempfile::tempdir().unwrap();
+        write_runtime(dir.path(), server.address().port(), "s", "9.9.9-test");
+        let client = Arc::new(Client::connect(dir.path()).unwrap());
+        let (tx, mut rx) = unbounded_channel::<Action>();
+
+        spawn_wizard(client, tx, WizardCmd::LoadProviders);
+
+        let done = rx.recv().await.expect("channel 关闭了");
+        let Action::WizardDone(result) = done else { panic!("{done:?}") };
+        let WizardResult::Providers(providers) = *result;
+        assert!(providers.is_err(), "{providers:?}");
     }
 
     /// Task 4: `Fetch::Requests` 发出的请求体精确匹配 `RequestQuery::to_args()` 文档里的例子——

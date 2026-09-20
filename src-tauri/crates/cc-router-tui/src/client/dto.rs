@@ -528,6 +528,47 @@ impl RequestQuery {
     }
 }
 
+/// `list_providers` 的一项。只声明 TUI 用得到的字段, 后端 `ProviderInfo` 其余字段 (homepage /
+/// docs_url / compatibility 等) 由 serde 忽略。P5 Task 2 只加这四个字段供 `WizardResult::Providers`
+/// 使用; `is_oauth()` / `default_endpoint()` 等取值方法与 `CustomProtocol` 等厂商选择器专用类型留给
+/// Task 3 (那边还要给这个类型加契约测试)。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct Provider {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub endpoints: Vec<ProviderEndpoint>,
+    #[serde(default)]
+    pub default_endpoint: Option<String>,
+    pub auth: ProviderAuth,
+    pub model_discovery: ModelDiscovery,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ProviderEndpoint {
+    pub id: String,
+    pub label: String,
+    pub base_url: String,
+}
+
+/// 后端这个字段的键名是 `type` (`#[serde(rename = "type")]`), **不是** `auth_type`。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ProviderAuth {
+    #[serde(rename = "type")]
+    pub auth_type: String,
+}
+
+/// `Provider` 里的厂商模型发现配置。与本文件顶部 `Subscription::model_cache` 用的 [`ModelCache`]
+/// 是两回事——这里是「这个厂商支不支持自动发现模型 / 手填提示」, 那边是「这条订阅缓存到的模型」。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ModelDiscovery {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub example_models: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -70,6 +70,11 @@ pub struct Strings {
     /// M6 (fix round final): 虚拟模型页 Models 焦点下 `⏎` 的 hint 文案 ("成员")——比旧的
     /// `key_detail` ("详情") 更准确地描述这个键的作用 (进入这个虚拟模型的订阅成员列表)。
     pub key_members: &'static str,
+    /// P5 Task 7 起订阅页 `n` 的 hint 文案 ("新建")。
+    pub key_new: &'static str,
+    /// 向导底栏右侧固定提示 ("取消"); 弹窗的取消统一用 `key_close` ("关闭"), 向导用这个不同的词是
+    /// 因为向导按 Esc 退出会放弃已经填的内容, 语气上更接近「取消这次新建」。
+    pub key_cancel: &'static str,
 
     pub help_title: &'static str,
     /// (键, 说明)
@@ -337,6 +342,11 @@ pub struct Strings {
     pub lg_d_tool_names: &'static str,
     pub lg_d_truncated: &'static str,
     pub lg_d_unnamed: &'static str,
+
+    // ---------- P5 Task 2: 新建订阅向导 (骨架; Task 4 起补表单文案) ----------
+    pub wiz_title: &'static str,
+    pub wiz_loading_providers: &'static str,
+    pub wiz_load_failed: fn(reason: &str) -> String,
 }
 
 impl Strings {
@@ -407,6 +417,8 @@ pub const ZH: Strings = Strings {
     key_remove: "移除",
     key_mode: "模式",
     key_members: "成员",
+    key_new: "新建",
+    key_cancel: "取消",
 
     help_title: "键位",
     help_rows: &[
@@ -672,6 +684,10 @@ pub const ZH: Strings = Strings {
     lg_d_tool_names: "工具名",
     lg_d_truncated: "(已截断)",
     lg_d_unnamed: "(未命名)",
+
+    wiz_title: "新建订阅",
+    wiz_loading_providers: "正在获取厂商列表…",
+    wiz_load_failed: |reason| format!("获取厂商列表失败: {reason}"),
 };
 
 pub fn strings(lang: Lang) -> &'static Strings {

@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Tabs};
+use ratatui::widgets::{Block, BorderType, Clear, Tabs};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 
@@ -23,9 +23,11 @@ use crate::popup::{ConfirmState, Popup, PopupCtx};
 use crate::store::Store;
 use crate::theme::Theme;
 use crate::widgets::detail::DetailState;
+use crate::widgets::keybar::Hint;
 use crate::widgets::picker::PickerState;
 use crate::widgets::toast::{self, Toast, ToastKind};
 use crate::widgets::{keybar, spinner_state};
+use crate::wizard::Wizard;
 
 pub const MIN_WIDTH: u16 = 80;
 pub const MIN_HEIGHT: u16 = 24;
@@ -68,6 +70,9 @@ pub struct App {
     tab: Tab,
     store: Store,
     pages: Pages,
+    /// P5 Task 2: 新建订阅向导。不是标签页也不是弹窗, 是夹在弹窗与全局键之间的一层——见
+    /// `wizard::Wizard` 模块顶部的文档注释。
+    wizard: Option<Wizard>,
     popup: Option<Popup>,
     popup_area: Option<Rect>,
     pending_popup_fx: Option<PopupFx>,
@@ -99,6 +104,7 @@ impl App {
             tab: Tab::Overview,
             store: Store::default(),
             pages: Pages::default(),
+            wizard: None,
             popup: None,
             popup_area: None,
             pending_popup_fx: None,
@@ -141,6 +147,11 @@ impl App {
         // 按键 (打字 / 移动选中 / 滚动) 直接改自身状态, 不像 Help / Confirm 那样只读。
         if let Some(popup) = &mut self.popup {
             return popup.handle_key(key);
+        }
+        // 向导那一层排在弹窗之后、全局键之前: 存在时除 `Ctrl+C` 外的全部按键归它 (所以 `q` / `r` /
+        // `1`-`5` 能被向导当普通字符输入), 全局键与页面都到不了。
+        if let Some(wizard) = &mut self.wizard {
+            return wizard.handle_key(key, self.s);
         }
         match key.code {
             KeyCode::Char('q') => Some(Action::Quit),
@@ -186,18 +197,54 @@ impl App {
         self.pending_popup_fx = Some(PopupFx::Open);
     }
 
-    /// `Quit` / `SwitchTab` / `NextTab` / `PrevTab` 四个来源共用: 当前页面 `is_dirty()` 时不直接
-    /// 执行 `action`, 而是打开确认弹窗把它包进 `on_yes`; 否则调用 `run` 真正执行。`Action::Confirmed`
-    /// 里 `discard_changes()` 之后再 `update(*inner)`, 会重新走到这里, 但那时 `is_dirty()` 已经是
-    /// `false`——天然放行, 不需要另一条「不检查 dirty」的旁路。
+    /// 当前的「编辑上下文」是不是有未保存的东西。向导只要存在就算——它一定在收集输入 (P5 Task 2)。
+    fn current_dirty(&self) -> bool {
+        self.wizard.is_some() || self.pages.get(self.tab).is_dirty()
+    }
+
+    /// 丢弃当前的编辑上下文: **有向导时关掉向导** (并补一次订阅列表重拉, 因为向导可能已经创建了
+    /// 订阅), 否则丢弃当前页草稿 (P5 Task 2)。
+    fn discard_current(&mut self) -> Vec<Cmd> {
+        if self.wizard.take().is_some() {
+            vec![Cmd::Fetch(Fetch::Subscriptions)]
+        } else {
+            self.pages.get_mut(self.tab).discard_changes();
+            Vec::new()
+        }
+    }
+
+    /// `Quit` / `SwitchTab` / `NextTab` / `PrevTab` 四个来源共用: 当前「编辑上下文」`current_dirty()`
+    /// 时不直接执行 `action`, 而是打开确认弹窗把它包进 `on_yes`; 否则调用 `run` 真正执行。
+    /// `Action::Confirmed` 里 `discard_current()` 之后再 `update(*inner)`, 会重新走到这里, 但那时
+    /// `current_dirty()` 已经是 `false`——天然放行, 不需要另一条「不检查 dirty」的旁路。
     fn guard_dirty(&mut self, action: Action, run: impl FnOnce(&mut Self) -> Vec<Cmd>) -> Vec<Cmd> {
-        if self.pages.get(self.tab).is_dirty() {
+        if self.current_dirty() {
             let prompt = self.s.confirm_discard.to_string();
             self.open_popup(Popup::Confirm(ConfirmState { prompt, on_yes: Box::new(action) }));
             Vec::new()
         } else {
             run(self)
         }
+    }
+
+    /// 调用向导的 `update`, 再轮询它的两个待办 —— 与 `App::update_page` 对页面做的事一一对应。
+    /// 顺序要紧: 先取 notice (关闭之后向导就没了), 再看 close 请求 (P5 Task 2)。
+    ///
+    /// `notice`/`should_close` 先落进局部变量、`w` 借用到此为止, 再调 `self.push_toast`/
+    /// `self.update`——这两个都要重新独占借用整个 `self`, 不能跟仍然存活的 `w`
+    /// (借用自 `self.wizard`) 同时成立 (借用检查器不按字段做跨方法调用的不相交分析)。
+    fn update_wizard(&mut self, action: &Action) -> Vec<Cmd> {
+        let Some(w) = &mut self.wizard else { return Vec::new() };
+        let mut cmds = w.update(action, &self.store, self.s);
+        let notice = w.take_notice();
+        let should_close = w.take_close_request();
+        if let Some((kind, text)) = notice {
+            self.push_toast(Toast::new(kind, text));
+        }
+        if should_close {
+            cmds.extend(self.update(Action::CloseWizard));
+        }
+        cmds
     }
 
     /// `Store` 刚接受了一份订阅列表 (`FetchDone` 两个分支共用): 广播给所有页面。**唯一**列出
@@ -432,13 +479,22 @@ impl App {
             }
             Action::Confirmed(inner) => {
                 self.close_popup();
-                self.pages.get_mut(self.tab).discard_changes();
-                self.update(*inner)
+                let mut cmds = self.discard_current();
+                cmds.extend(self.update(*inner));
+                cmds
             }
-            Action::DiscardDraft => {
-                self.pages.get_mut(self.tab).discard_changes();
-                Vec::new()
+            Action::DiscardDraft => self.discard_current(),
+            Action::OpenWizard => {
+                let mut wizard = Wizard::new();
+                let cmds = wizard.on_open();
+                self.wizard = Some(wizard);
+                cmds
             }
+            Action::CloseWizard => {
+                self.wizard = None;
+                vec![Cmd::Fetch(Fetch::Subscriptions)]
+            }
+            Action::WizardDone(_) => self.update_wizard(&action),
             Action::Tick { now_ms } => {
                 self.now_ms = now_ms;
                 self.tick += 1;
@@ -555,7 +611,14 @@ impl App {
             }
             Action::PickerDone { tag, choice } => {
                 self.close_popup();
-                self.update_page(self.tab, &Action::PickerDone { tag, choice })
+                let action = Action::PickerDone { tag, choice };
+                // 有向导时交给向导 (P5 Task 4 起从选厂商/选模型弹窗触发); 没有向导时维持原样,
+                // 交给当前页面 (P3b 起的改槽位/改虚拟模型成员用的就是这条老路)。
+                if self.wizard.is_some() {
+                    self.update_wizard(&action)
+                } else {
+                    self.update_page(self.tab, &action)
+                }
             }
             Action::OpenDetail(spec) => {
                 self.open_popup(Popup::Detail(DetailState::new(spec)));
@@ -673,11 +736,20 @@ impl App {
             last_outcome: &self.last_outcome,
             tz: self.tz,
         };
-        let page = self.pages.get_mut(self.tab);
-        page.draw(frame, content, &mut ctx);
-        let mut left = page.hints(s);
-        left.insert(0, ("1-5", s.key_switch_tab));
-        keybar::draw(frame, footer, &left, &[("?", s.key_help), ("q", s.key_quit)], &self.theme);
+        // 有向导时内容区整个归它 (先 `Clear` 再画, 不叠在页面上面); 底栏左侧换成向导自己的键位,
+        // 右侧固定只剩 `Esc` (`?` 帮助 / `q` 退出在向导里按不出来, 继续提示会误导, P5 Task 2)。
+        let (left, right): (Vec<Hint>, Vec<Hint>) = if let Some(wizard) = &mut self.wizard {
+            frame.render_widget(Clear, content);
+            wizard.draw(frame, content, &mut ctx);
+            (wizard.hints(s), vec![("Esc", s.key_cancel)])
+        } else {
+            let page = self.pages.get_mut(self.tab);
+            page.draw(frame, content, &mut ctx);
+            let mut left = page.hints(s);
+            left.insert(0, ("1-5", s.key_switch_tab));
+            (left, vec![("?", s.key_help), ("q", s.key_quit)])
+        };
+        keybar::draw(frame, footer, &left, &right, &self.theme);
 
         self.draw_toast(frame, screen, content.y);
 
@@ -722,7 +794,7 @@ mod tests {
     use ratatui::Terminal;
 
     use super::*;
-    use crate::action::Tab;
+    use crate::action::{Tab, WizardCmd, WizardResult};
     use crate::client::events::{ROUTE_ATTEMPT_STARTED, SUBSCRIPTION_STATE_CHANGED};
     use crate::i18n::ZH;
     use crate::widgets::detail::{DetailRow, DetailSpec, Tone};
@@ -936,5 +1008,86 @@ mod tests {
 
         a.update(Action::FetchDone { fetch: Fetch::Requests(RequestQuery::default()), issued: 1, result: Err("boom".into()) });
         assert!(!a.pages.logs.is_loading(), "失败的加载应该停掉「加载中」标记");
+    }
+
+    // ---------- P5 Task 2: 向导这一层的四条路由 ----------
+
+    /// 向导打开后, `q` / `r` / `1` / `Tab` 这些平时会被当成全局键的按键应该被向导吞掉, 到不了
+    /// `match key.code` 那一段——所以它们绝不会产出 `Quit`/`Refresh`/`SwitchTab`/`NextTab`。
+    #[test]
+    fn the_wizard_swallows_global_keys() {
+        let mut a = app();
+        a.update(Action::OpenWizard);
+        for code in [KeyCode::Char('q'), KeyCode::Char('r'), KeyCode::Char('1'), KeyCode::Tab] {
+            let action = a.handle_key(key(code));
+            assert!(
+                !matches!(action, Some(Action::Quit) | Some(Action::Refresh) | Some(Action::SwitchTab(_)) | Some(Action::NextTab)),
+                "{code:?} 不该被当成全局键: {action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_c_still_force_quits_with_the_wizard_open() {
+        let mut a = app();
+        a.update(Action::OpenWizard);
+        assert_eq!(a.handle_key(ctrl_c()), Some(Action::ForceQuit), "向导打开时 Ctrl+C 也不该问");
+        assert_eq!(a.update(Action::ForceQuit), vec![Cmd::Quit]);
+    }
+
+    /// `current_dirty()` 把「向导存在」也算作有未保存的编辑上下文——切页 / 退出都要先问, 与页面
+    /// 草稿走的是同一条 `guard_dirty`。`Confirmed` 之后 `discard_current()` 关掉向导并补一次订阅
+    /// 列表重拉, 再执行被包住的原始 action。
+    #[test]
+    fn switching_tabs_or_quitting_with_the_wizard_open_asks_first() {
+        let mut a = app();
+        a.update(Action::OpenWizard);
+        assert!(a.update(Action::SwitchTab(Tab::Subscriptions)).is_empty(), "向导打开时切页应该先确认");
+        assert_eq!(a.tab, Tab::Overview, "确认之前不该真的切走");
+        assert!(a.wizard.is_some(), "确认之前向导不该被关掉");
+
+        let cmds = a.update(Action::Confirmed(Box::new(Action::SwitchTab(Tab::Subscriptions))));
+        assert_eq!(a.tab, Tab::Subscriptions, "y 之后应该真的切过去");
+        assert!(a.wizard.is_none(), "y 之后向导应该被关掉");
+        assert!(cmds.contains(&Cmd::Fetch(Fetch::Subscriptions)), "关向导应该补一次订阅列表重拉: {cmds:?}");
+
+        // 退出: 键盘层面 `q` 已经在 `the_wizard_swallows_global_keys` 里确认到不了这里 (向导整个
+        // 吞掉), 这里直接喂 `Action::Quit` 单独测 `update()` 自己的守卫, 与
+        // `q_on_a_dirty_page_asks_first` 同一测法。
+        let mut b = app();
+        b.update(Action::OpenWizard);
+        assert!(b.update(Action::Quit).is_empty(), "向导打开时 Quit 应该先确认");
+        assert!(b.wizard.is_some(), "确认之前向导不该被关掉");
+
+        assert_eq!(
+            b.update(Action::Confirmed(Box::new(Action::Quit))),
+            vec![Cmd::Fetch(Fetch::Subscriptions), Cmd::Quit],
+            "y 之后应该先补一次订阅列表重拉、再真的退出"
+        );
+        assert!(b.wizard.is_none());
+    }
+
+    #[test]
+    fn closing_the_wizard_refetches_subscriptions() {
+        let mut a = app();
+        a.update(Action::OpenWizard);
+        assert!(a.wizard.is_some());
+        assert_eq!(a.update(Action::CloseWizard), vec![Cmd::Fetch(Fetch::Subscriptions)]);
+        assert!(a.wizard.is_none());
+    }
+
+    #[test]
+    fn a_wizard_result_arriving_after_the_wizard_closed_is_dropped() {
+        let mut a = app();
+        assert!(a.wizard.is_none(), "准备: 没有打开过向导");
+        let result = WizardResult::Providers(Ok(vec![]));
+        assert!(a.update(Action::WizardDone(Box::new(result))).is_empty(), "没有向导时应该直接丢弃, 不 panic");
+    }
+
+    #[test]
+    fn opening_the_wizard_loads_providers() {
+        let mut a = app();
+        assert_eq!(a.update(Action::OpenWizard), vec![Cmd::Wizard(Box::new(WizardCmd::LoadProviders))]);
+        assert!(a.wizard.is_some());
     }
 }

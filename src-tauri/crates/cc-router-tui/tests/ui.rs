@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use cc_router_tui::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOutcome, OverviewData, Tab};
+use cc_router_tui::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOutcome, OverviewData, Tab, WizardResult};
 use cc_router_tui::app::{App, AppOptions, MIN_HEIGHT};
 use cc_router_tui::client::dto::{
     BalanceCache, BalanceEntry, BalanceSeverity, BalanceSnapshot, ModelCache, ModelInfo, ModelSlots, OverallStats, ProxyStatus,
@@ -331,6 +331,31 @@ fn help_popup_80x24() {
     let mut a = loaded(false);
     a.update(Action::ToggleHelp);
     insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+// ---------- P5 Task 2: 新建订阅向导 (骨架) ----------
+
+/// 向导刚打开、厂商列表还没拉回来的画面: 带边框的空容器 + 居中的「正在获取厂商列表…」+ throbber。
+#[test]
+fn wizard_loading_80x24() {
+    let mut a = app(false);
+    a.update(Action::OpenWizard);
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+/// 厂商列表拉取失败: 容器内容换成居中的错误文案, 只能 `Esc` 退出——不开新快照 (与加载中的容器
+/// 骨架一样, 只是正文文字不同), 用 `contains` 断言内容, 用 `handle_key` 断言 Esc 行为。
+#[test]
+fn wizard_load_failure_shows_the_reason_and_esc_still_closes() {
+    let mut a = app(false);
+    a.update(Action::OpenWizard);
+    a.update(Action::WizardDone(Box::new(WizardResult::Providers(Err("网络错误".into())))));
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.wiz_load_failed)("网络错误")), "{out}");
+    assert!(!out.contains(ZH.wiz_loading_providers), "失败之后不该还显示加载中的文案\n{out}");
+
+    assert_eq!(a.handle_key(key(KeyCode::Esc)), Some(Action::CloseWizard));
+    assert_eq!(a.update(Action::CloseWizard), vec![Cmd::Fetch(Fetch::Subscriptions)]);
 }
 
 // ---------- 订阅页 ----------
@@ -1585,6 +1610,14 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     assert_ne!(opened, first, "滚动后画面应该真的变了");
     let second = render(&mut r, 80, 24);
     assert_eq!(first, second, "日志详情弹窗滚动后的状态应该幂等");
+
+    // P5 Task 2: 向导打开 (加载厂商列表中) 的状态——throbber 是唯一读 tick 计数器的渲染路径,
+    // 同一帧画两遍必须落在同一格上, 与订阅页忙碌行同一条纪律。
+    let mut s = app(false);
+    s.update(Action::OpenWizard);
+    let first = render(&mut s, 80, 24);
+    let second = render(&mut s, 80, 24);
+    assert_eq!(first, second, "向导加载中的状态应该幂等");
 }
 
 /// F3: 空列表加载时没有「旧」行可以比较, 不该把更早排队、还没画出来的闪烁带到后面某一帧。

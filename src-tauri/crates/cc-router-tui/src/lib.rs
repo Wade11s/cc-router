@@ -9,6 +9,8 @@ pub mod i18n;
 pub mod pages;
 pub mod popup;
 pub mod runtime;
+pub mod secret;
 pub mod store;
 pub mod theme;
 pub mod widgets;
+pub mod wizard;

@@ -2,8 +2,8 @@
 //! `App::update` 是 `(状态, Action) → (新状态, Vec<Cmd>)` 的同步函数, 不碰网络也不碰终端, 所以能直接单测。
 
 use crate::client::dto::{
-    ModelSlots, OverallStats, ProxyStatus, RefreshBalanceResult, RefreshModelsResult, RequestPage, RequestQuery, RoutingMode, SeriesPoint,
-    Settings, SlotEfforts, Subscription, TestConnectionResult, VirtualModel,
+    ModelSlots, OverallStats, Provider, ProxyStatus, RefreshBalanceResult, RefreshModelsResult, RequestPage, RequestQuery, RoutingMode,
+    SeriesPoint, Settings, SlotEfforts, Subscription, TestConnectionResult, VirtualModel,
 };
 use crate::widgets::detail::DetailSpec;
 use crate::widgets::picker::{PickerChoice, PickerSpec, PickerTag};
@@ -158,6 +158,26 @@ pub enum MutationOutcome {
     VirtualModelSaved,
 }
 
+/// 向导要发的请求。**与 [`Mutation`] 刻意分开**: 它们没有订阅 id (创建的那一刻还没有), 不进忙碌表,
+/// 不进「上次操作」存档, 完成后也不自动重拉——结果只回给向导自己。判重由向导的 `pending` 状态负责
+/// (P5 Task 2 只有一种请求, 还用不上; Task 3 起的 `Create`/`Probe` 等会用到)。
+///
+/// P5 Task 2 只定义 `LoadProviders` 一个变体; `Create` / `LoadModels` / `Probe` / `SaveSlots` 由
+/// Task 3 补齐 (它们依赖 Task 3 才引入的 `CreateInput` / `ProbeInput` / `ModelSlots` 整块替换语义)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WizardCmd {
+    /// `list_providers`。向导打开时发一次。
+    LoadProviders,
+}
+
+/// 向导请求的结果。**绝不带 `Secret`**——去程带 key, 回程一律不带, 这样 key 只在单向的一段消息里
+/// 存在过。P5 Task 2 只定义 `Providers` 一个变体; 其余四个 (`Created` / `Models` / `Probed` /
+/// `SlotsSaved`) 由 Task 3 补齐。
+#[derive(Debug, Clone, PartialEq)]
+pub enum WizardResult {
+    Providers(Result<Vec<Provider>, String>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cmd {
     Quit,
@@ -170,6 +190,10 @@ pub enum Cmd {
     /// 因为别的变体, 比如 `OpenConfirm { prompt: String, .. }`, 已经不算"小"), 挑最小的改动消掉
     /// 警告就够了 (Fix round I)。
     Mutate(Box<Mutation>),
+    /// 向导的一次请求。`Box` 同上一条注释的理由: `WizardCmd::Create` (Task 3) 会带整块
+    /// `CreateInput` (含 `Secret` + `ModelSlots`), 提前用 `Box` 避免每个 `Vec<Cmd>` 元素都按最大
+    /// 变体分配。
+    Wizard(Box<WizardCmd>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,6 +223,13 @@ pub enum Action {
     /// 页面主动清空自己的草稿 (比如按 Esc 放弃编辑) 时用; `App` 收到后调用当前页面的
     /// `discard_changes()`, 不产出任何 `Cmd`。
     DiscardDraft,
+    /// 订阅页按 `n` (P5 Task 7 起真正接上这个键): 打开新建向导。
+    OpenWizard,
+    /// 关掉向导 (完成 / 取消 / 确认放弃都走这一个)。`App` 关掉之后**无条件**补一次
+    /// `Fetch::Subscriptions`——向导可能已经创建了订阅, 而它不走 `Mutation` 那条自动重拉的路。
+    CloseWizard,
+    /// 一次向导请求的结果。没有向导时 (用户在结果回来之前就退出了) 直接丢弃。
+    WizardDone(Box<WizardResult>),
     Refresh,
     /// 250ms 一次。`now_ms` 是 Unix 毫秒 —— 冷却倒计时要和后端给的 `cooldown_until` 比。
     Tick { now_ms: i64 },
