@@ -42,7 +42,7 @@ pub enum DetailRow {
     Field { label: String, value: String, tone: Tone },
     Text { text: String, tone: Tone },
     /// 与 `Field` 同样排版, 值是按 `PopupCtx.tz` 显示的 `full_stamp(ms)`——这样组装详情的页面
-    /// (Task 7 起的实时路由页、Task 8 起的请求日志详情页) 不需要知道时区, 只管把毫秒时间戳塞进来。
+    /// (目前只有请求日志页) 不需要知道时区, 只管把毫秒时间戳塞进来。
     Stamp { label: String, ms: i64 },
 }
 

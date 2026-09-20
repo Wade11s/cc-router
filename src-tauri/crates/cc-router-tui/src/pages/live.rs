@@ -95,6 +95,8 @@ pub struct Live {
     table_state: TableState,
     /// 上一帧表体的可视行数, `PageUp`/`PageDown` 按这个翻页。
     last_page_rows: usize,
+    /// 上一帧窗口的起始下标 (过滤后列表里的位置)。只用于让窗口在选中项还在视野里时保持不动。
+    last_window_start: usize,
 }
 
 /// 手写而不是派生: `next_seq` 从 1 起。
@@ -109,8 +111,34 @@ impl Default for Live {
             flash: Vec::new(),
             table_state: TableState::default(),
             last_page_rows: DEFAULT_PAGE_ROWS,
+            last_window_start: 0,
         }
     }
+}
+
+/// 这一帧要画哪一段: 返回 `(起始下标, 窗口内的选中下标)`。
+///
+/// - `total`: 过滤后的条目数；`sel`: 选中项在过滤后列表里的下标, `None` = 跟随最新。
+/// - 跟随最新时窗口贴底 (`total - capacity`), 与原来 `*table_state.offset_mut() = …` 的行为一致。
+/// - 有选中时, 只在它跑出 `[prev_start, prev_start + capacity)` 时才移动窗口, 移动后它正好贴边 ——
+///   这是 ratatui `Table` 自己的滚动行为, 我们把它搬出来, 是因为 `Table` 只能对"已经建好的全部行"
+///   做这件事, 而我们想先知道该建哪些行 (P4 终审 Minor)。
+/// - `capacity == 0` 时返回 `(0, None)`, 调用方已经在上面提前返回, 这里只是保证是全函数。
+fn window(total: usize, sel: Option<usize>, capacity: usize, prev_start: usize) -> (usize, Option<usize>) {
+    if capacity == 0 {
+        return (0, None);
+    }
+    let max_start = total.saturating_sub(capacity);
+    let Some(sel) = sel else { return (max_start, None) };
+    let start = if sel < prev_start {
+        sel
+    } else if sel >= prev_start.saturating_add(capacity) {
+        (sel + 1).saturating_sub(capacity)
+    } else {
+        prev_start
+    };
+    let start = start.min(max_start);
+    (start, Some(sel.saturating_sub(start)))
 }
 
 /// `kind` 是否符合当前过滤: `Gap` 总是符合; 尝试要满足 `VirtualModel(x)` 时 `vm == x`,
@@ -355,6 +383,13 @@ impl Live {
         self.entries.len()
     }
 
+    /// 测试专用: 上一帧窗口的起始下标。P4 终审 Minor——验证「跟随最新时只建视口那一屏, 窗口贴底」,
+    /// 与 `entry_count` 同一套写法。
+    #[cfg(test)]
+    pub(crate) fn last_window_start(&self) -> usize {
+        self.last_window_start
+    }
+
     fn draw_spark(&self, frame: &mut Frame, area: Rect, ctx: &DrawCtx) {
         let s = ctx.s;
         let theme = ctx.theme;
@@ -424,16 +459,14 @@ impl Live {
             return;
         }
 
-        match self.selected {
-            Some(seq) => {
-                let sel = idx.iter().position(|&i| self.entries[i].seq == seq);
-                self.table_state.select(sel);
-            }
-            None => {
-                self.table_state.select(None);
-                *self.table_state.offset_mut() = idx.len().saturating_sub(capacity);
-            }
-        }
+        // 只建这一帧真的要画的那一屏 (P4 终审 Minor: release 下 2000 条约 1.2ms/帧, 每帧上万次
+        // 分配) —— `window` 算出该建哪一段, 自己维护 `TableState.offset`(恒 0, 因为 `Table` 拿到的
+        // 已经是裁过的那一屏) 与 `select`(换算成窗口内下标)。
+        let sel_pos = self.selected.and_then(|seq| idx.iter().position(|&i| self.entries[i].seq == seq));
+        let (start, sel_in_window) = window(idx.len(), sel_pos, capacity, self.last_window_start);
+        self.last_window_start = start;
+        self.table_state.select(sel_in_window);
+        *self.table_state.offset_mut() = 0;
 
         // `Constraint::Fill(1)` (订阅名) 的实际宽度: `inner.width` 已经减掉了边框 + 内距, 再减选中
         // 前缀 (`HIGHLIGHT_COL`)、其余四个定宽列、以及列间距 (`column_spacing(2)`, 5 列 4 个间隔)——
@@ -442,7 +475,8 @@ impl Live {
         let fixed_cols = TIME_COL as u16 + VM_COL as u16 + 1 /* 结果符号列 */ + ELAPSED_COL as u16;
         let sub_col = inner.width.saturating_sub(HIGHLIGHT_COL).saturating_sub(fixed_cols).saturating_sub(4 * 2) as usize;
 
-        let rows: Vec<Row> = idx.iter().map(|&i| build_row(&self.entries[i], store, theme, s, tz, tick, sub_col)).collect();
+        let end = (start + capacity).min(idx.len());
+        let rows: Vec<Row> = idx[start..end].iter().map(|&i| build_row(&self.entries[i], store, theme, s, tz, tick, sub_col)).collect();
         let widths = [
             Constraint::Length(TIME_COL as u16),
             Constraint::Length(VM_COL as u16),
@@ -460,17 +494,17 @@ impl Live {
 
         // 行入场动效: 只对「此刻画在屏幕上、且 at_ms >= now_ms - 1000」的闪烁, 页面在后台攒下的
         // 旧行不补播 (与订阅页 draw_list / 虚拟模型页 draw_members 同一套「渲染完读 offset 换算
-        // rect」写法)。
-        let offset = self.table_state.offset();
+        // rect」写法)。`pos` 是全局下标 (过滤后列表里的位置), 要减去窗口起点 `start` 才是这一屏
+        // 里的行号——`rows` 现在只建了 `[start, start+capacity)` 这一段, 不再是全部可见条目。
         for &seq in flash {
             let Some(pos) = idx.iter().position(|&i| self.entries[i].seq == seq) else { continue };
             if self.entries[idx[pos]].at_ms < ctx.now_ms - 1000 {
                 continue;
             }
-            if pos < offset || pos >= offset + capacity {
+            if pos < start || pos >= start + capacity {
                 continue;
             }
-            let rect = Rect::new(inner.x, inner.y + (pos - offset) as u16, inner.width, 1);
+            let rect = Rect::new(inner.x, inner.y + (pos - start) as u16, inner.width, 1);
             ctx.fx.row_new(seq, rect, ctx.theme.accent);
         }
     }
@@ -506,7 +540,7 @@ fn build_row(entry: &Entry, store: &Store, theme: &Theme, s: &'static Strings, t
         EntryKind::Gap => Row::new(vec![
             time_cell,
             Cell::from(""),
-            Cell::from(Span::styled(s.live_gap, theme.muted_style())),
+            Cell::from(Span::styled(fit(s.live_gap, sub_col), theme.muted_style())),
             Cell::from(""),
             Cell::from(""),
         ]),
@@ -638,11 +672,17 @@ impl Component for Live {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use ratatui::backend::TestBackend;
     use ratatui::crossterm::event::KeyModifiers;
+    use ratatui::Terminal;
 
     use super::*;
     use crate::action::{Action, Cmd, Fetch};
+    use crate::fx::Fx;
     use crate::i18n::ZH;
+    use crate::theme::ColorMode;
     use crate::widgets::picker::{PickerChoice, PickerTag};
 
     const NOW: i64 = 1_700_000_000_000;
@@ -950,5 +990,60 @@ mod tests {
                 "{action:?} 应该同时补拉订阅与虚拟模型"
             );
         }
+    }
+
+    /// P4 终审 Minor: `window` 是 `draw_table` 只建视口那一屏的核心纯函数, 覆盖跟随最新 / 选中项
+    /// 在窗口内外移动 / 上一帧起点越界 (条目被过滤裁掉) / `capacity == 0` 这几类边界。
+    #[test]
+    fn window_follows_the_tail_and_keeps_the_selection_visible() {
+        // 跟随最新: 贴底
+        assert_eq!(window(100, None, 10, 0), (90, None));
+        // 条目比窗口少: 从头开始
+        assert_eq!(window(3, None, 10, 0), (0, None));
+        // 选中项已经在窗口里: 窗口不动
+        assert_eq!(window(100, Some(45), 10, 40), (40, Some(5)));
+        // 选中项在窗口上方: 窗口上移到它贴顶
+        assert_eq!(window(100, Some(12), 10, 40), (12, Some(0)));
+        // 选中项在窗口下方: 窗口下移到它贴底
+        assert_eq!(window(100, Some(55), 10, 40), (46, Some(9)));
+        // 上一帧的起点已经越界 (条目被裁掉了): 夹回合法范围
+        assert_eq!(window(20, Some(19), 10, 500), (10, Some(9)));
+        // 全函数: capacity 为 0 不 panic
+        assert_eq!(window(20, Some(3), 0, 0), (0, None));
+    }
+
+    /// P4 终审 Minor: 2000 条、24 行高的终端 (内容区最多 20 行, 去掉边框与内距更少)——跟随最新时
+    /// 窗口应该贴底, 也就是起点非常接近 2000, 而不是从 0 开始把 2000 行全建一遍。
+    #[test]
+    fn the_table_only_builds_the_rows_it_can_show() {
+        let mut live = Live::default();
+        for i in 0..2000 {
+            send_started(&mut live, "model-sonnet", "1", NOW + i);
+        }
+
+        let store = Store::default();
+        let theme = Theme::new(ColorMode::TrueColor);
+        let mut fx = Fx::new(false);
+        let busy = HashMap::new();
+        let last_outcome = HashMap::new();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                let mut ctx = DrawCtx {
+                    theme: &theme,
+                    s: &ZH,
+                    now_ms: NOW + 2000,
+                    tick: 0,
+                    fx: &mut fx,
+                    store: &store,
+                    busy: &busy,
+                    last_outcome: &last_outcome,
+                    tz: Tz::Fixed(8 * 3600),
+                };
+                live.draw(f, area, &mut ctx);
+            })
+            .unwrap();
+        assert!(live.last_window_start() >= 1900, "跟随最新时窗口应该贴底, 实际起点 {}", live.last_window_start());
     }
 }

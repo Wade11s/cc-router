@@ -62,7 +62,11 @@ pub fn duration(ms: i64) -> String {
     if ms < 1000 {
         format!("{ms}ms")
     } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
+        // 截断到 0.1 秒, 不用 `{:.1}`: 它会四舍五入, 把 59_950ms 印成 "60.0s", 而 60_000ms 起
+        // 走的分钟分支是截断的, 两个分支的舍入方向必须一致, 否则这一档会跳到一个下一个分支
+        // 永远不会出现的值 (P4 终审 Minor)。
+        let tenths = ms / 100;
+        format!("{}.{}s", tenths / 10, tenths % 10)
     } else {
         let total_secs = ms / 1000;
         format!("{}m{:02}s", total_secs / 60, total_secs % 60)
@@ -251,5 +255,18 @@ mod tests {
         assert_eq!(duration(59_949), "59.9s");
         assert_eq!(duration(125_000), "2m05s");
         assert_eq!(duration(-5), "0ms");
+    }
+
+    #[test]
+    fn duration_truncates_instead_of_rounding_at_the_minute_boundary() {
+        assert_eq!(duration(59_949), "59.9s");
+        assert_eq!(duration(59_950), "59.9s", "不能四舍五入成 60.0s —— 分钟分支永远不会产出这个值");
+        assert_eq!(duration(59_999), "59.9s");
+        assert_eq!(duration(60_000), "1m00s");
+        // 既有行为不变
+        assert_eq!(duration(999), "999ms");
+        assert_eq!(duration(1_000), "1.0s");
+        assert_eq!(duration(1_949), "1.9s");
+        assert_eq!(duration(1_950), "1.9s");
     }
 }

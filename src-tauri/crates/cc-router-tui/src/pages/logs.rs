@@ -336,7 +336,7 @@ impl Logs {
         if wide {
             header_cells.push(Cell::from(fit(s.lg_col_client, CLIENT_COL)));
         }
-        header_cells.push(Cell::from(s.lg_col_model));
+        header_cells.push(Cell::from(fit(s.lg_col_model, model_col)));
         header_cells.push(Cell::from(fit(s.lg_col_latency, LATENCY_COL)));
         header_cells.push(Cell::from(fit(s.lg_col_tokens, TOKENS_COL)));
         let header = Row::new(header_cells).style(theme.muted_style().add_modifier(Modifier::BOLD));
