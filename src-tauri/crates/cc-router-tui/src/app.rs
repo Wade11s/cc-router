@@ -490,9 +490,15 @@ impl App {
                 self.wizard = Some(wizard);
                 cmds
             }
+            // `self.wizard.take().is_some()`: 只有真的关掉了 (调用时向导确实存在) 才补一次重拉——
+            // `Confirmed(CloseWizard)` 这条路径上 `discard_current()` 已经关过一次向导了, 这里再
+            // 无条件发一次会产出两条一模一样的 `Cmd::Fetch(Subscriptions)` (Review round 1, Minor)。
             Action::CloseWizard => {
-                self.wizard = None;
-                vec![Cmd::Fetch(Fetch::Subscriptions)]
+                if self.wizard.take().is_some() {
+                    vec![Cmd::Fetch(Fetch::Subscriptions)]
+                } else {
+                    Vec::new()
+                }
             }
             Action::WizardDone(_) => self.update_wizard(&action),
             Action::Tick { now_ms } => {
@@ -1089,5 +1095,49 @@ mod tests {
         let mut a = app();
         assert_eq!(a.update(Action::OpenWizard), vec![Cmd::Wizard(Box::new(WizardCmd::LoadProviders))]);
         assert!(a.wizard.is_some());
+    }
+
+    /// Review round 1: `App::update_wizard` 转发 `take_close_request()` 那条分支之前完全没有
+    /// App 级测试盯着——`close_request` 在生产代码里看着像个没人写的死字段, 容易被当成死分支删掉
+    /// (`wizard/mod.rs` 自己「取走即清零」的单测只测了 `Wizard` 自身, 从没驱动过 `App::update`
+    /// 真的去看这个标记)。用 `request_close_for_test` 从外面戳一下, 确认 `WizardDone` 落地时
+    /// `App` 真的会关掉向导、补一次订阅列表重拉。
+    #[test]
+    fn a_wizards_close_request_is_forwarded_and_refetches_subscriptions() {
+        let mut a = app();
+        a.update(Action::OpenWizard);
+        a.wizard.as_mut().expect("刚打开").request_close_for_test();
+
+        let cmds = a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![])))));
+        assert_eq!(cmds, vec![Cmd::Fetch(Fetch::Subscriptions)]);
+        assert!(a.wizard.is_none(), "close_request 应该真的把向导关掉");
+    }
+
+    /// 同上, 补 `take_notice()` 那条分支: 向导存了一条待发通知, `App` 应该真的把它变成一条 toast。
+    #[test]
+    fn a_wizards_notice_becomes_a_toast() {
+        let mut a = app();
+        a.update(Action::OpenWizard);
+        a.wizard.as_mut().expect("刚打开").request_notice_for_test(ToastKind::Error, "测试通知");
+
+        a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![])))));
+        let out = render(&mut a, 80, 24);
+        assert!(out.contains("测试通知"), "{out}");
+    }
+
+    /// Review round 1: 「弹窗排在向导前面」这条按键优先级之前只经 `Action::Confirmed` 间接测过
+    /// (直接喂 action, 没走 `handle_key`)——如果有人把 `App::handle_key` 里弹窗判断和向导判断的
+    /// 顺序调换, 之前的测试全绿也不会发现。这里真的走一遍 `handle_key`: 向导打开时触发一次确认
+    /// 弹窗 (切页), 确认「y」这个按键仍然落在弹窗上而不是被向导吞掉。
+    #[test]
+    fn a_confirm_popup_still_wins_over_the_wizard() {
+        let mut a = app();
+        a.update(Action::OpenWizard);
+        assert!(a.update(Action::SwitchTab(Tab::Subscriptions)).is_empty(), "准备: 应该弹出确认框");
+        assert!(a.popup.is_some(), "准备: 确认框应该已经打开");
+        assert!(a.wizard.is_some(), "准备: 向导仍然存在 (还没确认)");
+
+        let action = a.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(action, Some(Action::Confirmed(_))), "弹窗应该排在向导前面, 按键不该被向导吞掉: {action:?}");
     }
 }

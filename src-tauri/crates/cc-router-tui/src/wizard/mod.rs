@@ -94,20 +94,15 @@ impl Wizard {
         Vec::new()
     }
 
-    /// `WizardResult` 现在只有 `Providers` 一个变体 (P5 Task 2)——下面的 `_` 分支眼下确实到不了,
-    /// 触发 `unreachable_patterns`。**不要删掉那个分支**: Task 3 会给 `WizardResult` 加 `Created` /
-    /// `Models` / `Probed` / `SlotsSaved` 四个变体 (那几个结果由 Task 4-6 的表单阶段消费, 这个函数
-    /// 不处理它们), 到那时 `_` 才会真的生效、这条 `allow` 才能删掉——Task 3 不改这个文件 (见计划的
-    /// File Structure 表), 所以这里必须做到「现在只有一个变体也能编译干净, 以后加了新变体也不用
-    /// 跟着改」, 只有 `match` + 显式 `_` 才满足这两条, `if let`/`let-else` 的写法在这里达不到
-    /// (它们同样能编译, 但 `unreachable_patterns` 换成 `irrefutable_let_patterns`, 本质是同一个
-    /// 取舍——选 `match` 是因为后续 Task 4-6 大概率也要在这里扩出更多分支)。
-    #[allow(unreachable_patterns)]
+    /// `WizardResult` 现在只有 `Providers` 一个变体 (P5 Task 2), 所以这个 `match` 现在就是穷尽的,
+    /// 不需要 `_` 兜底、也不需要任何 `#[allow]`。**这是故意的**: Task 3 给 `WizardResult` 加
+    /// `Created`/`Models`/`Probed`/`SlotsSaved` 四个变体之后, 这里会变成 `E0004` 编译失败——逼着
+    /// 加了新请求的人也在这里接住对应的结果, 而不是有一个 `_ => {}` 兜着, 让「表单填完按了创建,
+    /// 结果被静默吞掉, 向导永远转圈」这种事编译期就不可能发生 (Review round 1)。
     fn apply_wizard_result(&mut self, result: &WizardResult) {
         match result {
             WizardResult::Providers(Ok(list)) => self.providers = list.clone(),
             WizardResult::Providers(Err(reason)) => self.stage = Stage::LoadFailed(reason.clone()),
-            _ => {}
         }
     }
 
@@ -164,6 +159,15 @@ impl Wizard {
     #[cfg(test)]
     pub fn request_close_for_test(&mut self) {
         self.close_request = true;
+    }
+
+    /// 测试专用: 直接塞一条待发的 notice。P5 Task 2 的生产代码里同样没有任何路径会写
+    /// `self.notice` (那要等 Task 4 起「校验失败」之类的场景), 与 `request_close_for_test` 同一
+    /// 条理由——`App::update_wizard` 转发 `take_notice()` 的逻辑 (Review round 1) 需要一个能从
+    /// 外面戳进 notice 的入口。
+    #[cfg(test)]
+    pub fn request_notice_for_test(&mut self, kind: ToastKind, text: impl Into<String>) {
+        self.notice = Some((kind, text.into()));
     }
 }
 

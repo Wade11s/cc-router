@@ -225,8 +225,10 @@ pub enum Action {
     DiscardDraft,
     /// 订阅页按 `n` (P5 Task 7 起真正接上这个键): 打开新建向导。
     OpenWizard,
-    /// 关掉向导 (完成 / 取消 / 确认放弃都走这一个)。`App` 关掉之后**无条件**补一次
-    /// `Fetch::Subscriptions`——向导可能已经创建了订阅, 而它不走 `Mutation` 那条自动重拉的路。
+    /// 关掉向导 (完成 / 取消 / 确认放弃都走这一个)。`App` **真的关掉了向导** (调用时向导确实存在)
+    /// 才补一次 `Fetch::Subscriptions`——向导可能已经创建了订阅, 而它不走 `Mutation` 那条自动重拉
+    /// 的路; 向导已经不存在时 (比如 `Action::Confirmed` 先经 `discard_current()` 关过一次, 又把
+    /// 这个 action 当 `inner` 执行了一遍) 不重复发, 与 `discard_current()` 幂等 (Review round 1)。
     CloseWizard,
     /// 一次向导请求的结果。没有向导时 (用户在结果回来之前就退出了) 直接丢弃。
     WizardDone(Box<WizardResult>),
