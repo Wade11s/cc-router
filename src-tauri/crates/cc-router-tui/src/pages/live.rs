@@ -123,7 +123,13 @@ impl Default for Live {
 /// - 有选中时, 只在它跑出 `[prev_start, prev_start + capacity)` 时才移动窗口, 移动后它正好贴边 ——
 ///   这是 ratatui `Table` 自己的滚动行为, 我们把它搬出来, 是因为 `Table` 只能对"已经建好的全部行"
 ///   做这件事, 而我们想先知道该建哪些行 (P4 终审 Minor)。
-/// - `capacity == 0` 时返回 `(0, None)`, 调用方已经在上面提前返回, 这里只是保证是全函数。
+/// - `capacity == 0` 时提前返回 `(0, None)`——这不是「保证全函数」式的收尾, 是必需的守卫:
+///   `draw_table` 只在 `idx.is_empty()` 时提前返回, 对 `capacity == 0`(比如终端矮到内容区被
+///   边框/内距吃没) 没有任何拦截。删掉这个分支, 带选中项时会算出 `start = sel + 1`(`sel >=
+///   prev_start.saturating_add(0)` 恒成立)、夹进 `[0, total]` 后仍是 `sel + 1`, `sel_in_window`
+///   则 `saturating_sub` 成 `Some(0)`——而 `draw_table` 按 `[start, start + 0)` 切出来的 `rows`
+///   是空的: ratatui `Table` 内部按 `selected` 找可见行时会对着这个空 `Vec` 取下标, 渲染时直接
+///   panic。
 fn window(total: usize, sel: Option<usize>, capacity: usize, prev_start: usize) -> (usize, Option<usize>) {
     if capacity == 0 {
         return (0, None);
@@ -1014,11 +1020,27 @@ mod tests {
 
     /// P4 终审 Minor: 2000 条、24 行高的终端 (内容区最多 20 行, 去掉边框与内距更少)——跟随最新时
     /// 窗口应该贴底, 也就是起点非常接近 2000, 而不是从 0 开始把 2000 行全建一遍。
+    ///
+    /// 光看 `last_window_start()` 不够: 它只是 `window()` 自己的记账, 哪怕以后有人把
+    /// `draw_table` 里 `idx[start..end].iter()` 误改回 `idx.iter()`(比如合并冲突取错边),
+    /// 记账照旧正确、这条断言照样通过, 但 `Table` 实际拿到的是全部 2000 行 + `offset = 0`——
+    /// 真正渲染出来的会是**最旧的一屏**, 页面从此再也追不上最新的尝试, 而 6 条 fixture 的快照
+    /// 测试 (`ui.rs::live_80x24` 等) 根本不会触发滚动, 也测不出这个回归。所以这里把新旧两批
+    /// 分别塞进不同的虚拟模型名 (更醒目、比时间戳格式更不容易踩坑), 直接断言渲染文本里到底有
+    /// 没有出现这两个名字。
     #[test]
     fn the_table_only_builds_the_rows_it_can_show() {
         let mut live = Live::default();
-        for i in 0..2000 {
-            send_started(&mut live, "model-sonnet", "1", NOW + i);
+        // 前 1900 条是「旧」批次, 窗口贴底之后应该完全滚出视野; 后 100 条是「新」批次, 数量
+        // 远超一屏的可视行数 (~18 行), 保证整个窗口都落在这一批里, 断言才不会因为窗口边界
+        // 正好切在两批之间而变得脆弱。虚拟模型名故意各占 6 列 (远小于 `VM_COL = 14`), 保证
+        // `fit()` 不会截断它们——用完整字符串做子串断言, 不用去操心「截断后的省略号会不会
+        // 刚好吞掉我关心的那几个字符」。
+        for i in 0..1900 {
+            send_started(&mut live, "vm-old", "old-sub", NOW + i);
+        }
+        for i in 0..100 {
+            send_started(&mut live, "vm-new", "new-sub", NOW + 65_000 + i); // 顺带跨过一次分钟边界
         }
 
         let store = Store::default();
@@ -1033,7 +1055,7 @@ mod tests {
                 let mut ctx = DrawCtx {
                     theme: &theme,
                     s: &ZH,
-                    now_ms: NOW + 2000,
+                    now_ms: NOW + 66_000,
                     tick: 0,
                     fx: &mut fx,
                     store: &store,
@@ -1044,6 +1066,10 @@ mod tests {
                 live.draw(f, area, &mut ctx);
             })
             .unwrap();
+        let out = terminal.backend().to_string();
+
         assert!(live.last_window_start() >= 1900, "跟随最新时窗口应该贴底, 实际起点 {}", live.last_window_start());
+        assert!(out.contains("vm-new"), "窗口应该真的建出了最新一批的行\n{out}");
+        assert!(!out.contains("vm-old"), "窗口不该把已经滚出视野的最旧一批也建出来\n{out}");
     }
 }
