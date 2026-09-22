@@ -20,7 +20,9 @@
 //!   滚动量, 光标 x 再 `.min(右边界 - 1)`, 否则文本正好填满输入框时光标会画在最后一个字符上面
 //!   而不是紧跟其后的空位。`form.rs` 没有 `tui_input::Input` 可以借, 所以 [`visual_scroll`] 是
 //!   照同一份 `char` 宽度对齐规则重写的一份, 输入换成 `FormRow::Field::cursor` 那个已经算好的
-//!   显示列偏移。
+//!   显示列偏移。`FormView::show_cursor` 为假时 (有弹窗叠在表单上面) 整个关口统一跳过
+//!   `set_cursor_position`——调用方不用再对每个文本行各自算一遍"弹窗开着就不设光标" (P5 Task 5 起
+//!   收在这里, 见该字段文档注释)。
 //! - 步骤条 `area.width < 60` 时不画 (与总览页 logo 同一条让位原则)。
 
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -94,6 +96,11 @@ pub struct FormView<'a> {
     pub focus: usize,
     /// 画 throbber 用 (与「重连中」同一套 `widgets::spinner_state`)。
     pub tick: u64,
+    /// 有弹窗叠在表单上面时调用方传 `false`——统一在这里忽略所有行的 `cursor`(不调
+    /// `set_cursor_position`), 不用再让每个文本行各自算一遍 `(!popup_open).then(...)`(Task 4
+    /// 遗留: 每加一个文本行就得记得抄一遍这个条件, 漏一个就是"弹窗下面光标在闪"; Task 5 起收在
+    /// 这一个关口)。
+    pub show_cursor: bool,
 }
 
 /// 画在 `area` 里: `Block::bordered()` + `BorderType::Rounded`, `title_top` 左边是 `title`、
@@ -131,7 +138,7 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'
             break;
         }
         let row_rect = Rect::new(inner.x, y, inner.width, needed);
-        draw_row(frame, row_rect, row, i == view.focus, theme, view.tick);
+        draw_row(frame, row_rect, row, i == view.focus, theme, view.tick, view.show_cursor);
         if i == view.focus {
             focus_rect = Some(row_rect);
         }
@@ -161,11 +168,11 @@ fn step_bar(current: usize, steps: &[&str], theme: &Theme) -> Line<'static> {
     Line::from(spans)
 }
 
-fn draw_row(frame: &mut Frame, area: Rect, row: &FormRow, focused: bool, theme: &Theme, tick: u64) {
+fn draw_row(frame: &mut Frame, area: Rect, row: &FormRow, focused: bool, theme: &Theme, tick: u64, show_cursor: bool) {
     match row {
         FormRow::Field { label, value, placeholder, hint, cursor, error, locked } => {
             let line_area = Rect { height: 1, ..area };
-            draw_field_line(frame, line_area, label, value, placeholder, *hint, *cursor, *locked, focused, theme);
+            draw_field_line(frame, line_area, label, value, placeholder, *hint, *cursor, *locked, focused, theme, show_cursor);
             if let Some(err) = error {
                 let error_area = Rect { y: area.y + 1, height: 1, ..area };
                 draw_field_error(frame, error_area, err, theme);
@@ -227,6 +234,7 @@ fn draw_field_line(
     locked: bool,
     focused: bool,
     theme: &Theme,
+    show_cursor: bool,
 ) {
     let prefix = if focused { "▌ " } else { "  " };
     let hint_width = hint.map(|h| h.width() as u16).unwrap_or(0);
@@ -254,7 +262,9 @@ fn draw_field_line(
         let visual_width = value_area.width.max(1).saturating_sub(1) as usize;
         let scroll = visual_scroll(text, pos, visual_width);
         frame.render_widget(Paragraph::new(text).style(value_style).scroll((0, scroll as u16)), value_area);
-        if focused {
+        // 弹窗叠在表单上面时 `show_cursor` 为假: 值本身照常显示 (`scroll` 已经按光标位置算好),
+        // 只是不去调 `set_cursor_position`——没有任何一行会在这一帧设终端光标, 效果就是光标隐藏。
+        if focused && show_cursor {
             let cursor_x = value_area.x + pos.saturating_sub(scroll) as u16;
             frame.set_cursor_position((cursor_x.min(value_area.right().saturating_sub(1)), value_area.y));
         }
@@ -329,7 +339,7 @@ mod tests {
     #[test]
     fn the_focused_row_is_marked_and_others_are_not() {
         let rows = vec![field("厂商", "智谱"), field("接入点", "国内版")];
-        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0 };
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0, show_cursor: true };
         let out = render(&view, 50, 12);
         let lines: Vec<&str> = out.lines().collect();
 
@@ -351,7 +361,7 @@ mod tests {
             error: None,
             locked: false,
         }];
-        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0 };
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0, show_cursor: true };
         let out = render(&view, 50, 12);
         assert!(out.contains("留空自动生成"), "{out}");
     }
@@ -367,7 +377,7 @@ mod tests {
             error: Some("API Key 不能为空"),
             locked: false,
         }];
-        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0 };
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0, show_cursor: true };
         let out = render(&view, 50, 12);
         let lines: Vec<&str> = out.lines().collect();
 
@@ -381,7 +391,7 @@ mod tests {
         // "够不够 60 列就画不画", 不关心真实文案在边界宽度下会不会被裁切。
         let rows = vec![field("厂商", "智谱")];
         let steps: [&str; 2] = ["STEP1", "STEP2"];
-        let view = FormView { title: "新建订阅", steps: Some((0, &steps)), rows: &rows, focus: 0, tick: 0 };
+        let view = FormView { title: "新建订阅", steps: Some((0, &steps)), rows: &rows, focus: 0, tick: 0, show_cursor: true };
 
         let wide = render(&view, 60, 10);
         assert!(wide.contains("STEP1"), "宽度够时应该画步骤条\n{wide}");
@@ -396,7 +406,7 @@ mod tests {
     fn a_long_note_wraps_up_to_three_lines_and_the_third_ends_with_an_ellipsis() {
         let text = "A".repeat(300);
         let rows = vec![FormRow::Note { text: &text }];
-        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0 };
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0, show_cursor: true };
         let out = render(&view, 50, 12);
         let a_lines: Vec<&str> = out.lines().filter(|l| l.contains('A')).collect();
         assert_eq!(a_lines.len(), NOTE_MAX_ROWS, "应该最多折 {NOTE_MAX_ROWS} 行\n{out}");
@@ -411,7 +421,7 @@ mod tests {
     fn content_taller_than_the_area_is_truncated_with_a_more_hint_and_no_focus_rect() {
         let labels = ["行0", "行1", "行2", "行3", "行4", "行5", "行6", "行7"];
         let rows: Vec<FormRow> = labels.iter().map(|l| field(l, "值")).collect();
-        let view = FormView { title: "T", steps: None, rows: &rows, focus: rows.len() - 1, tick: 0 };
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: rows.len() - 1, tick: 0, show_cursor: true };
 
         let theme = Theme::new(ColorMode::TrueColor);
         // area 高 9: 去掉上下边框 (2) 与 padding 上下 (2) 剩 5 行可用, 装不下 8 行。
@@ -425,5 +435,50 @@ mod tests {
         let out = terminal.backend().to_string();
         assert!(out.contains(ZH.form_more), "放不下时应该显示提示行\n{out}");
         assert!(focus_rect.is_none(), "聚焦行被截断掉时应该返回 None");
+    }
+
+    /// P5 Task 5 前置项 1: `show_cursor: false` 时哪怕聚焦行带着 `cursor`, 画完之后终端光标也
+    /// 不该可见——`Terminal::draw` 按这一帧有没有被调过 `Frame::set_cursor_position` 决定要不要
+    /// 显示/隐藏光标, 一行没设不代表别的行也没设, 必须统一在 `draw()` 这一个关口拦住。
+    #[test]
+    fn show_cursor_false_hides_the_terminal_cursor_even_when_the_focused_row_has_one() {
+        let rows =
+            vec![FormRow::Field { label: "API Key", value: "sk-test", placeholder: "", hint: None, cursor: Some(3), error: None, locked: false }];
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0, show_cursor: false };
+        let theme = Theme::new(ColorMode::TrueColor);
+        let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
+        terminal.draw(|frame| { draw(frame, frame.area(), &view, &theme, &ZH); }).unwrap();
+        assert!(!terminal.backend().cursor_visible(), "show_cursor: false 时终端光标不该可见");
+    }
+
+    /// M4 的回归锁: 焦点在按钮行时, `[ 标签 ]` 之外的格子 (左右大片空白) **不该**带 `REVERSED`,
+    /// 只有标签本身那几格带——用 `TestBackend` 的 buffer 逐格查 `modifier`, 比只看渲染出来的字符
+    /// 更能咬住"整行被反色"这类样式回归 (文字断言看不出颜色/修饰符)。用短 ASCII 标签 (不是真实
+    /// i18n 文案), 避开宽字符的"第二格是延续格, `Buffer::set_stringn` 对它调 `reset()` 不保留
+    /// 修饰符"这个渲染细节——这里只关心按钮本身的反色范围, 不是宽字符怎么占格。
+    #[test]
+    fn the_button_reverses_only_its_own_label_not_the_whole_row() {
+        let rows = vec![FormRow::Button { label: "SAVE", busy: false }];
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0, show_cursor: true };
+        let theme = Theme::new(ColorMode::TrueColor);
+        let mut terminal = Terminal::new(TestBackend::new(50, 8)).unwrap();
+        terminal.draw(|frame| { draw(frame, frame.area(), &view, &theme, &ZH); }).unwrap();
+        let buf = terminal.backend().buffer();
+        let width = buf.area.width;
+
+        let y = (0..buf.area.height)
+            .find(|&y| (0..width).any(|x| buf[(x, y)].symbol() == "["))
+            .unwrap_or_else(|| panic!("应该能找到按钮行\n{}", terminal.backend()));
+        let start = (0..width).find(|&x| buf[(x, y)].symbol() == "[").expect("已经确认这一行有 [");
+        let end = (0..width).rev().find(|&x| buf[(x, y)].symbol() == "]").expect("应该能找到右方括号");
+
+        for x in 0..width {
+            let reversed = buf[(x, y)].style().add_modifier.contains(Modifier::REVERSED);
+            if (start..=end).contains(&x) {
+                assert!(reversed, "标签范围内 (x={x}) 应该反色\n{}", terminal.backend());
+            } else {
+                assert!(!reversed, "标签范围外 (x={x}) 不该反色\n{}", terminal.backend());
+            }
+        }
     }
 }

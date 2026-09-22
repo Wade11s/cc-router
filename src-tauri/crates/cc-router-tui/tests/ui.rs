@@ -9,10 +9,10 @@ use std::time::Duration;
 use cc_router_tui::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOutcome, OverviewData, Tab, WizardCmd, WizardResult};
 use cc_router_tui::app::{App, AppOptions, MIN_HEIGHT};
 use cc_router_tui::client::dto::{
-    BalanceCache, BalanceEntry, BalanceSeverity, BalanceSnapshot, CreateInput, CreateSource, ModelCache, ModelDiscovery, ModelInfo,
-    ModelSlots, OverallStats, Provider, ProviderAuth, ProviderEndpoint, ProxyStatus, QuotaPeriod, QuotaUsage, RefreshBalanceResult,
-    RefreshModelsResult, RequestFilters, RequestLog, RequestPage, RequestQuery, RequestStatus, RoutingMode, SeriesPoint, Settings,
-    SlotEfforts, Subscription, SubscriptionState, TestConnectionResult, VirtualModel, EFFORT_CHOICES,
+    BalanceCache, BalanceEntry, BalanceSeverity, BalanceSnapshot, CreateInput, CreateSource, CreatedSubscription, ModelCache,
+    ModelDiscovery, ModelInfo, ModelSlots, OverallStats, Provider, ProviderAuth, ProviderEndpoint, ProxyStatus, QuotaPeriod, QuotaUsage,
+    RefreshBalanceResult, RefreshModelsResult, RequestFilters, RequestLog, RequestPage, RequestQuery, RequestStatus, RoutingMode,
+    SeriesPoint, Settings, SlotEfforts, Subscription, SubscriptionState, TestConnectionResult, VirtualModel, EFFORT_CHOICES,
 };
 use cc_router_tui::client::events::{ROUTE_ATTEMPT_FINISHED, ROUTE_ATTEMPT_STARTED};
 use cc_router_tui::format::Tz;
@@ -413,6 +413,42 @@ fn type_str(a: &mut App, text: &str) {
     }
 }
 
+/// 填完 `Basics` (智谱 AI / `sk-test`) 并提交, 返回那次提交产出的 `Action` (调用方按需再
+/// `a.update(...)` 一次, 进 `Stage::Creating`)。P5 Task 5 起多个用例共用这段驱动路径。
+fn submit_basics(a: &mut App) -> Action {
+    select_zhipu(a);
+    type_str(a, "sk-test");
+    a.handle_key(key(KeyCode::Tab)); // ApiKey -> DisplayName
+    a.handle_key(key(KeyCode::Tab)); // DisplayName -> Submit
+    a.handle_key(key(KeyCode::Enter)).expect("填完表单提交应该产出 Action")
+}
+
+/// 打开向导, 走完 `Basics` → 提交 → `Created(Ok)` (id 固定 `"sub-1"`), 停在 `Stage::Creating`
+/// (已经拿到 id, 文案是 `wiz_loading_models`, 在等 `Models` 结果)。P5 Task 5 的状态流转测试从这里
+/// 接着喂不同的 `Models` 结果。
+fn wizard_after_create() -> App {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    let submit_action = submit_basics(&mut a);
+    a.update(submit_action); // Stage::Creating
+    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() })))));
+    a
+}
+
+/// 同上, 再喂一份 `Models(Ok(Auto))`, 停在 `Stage::Slots`、聚焦 `Fable` 行——多个 Task 5 用例
+/// (幂等测试、快照、保存) 共用这条驱动路径, 只是候选模型列表不同。
+fn wizard_at_slots(models: Vec<ModelInfo>) -> App {
+    let mut a = wizard_after_create();
+    a.update(Action::WizardDone(Box::new(WizardResult::Models(Ok(RefreshModelsResult::Auto { models, fetched_at: 0 })))));
+    a
+}
+
+/// 同上, 但模拟自动发现失败 (`ManualFallback`): 候选为空, 说明行是 `reason`。
+fn wizard_at_slots_with_manual_fallback(reason: &str) -> App {
+    let mut a = wizard_after_create();
+    a.update(Action::WizardDone(Box::new(WizardResult::Models(Ok(RefreshModelsResult::ManualFallback { reason: reason.to_string() })))));
+    a
+}
+
 /// 简报 80×24 例子: 厂商已选 (智谱 AI / 国内版, 都由选厂商时自动填好)、API Key 已填两个字符
 /// ("sk")、备注名是自动生成的默认值。**焦点落在 `ApiKey`** (选厂商后的自然结果, 简报手绘的
 /// ASCII 图里画在「厂商」行只是示意——见 task-4-report.md 里的说明)。
@@ -628,6 +664,152 @@ fn creating_swallows_escape_and_hides_the_cancel_hint() {
     assert_eq!(a.handle_key(key(KeyCode::Esc)), None, "在飞时 Esc 应该被吞掉");
     let out = render(&mut a, 80, 24);
     assert!(!out.contains("Esc 取消"), "在飞时底栏不该显示 Esc 提示\n{out}");
+}
+
+// ---------- P5 Task 5: 向导第二步 (绑定模型) ----------
+
+/// 状态流转表第 2 行: `Created(Ok(id))` 落地应该紧接着发一次 `LoadModels { id }` (仍然是
+/// `Stage::Creating`, 只是文案换了, 见 `wizard/mod.rs::Stage::Creating` 的文档注释)。
+#[test]
+fn a_successful_create_asks_for_the_model_list() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    let submit_action = submit_basics(&mut a);
+    a.update(submit_action);
+
+    let cmds = a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() })))));
+    assert_eq!(cmds, vec![Cmd::Wizard(Box::new(WizardCmd::LoadModels { id: "sub-1".into() }))]);
+
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(ZH.wiz_loading_models), "拿到 id 之后文案应该换成「正在获取模型列表…」\n{out}");
+}
+
+/// 状态流转表第 4 行: `Models(Ok(Auto { models }))` 进 `Stage::Slots`, 候选非空时四个核心槽都
+/// 预填 `models[0].id`, 兜底槽留空。
+#[test]
+fn auto_discovered_models_prefill_every_core_slot() {
+    let mut a = wizard_at_slots(vec![
+        ModelInfo { id: "glm-4.6".into(), display_name: Some("GLM 4.6 主力".into()) },
+        ModelInfo { id: "glm-4.5-air".into(), display_name: None },
+    ]);
+    let out = render(&mut a, 80, 24);
+    assert_eq!(out.matches("glm-4.6").count(), 4, "四个核心槽都应该预填第一项候选\n{out}");
+    assert!(out.contains(ZH.sub_slot_unset), "兜底槽应该显示未配置占位\n{out}");
+
+    // 直接跳到 Save 提交应该通过 (四个核心槽都已经填好), 证明预填是真的写进了草稿, 不只是画面
+    // 巧合显示了 "glm-4.6" 这几个字。
+    for _ in 0..5 {
+        a.handle_key(key(KeyCode::Down));
+    }
+    assert!(a.handle_key(key(KeyCode::Enter)).is_some(), "槽位已经填好, 提交应该通过校验");
+}
+
+/// 状态流转表第 5 行: `Models(Ok(ManualFallback { reason }))` 进 `Stage::Slots`, 候选为空、
+/// 槽位留空、说明行是 `wiz_models_manual(reason)`。
+#[test]
+fn a_manual_fallback_leaves_the_slots_empty_and_explains_why() {
+    let mut a = wizard_at_slots_with_manual_fallback("上游不支持自动发现");
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.wiz_models_manual)("上游不支持自动发现")), "应该显示自动获取失败的原因\n{out}");
+
+    // 槽位留空: 直接跳到 Save 提交应该被 `validate_slots` 拦住, 证明四个核心槽确实是空的
+    // (不是巧合没显示出候选文本)。
+    for _ in 0..5 {
+        a.handle_key(key(KeyCode::Down));
+    }
+    assert!(a.handle_key(key(KeyCode::Enter)).is_none(), "槽位空着, 校验应该失败");
+    let out2 = render(&mut a, 80, 24);
+    assert!(out2.contains(ZH.wiz_err_slot), "{out2}");
+}
+
+/// `Models(Err(e))` 与 `ManualFallback` 走同一条路 (`enter_slots_with_note`): 请求本身失败时
+/// 同样进 `Stage::Slots`、候选为空、说明行复用 `wiz_models_manual`。
+#[test]
+fn a_failed_model_list_request_behaves_like_manual_fallback() {
+    let mut a = wizard_after_create();
+    a.update(Action::WizardDone(Box::new(WizardResult::Models(Err("网络错误".into())))));
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.wiz_models_manual)("网络错误")), "{out}");
+}
+
+/// 状态流转表第 6 行: `Save` 校验通过后发出的 `SaveSlots` 只带 `model_slots`——四个核心槽是真实
+/// 选的值, 兜底槽是空串, **没有 `slot_efforts` 这个概念** (`WizardCmd::SaveSlots` 这个变体本身
+/// 就没有那个字段, 这条断言顺带用类型形状锁住)。
+#[test]
+fn saving_sends_only_the_model_slots_patch() {
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    for _ in 0..5 {
+        a.handle_key(key(KeyCode::Down)); // Fable -> Opus -> Sonnet -> Haiku -> Fallback -> Save
+    }
+    let save_action = a.handle_key(key(KeyCode::Enter)).expect("填好后保存应该产出 Action");
+    let cmds = a.update(save_action);
+    assert_eq!(
+        cmds,
+        vec![Cmd::Wizard(Box::new(WizardCmd::SaveSlots {
+            id: "sub-1".into(),
+            model_slots: ModelSlots {
+                fable: "glm-4.6".into(),
+                opus: "glm-4.6".into(),
+                sonnet: "glm-4.6".into(),
+                haiku: "glm-4.6".into(),
+                fallback: String::new(),
+            },
+        }))]
+    );
+}
+
+/// 状态流转表第 7 行: `SlotsSaved(Ok(()))` 应该关掉向导 (补一次重拉订阅列表) 并弹一条
+/// `wiz_created(display_name)` 的 Success toast。
+#[test]
+fn a_successful_save_closes_the_wizard_with_a_toast() {
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    for _ in 0..5 {
+        a.handle_key(key(KeyCode::Down));
+    }
+    let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
+    a.update(save_action); // Stage::Saving
+
+    let cmds = a.update(Action::WizardDone(Box::new(WizardResult::SlotsSaved(Ok(())))));
+    assert_eq!(cmds, vec![Cmd::Fetch(Fetch::Subscriptions)], "关掉向导应该补一次重拉订阅列表");
+
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.wiz_created)("智谱 AI")), "应该出现「已创建」的成功 toast\n{out}");
+}
+
+/// `SlotsSaved(Err(e))` 应该回 `Stage::Slots` 并把 `wiz_save_failed(e)` 挂成说明行——不丢用户
+/// 已经选好的槽位值 (草稿原样保留, 只是多了一条说明)。
+#[test]
+fn a_failed_save_returns_to_slots_and_explains_why() {
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    for _ in 0..5 {
+        a.handle_key(key(KeyCode::Down));
+    }
+    let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
+    a.update(save_action);
+
+    a.update(Action::WizardDone(Box::new(WizardResult::SlotsSaved(Err("磁盘写满了".into())))));
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.wiz_save_failed)("磁盘写满了")), "{out}");
+    assert_eq!(out.matches("glm-4.6").count(), 4, "保存失败不该丢掉已经选好的槽位值\n{out}");
+}
+
+/// 状态流转表最后一行: `Stage::Slots` 下 `Esc` 弹确认, 文案是 `wiz_confirm_exit_pending`
+/// (不是 `Basics` 用的 `confirm_discard`——订阅已经建好了, 退出会留下 (pending) 槽位)。
+#[test]
+fn escaping_after_the_subscription_was_created_warns_about_pending() {
+    let mut a = wizard_at_slots_with_manual_fallback("x");
+    assert_eq!(
+        a.handle_key(key(KeyCode::Esc)),
+        Some(Action::OpenConfirm { prompt: ZH.wiz_confirm_exit_pending.to_string(), on_yes: Box::new(Action::CloseWizard) }),
+        "Slots 阶段的 Esc 确认文案应该是「订阅已经创建…」, 不是通用的放弃编辑提示"
+    );
+}
+
+/// 简报 80×24 例子: 已创建、自动发现回来一个候选 (`glm-4.6`), 四个核心槽预填、兜底槽显示未配置,
+/// 聚焦停在 `Fable` 行 (`Models(Ok)` 落地后的默认聚焦)。
+#[test]
+fn wizard_slots_80x24() {
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
 // ---------- 订阅页 ----------
@@ -1899,6 +2081,12 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     let first = render(&mut t, 80, 24);
     let second = render(&mut t, 80, 24);
     assert_eq!(first, second, "向导 Basics 阶段应该幂等");
+
+    // P5 Task 5: 向导 Slots 阶段 (自动发现的候选已经预填四个核心槽, 聚焦在 Fable 行) 应该幂等。
+    let mut u = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    let first = render(&mut u, 80, 24);
+    let second = render(&mut u, 80, 24);
+    assert_eq!(first, second, "向导 Slots 阶段应该幂等");
 }
 
 /// F3: 空列表加载时没有「旧」行可以比较, 不该把更早排队、还没画出来的闪烁带到后面某一帧。

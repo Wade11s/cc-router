@@ -54,6 +54,9 @@ pub enum PickerTag {
     WizardProvider,
     /// 向导第一步选接入点 (P5 Task 4)。
     WizardEndpoint,
+    /// 向导第二步给某个槽位选模型 (P5 Task 5)。与 `SlotModel` 分开: 那个带订阅 id, 用于订阅
+    /// 详情页的就地编辑 (订阅已经存在); 这个用于"还没保存过"的向导草稿, 同样不带实体 id。
+    WizardSlot { slot: Slot },
 }
 
 impl PickerTag {
@@ -68,7 +71,8 @@ impl PickerTag {
             | PickerTag::LiveFilter
             | PickerTag::LogsFilter
             | PickerTag::WizardProvider
-            | PickerTag::WizardEndpoint => None,
+            | PickerTag::WizardEndpoint
+            | PickerTag::WizardSlot { .. } => None,
         }
     }
 }

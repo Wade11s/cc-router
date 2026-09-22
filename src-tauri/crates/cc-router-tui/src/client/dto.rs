@@ -102,7 +102,10 @@ pub struct Subscription {
 
 /// 与后端 `SubscriptionPatch::model_slots` 整块替换: `fallback` 空串 = 未配置, 与其它槽位一样
 /// **总是**序列化 (后端字段是普通 `String` + `#[serde(default)]`, 不是 `Option`)。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+///
+/// `Default` (五个槽位全空串) 是 P5 Task 5 加的: 向导 `SlotsDraft` 是"从零填"的草稿 (没有真实
+/// 订阅可以打底), `#[derive(Default)]` 需要这个字段本身实现 `Default` 才能派生。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ModelSlots {
     pub fable: String,
     pub opus: String,

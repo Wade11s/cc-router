@@ -379,6 +379,31 @@ pub struct Strings {
     pub wiz_created: fn(name: &str) -> String,
     /// `create_subscription` 失败时挂在表单顶部的说明行 (`FormRow::Note`)。
     pub wiz_create_failed: fn(reason: &str) -> String,
+
+    // ---------- P5 Task 5: 向导第二步 (绑定模型) ----------
+    /// `Stage::Creating` 里 `Created(Ok)` 落地后、`Models` 结果回来之前的按钮文案 (仍然是
+    /// `Stage::Creating`, 只是文案从 `wiz_creating` 换过来——订阅其实已经建好了, 只是还在等模型
+    /// 候选)。
+    pub wiz_loading_models: &'static str,
+    /// `update_subscription` (只带 `model_slots` 的 patch) 失败时挂在表单顶部的说明行, 与
+    /// `wiz_models_manual` 共用同一个 `SlotsDraft::note` 字段, 谁最后发生谁的文案盖住。
+    pub wiz_save_failed: fn(reason: &str) -> String,
+    /// `refresh_model_list` 返回 `ManualFallback` (或整个请求失败) 时挂在表单顶部的说明行, 参数
+    /// 是后端给的原因。
+    pub wiz_models_manual: fn(reason: &str) -> String,
+    /// 槽位行 `⏎` 打开的模型 picker 标题, 参数是槽位显示名 (与 `pick_model_title` 同参数形状但
+    /// 措辞不同——向导语境是"正在为这个槽位挑一个模型", 订阅详情页是"修改这个槽位的模型", 两处
+    /// 不合并成同一个字段)。
+    pub wiz_pick_model: fn(slot: &str) -> String,
+    pub wiz_btn_save: &'static str,
+    /// 四个核心槽位任一为空时的校验错误 (兜底槽不参与)。
+    pub wiz_err_slot: &'static str,
+    /// `Stage::Slots` 下 `Esc` 的确认文案: 订阅已经建好了 (不是 `confirm_discard` 那种"放弃未保存
+    /// 的编辑", 而是"这条订阅会带着 (pending) 槽位留在后端")。
+    pub wiz_confirm_exit_pending: &'static str,
+    /// `Stage::Saving` 的按钮文案 (busy 态)。
+    pub wiz_saving: &'static str,
+
     /// 向导表单底栏: `↑↓` 在字段间移动。
     pub key_field: &'static str,
     /// 向导表单底栏 / 选择行右端 hint: `⏎` 打开选择弹窗。
@@ -758,6 +783,16 @@ pub const ZH: Strings = Strings {
     wiz_creating: "正在创建订阅…",
     wiz_created: |name| format!("已创建「{name}」"),
     wiz_create_failed: |reason| format!("创建失败: {reason}"),
+
+    wiz_loading_models: "正在获取模型列表…",
+    wiz_save_failed: |reason| format!("保存失败: {reason}"),
+    wiz_models_manual: |reason| format!("自动获取模型列表失败, 请手动填写: {reason}"),
+    wiz_pick_model: |slot| format!("为 {slot} 选择模型"),
+    wiz_btn_save: "保存",
+    wiz_err_slot: "请填写模型",
+    wiz_confirm_exit_pending: "订阅已经创建, 但模型槽位还是 (pending)。退出向导? (稍后可以在订阅页设置)",
+    wiz_saving: "正在保存…",
+
     key_field: "字段",
     key_pick: "选择",
     key_next_field: "下一项",

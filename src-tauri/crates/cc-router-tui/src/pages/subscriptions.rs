@@ -332,12 +332,14 @@ impl Subscriptions {
                 self.draft.edit(&base, |d| d.slot_efforts.set(*slot, value));
             }
             // 跟订阅页无关的 tag (虚拟模型页的 `VmAddSubscription`、实时路由/日志页的过滤弹窗、
-            // P5 Task 4 起向导自己的选厂商/选接入点) 直接忽略——订阅页压根不会打开这些弹窗。
+            // P5 Task 4/5 起向导自己的选厂商/选接入点/选槽位模型) 直接忽略——订阅页压根不会打开
+            // 这些弹窗。
             PickerTag::VmAddSubscription { .. }
             | PickerTag::LiveFilter
             | PickerTag::LogsFilter
             | PickerTag::WizardProvider
-            | PickerTag::WizardEndpoint => (),
+            | PickerTag::WizardEndpoint
+            | PickerTag::WizardSlot { .. } => (),
         }
     }
 
@@ -880,7 +882,10 @@ fn slot_model_col(width: u16, model_slots: &ModelSlots) -> usize {
 
 /// `Slot` 的显示名: 四个主槽用英文原名 (与后端 `ModelSlots` 的字段名一致), `Fallback` 用现有的
 /// `s.sub_slot_fallback` (中文「兜底」)。
-fn slot_label(slot: Slot, s: &'static Strings) -> &'static str {
+///
+/// `pub(crate)`: P5 Task 5 起向导第二步 (`wizard/mod.rs::draw_slots`) 复用这个函数画槽位标签,
+/// 不在那边重写一份同样的 `match`——两处对"槽位怎么叫"必须是同一个答案, 分开维护迟早会走样。
+pub(crate) fn slot_label(slot: Slot, s: &'static Strings) -> &'static str {
     match slot {
         Slot::Fable => "fable",
         Slot::Opus => "opus",

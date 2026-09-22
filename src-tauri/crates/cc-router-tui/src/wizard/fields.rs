@@ -1,6 +1,7 @@
 //! 两条路径各自的字段、校验与预填。与 `mod.rs` 分开是因为这些是**纯数据与纯函数**: 给定
 //! 一份草稿, 算出要画哪些行、哪些字段不合法。没有 `Frame`, 没有 `Cmd`, 好测。
 
+use crate::client::dto::{ModelInfo, ModelSlots, Slot};
 use crate::i18n::Strings;
 use crate::secret::Secret;
 use crate::store::Store;
@@ -85,6 +86,48 @@ pub fn default_display_name(provider_name: &str, store: &Store) -> String {
 pub fn api_key_display(key: &Secret, reveal: bool) -> String {
     let plain = key.expose();
     if reveal { plain.to_string() } else { "•".repeat(plain.chars().count()) }
+}
+
+/// 第二步 (绑定模型) 的草稿。与订阅页的 `Draft<Subscription>` 不同: 向导是从零填, 没有"与 Store
+/// 比对相等就丢弃"的问题, 所以直接放一份 `ModelSlots`。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SlotsDraft {
+    pub slots: ModelSlots,
+    /// 可选的模型候选 (来自 `refresh_model_list` / `probe_custom_models`), 空 = 只能手输。
+    pub models: Vec<ModelInfo>,
+    /// 自动获取失败时的原因, 画成一条说明行。
+    pub note: Option<String>,
+}
+
+/// 第二步的字段: 五个槽位行 (`Row`, 带着是哪个 `Slot`) + 保存按钮。顺序即上下键的顺序——与
+/// `BasicsField` 同一套 `ALL` + `move_focus` 写法。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotsField {
+    Row(Slot),
+    Save,
+}
+
+impl SlotsField {
+    pub const ALL: [SlotsField; 6] = [
+        SlotsField::Row(Slot::Fable),
+        SlotsField::Row(Slot::Opus),
+        SlotsField::Row(Slot::Sonnet),
+        SlotsField::Row(Slot::Haiku),
+        SlotsField::Row(Slot::Fallback),
+        SlotsField::Save,
+    ];
+}
+
+/// 四个核心槽位都要非空 (兜底槽可以空 = 未配置), 与桌面端 `allSlotsFilled` 同规则。第一个不合法的
+/// 槽位决定光标落点, 顺序与 `SlotsField::ALL` 一致 (fable → opus → sonnet → haiku; `Fallback`
+/// 不参与, 不可能是校验失败的对象)。
+pub fn validate_slots(d: &SlotsDraft, s: &'static Strings) -> Option<(Slot, &'static str)> {
+    for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku] {
+        if d.slots.get(slot).is_empty() {
+            return Some((slot, s.wiz_err_slot));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -177,5 +220,24 @@ mod tests {
         assert_eq!(masked.chars().count(), 108, "掩码应该逐字对应明文长度, 不能封顶");
         assert_ne!(masked, key.masked(), "这里不该复用 Secret::masked() 的封顶版本");
         assert_eq!(api_key_display(&key, true), long_key);
+    }
+
+    fn filled_slots() -> ModelSlots {
+        ModelSlots { fable: "glm-4.6".into(), opus: "glm-4.6".into(), sonnet: "glm-4.6".into(), haiku: "glm-4.6".into(), fallback: String::new() }
+    }
+
+    #[test]
+    fn validate_slots_ignores_the_fallback_slot() {
+        let s = &crate::i18n::ZH;
+
+        let full = SlotsDraft { slots: filled_slots(), models: vec![], note: None };
+        assert_eq!(validate_slots(&full, s), None, "四个核心槽填了、兜底空应该通过");
+
+        let missing_opus = SlotsDraft { slots: ModelSlots { opus: String::new(), ..filled_slots() }, ..full.clone() };
+        assert_eq!(validate_slots(&missing_opus, s), Some((Slot::Opus, s.wiz_err_slot)), "少一个核心槽应该报那个槽, 不是别的");
+
+        // 兜底槽本身留空不该被当成校验失败的对象。
+        let fallback_only = SlotsDraft { slots: ModelSlots { fallback: String::new(), ..filled_slots() }, ..full.clone() };
+        assert_eq!(validate_slots(&fallback_only, s), None, "兜底槽空着不该报错");
     }
 }
