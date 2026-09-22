@@ -2,8 +2,9 @@
 //! `App::update` 是 `(状态, Action) → (新状态, Vec<Cmd>)` 的同步函数, 不碰网络也不碰终端, 所以能直接单测。
 
 use crate::client::dto::{
-    ModelSlots, OverallStats, Provider, ProxyStatus, RefreshBalanceResult, RefreshModelsResult, RequestPage, RequestQuery, RoutingMode,
-    SeriesPoint, Settings, SlotEfforts, Subscription, TestConnectionResult, VirtualModel,
+    CreateInput, CreatedSubscription, ModelSlots, OverallStats, ProbeInput, ProbeModelsResult, Provider, ProxyStatus, RefreshBalanceResult,
+    RefreshModelsResult, RequestPage, RequestQuery, RoutingMode, SeriesPoint, Settings, SlotEfforts, Subscription, TestConnectionResult,
+    VirtualModel,
 };
 use crate::widgets::detail::DetailSpec;
 use crate::widgets::picker::{PickerChoice, PickerSpec, PickerTag};
@@ -159,23 +160,31 @@ pub enum MutationOutcome {
 }
 
 /// 向导要发的请求。**与 [`Mutation`] 刻意分开**: 它们没有订阅 id (创建的那一刻还没有), 不进忙碌表,
-/// 不进「上次操作」存档, 完成后也不自动重拉——结果只回给向导自己。判重由向导的 `pending` 状态负责
-/// (P5 Task 2 只有一种请求, 还用不上; Task 3 起的 `Create`/`Probe` 等会用到)。
-///
-/// P5 Task 2 只定义 `LoadProviders` 一个变体; `Create` / `LoadModels` / `Probe` / `SaveSlots` 由
-/// Task 3 补齐 (它们依赖 Task 3 才引入的 `CreateInput` / `ProbeInput` / `ModelSlots` 整块替换语义)。
+/// 不进「上次操作」存档, 完成后也不自动重拉——结果只回给向导自己。判重由向导的 `pending` 状态负责。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WizardCmd {
     /// `list_providers`。向导打开时发一次。
     LoadProviders,
+    /// `create_subscription`。
+    Create(CreateInput),
+    /// `refresh_model_list`。内置厂商创建成功之后拉一次候选模型给槽位选择用。
+    LoadModels { id: String },
+    /// `probe_custom_models`。自定义厂商在保存前先探测一次模型列表。
+    Probe(ProbeInput),
+    /// `update_subscription`, 只带 `model_slots` 这一块 patch (向导不设置 effort, 见 Task 5 的裁决:
+    /// 少发一个字段就不会把已有值清掉)。
+    SaveSlots { id: String, model_slots: ModelSlots },
 }
 
 /// 向导请求的结果。**绝不带 `Secret`**——去程带 key, 回程一律不带, 这样 key 只在单向的一段消息里
-/// 存在过。P5 Task 2 只定义 `Providers` 一个变体; 其余四个 (`Created` / `Models` / `Probed` /
-/// `SlotsSaved`) 由 Task 3 补齐。
+/// 存在过。
 #[derive(Debug, Clone, PartialEq)]
 pub enum WizardResult {
     Providers(Result<Vec<Provider>, String>),
+    Created(Result<CreatedSubscription, String>),
+    Models(Result<RefreshModelsResult, String>),
+    Probed(Result<ProbeModelsResult, String>),
+    SlotsSaved(Result<(), String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

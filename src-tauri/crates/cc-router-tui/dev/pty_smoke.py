@@ -2,8 +2,10 @@
 """cc-router-tui 的伪终端冒烟测试 (仅 macOS / Linux)。
 
 单测用 TestBackend, 测不到「真的进备用屏幕、真的读键盘、真的退得出来」这一段。这个脚本:
-  1. 起一个假的 cc-router 后端 (12 个 command + 事件流), 在临时目录写一份 runtime.json, 记录
-     `update_subscription` / `update_virtual_model` / `list_requests` 收到的原始请求体供事后断言;
+  1. 起一个假的 cc-router 后端 (16 个 command + 事件流; P5 Task 3 加了 `list_providers` /
+     `create_subscription` / `probe_custom_models` / `delete_subscription` 四个, 目前只让它们可被
+     调用, 还没有接进下面的按键序列), 在临时目录写一份 runtime.json, 记录 `update_subscription` /
+     `update_virtual_model` / `list_requests` 收到的原始请求体供事后断言;
   2. 在 80x24 的伪终端里跑 TUI, 依次按
      2 / j / t / e / ? / Esc / ⏎⏎glm⏎ / q / n / Esc / y / ⏎⏎glm⏎ / s / 3 / l / J / m / s / 4 /
      空格 / 空格 / ⏎ / ⏎ / jj / Esc / 1 / q
@@ -119,6 +121,31 @@ DATA = {
     # (与其它假 command 一致); 过滤条件本身只靠 `RECORDED["list_requests"]` 断言。三条分别是
     # 成功 (带 effort + 工具字段, 供详情弹窗展示「工具调用」小节) / 失败 429 (带 error_message) /
     # 超时。
+    # P5 Task 3: 新建订阅向导要用的四个 command, 这里只让它们可被调用 (契约锁在
+    # `src-tauri/src/tui_contract.rs`), 按键流程留给后续 Task 的冒烟脚本改动。
+    # 两个内置厂商: 一个 api_key 带两个 endpoint (给「选厂商 -> 选 endpoint」这条路径用),
+    # 一个 chatgpt_oauth (没有 endpoints, 用来验证厂商选择器里的置灰判断)。
+    "list_providers": [
+        {
+            "id": "zhipu", "display_name": "智谱", "description": None,
+            "endpoints": [
+                {"id": "default", "label": "默认", "base_url": "https://open.bigmodel.cn/api/anthropic"},
+                {"id": "intl", "label": "国际版", "base_url": "https://intl.bigmodel.cn/api/anthropic"},
+            ],
+            "default_endpoint": "default", "auth": {"type": "api_key"},
+            "model_discovery": {"enabled": True, "example_models": ["glm-4.6"]},
+        },
+        {
+            "id": "chatgpt", "display_name": "ChatGPT", "description": None,
+            "endpoints": [], "default_endpoint": None, "auth": {"type": "chatgpt_oauth"},
+            "model_discovery": {"enabled": False, "example_models": []},
+        },
+    ],
+    "probe_custom_models": {
+        "kind": "auto",
+        "models": [{"id": "glm-4.6", "display_name": None}],
+        "models_url": "https://relay.example.invalid/v1/models",
+    },
     "list_requests": {
         "items": [
             {
@@ -220,6 +247,16 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(raw or b"{}")
             RECORDED["list_requests"] = req
             body = json.dumps(DATA[name]).encode()
+        elif name == "create_subscription":
+            # P5 Task 3: 只让它可被调用并记下请求体; 按键流程 (真的走一遍向导) 留给后续 Task。
+            req = json.loads(raw or b"{}")
+            RECORDED["create_subscription"] = req
+            body = json.dumps({"id": "9"}).encode()
+        elif name == "delete_subscription":
+            # 同上: 只记请求体, 不真的从 DATA["list_subscriptions"] 里删——按键流程留给后续 Task。
+            req = json.loads(raw or b"{}")
+            RECORDED["delete_subscription"] = req
+            body = json.dumps({}).encode()
         else:
             body = json.dumps(DATA[name]).encode()
         self.send_response(200)

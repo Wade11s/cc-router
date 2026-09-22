@@ -94,15 +94,20 @@ impl Wizard {
         Vec::new()
     }
 
-    /// `WizardResult` 现在只有 `Providers` 一个变体 (P5 Task 2), 所以这个 `match` 现在就是穷尽的,
-    /// 不需要 `_` 兜底、也不需要任何 `#[allow]`。**这是故意的**: Task 3 给 `WizardResult` 加
-    /// `Created`/`Models`/`Probed`/`SlotsSaved` 四个变体之后, 这里会变成 `E0004` 编译失败——逼着
-    /// 加了新请求的人也在这里接住对应的结果, 而不是有一个 `_ => {}` 兜着, 让「表单填完按了创建,
-    /// 结果被静默吞掉, 向导永远转圈」这种事编译期就不可能发生 (Review round 1)。
+    /// **刻意写成穷尽 `match`, 不用 `_` 兜底、也不用任何 `#[allow]`**: `WizardResult` 每加一个新
+    /// 变体, 这里就必须显式接一条臂——哪怕暂时只是空臂 `=> {}`——否则编译期就 `E0004` 失败。这是
+    /// 上一轮评审专门要的保护: 不这样做的话,「表单填完按了创建, 结果被静默吞掉, 向导永远转圈」这种
+    /// 事只会在运行时才暴露 (Review round 1)。`Created`/`Models`/`Probed`/`SlotsSaved` 四个空臂由
+    /// Task 3 加入, 真实处理 (创建成功后进 Basics→Slots / 探测结果写进表单 / 保存成功后关闭向导) 留给
+    /// Task 4–6, 不是这里的改动范围。
     fn apply_wizard_result(&mut self, result: &WizardResult) {
         match result {
             WizardResult::Providers(Ok(list)) => self.providers = list.clone(),
             WizardResult::Providers(Err(reason)) => self.stage = Stage::LoadFailed(reason.clone()),
+            WizardResult::Created(_) => {}
+            WizardResult::Models(_) => {}
+            WizardResult::Probed(_) => {}
+            WizardResult::SlotsSaved(_) => {}
         }
     }
 

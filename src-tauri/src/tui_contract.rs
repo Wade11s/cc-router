@@ -5,17 +5,20 @@
 use std::path::Path;
 
 use cc_router_tui::client::{discovery, dto, http};
+use cc_router_tui::secret::Secret;
 use serde::{de::DeserializeOwned, Serialize};
 
+use crate::commands::providers::ProviderInfo;
 use crate::commands::proxy::ProxyStatus;
 use crate::commands::requests::{ListRequestsResult, RequestLogDto, RequestLogFilters};
 use crate::commands::statistics::{DailySeriesPointDto, OverallStatsDto, StatsRange};
 use crate::commands::subscriptions::{
-    RefreshBalanceResult, RefreshModelListResult, SubscriptionPatch, TestConnectionResult, ALLOWED_SLOT_EFFORTS,
+    CreateSource, CreateSubscriptionInput, CustomProtocol, ProbeCustomModelsInput, ProbeCustomModelsResult, RefreshBalanceResult,
+    RefreshModelListResult, SubscriptionPatch, TestConnectionResult, ALLOWED_SLOT_EFFORTS,
 };
 use crate::commands::virtual_models::{UpdateVirtualModelInput, VirtualModelDto};
 use crate::observability::request_log::RequestStatus;
-use crate::provider::model::AuthType;
+use crate::provider::model::{Auth, AuthHeaderFormat, AuthType, Compatibility, ModelDiscovery, ProviderCategory, ProviderEndpoint};
 use crate::runtime_file::RuntimeFile;
 use crate::settings::model::{ProxyMode, Settings};
 use crate::subscription::model::{
@@ -730,4 +733,238 @@ fn request_query_args_deserialize_into_the_backend_filters() {
     assert_eq!(filters.subscription_id.as_deref(), Some("s1"));
     assert_eq!(filters.virtual_model_name.as_deref(), Some("model-sonnet"));
     assert_eq!(filters.status.as_deref(), Some("error"));
+}
+
+/// `list_providers` 的一项: 两个 endpoint、`auth.type = "api_key"` (键名是 `type` 不是 `auth_type`,
+/// 见 `provider::model::Auth` 的 `#[serde(rename)]`)、`model_discovery` 带 `example_models`。同时
+/// 覆盖 `Provider::is_oauth()` / `default_endpoint()` 两个取值方法 (P5 Task 3)。
+#[test]
+fn provider_info_matches() {
+    let real = ProviderInfo {
+        id: "zhipu".into(),
+        display_name: "智谱".into(),
+        description: Some("智谱 AI".into()),
+        homepage: None,
+        docs_url: None,
+        api_key_url: None,
+        icon: None,
+        compatibility: Compatibility::Verified,
+        compatibility_notes: None,
+        category: ProviderCategory::FirstParty,
+        endpoints: vec![
+            ProviderEndpoint {
+                id: "default".into(),
+                label: "默认".into(),
+                description: None,
+                base_url: "https://open.bigmodel.cn/api/anthropic".into(),
+                messages_path: "/v1/messages".into(),
+                region: None,
+                billing: None,
+            },
+            ProviderEndpoint {
+                id: "intl".into(),
+                label: "国际版".into(),
+                description: None,
+                base_url: "https://intl.bigmodel.cn/api/anthropic".into(),
+                messages_path: "/v1/messages".into(),
+                region: None,
+                billing: None,
+            },
+        ],
+        default_endpoint: Some("intl".into()),
+        auth: Auth { auth_type: AuthType::ApiKey, header_name: "Authorization".into(), header_format: AuthHeaderFormat::Bearer },
+        model_discovery: ModelDiscovery { example_models: vec!["glm-4.6".into()], ..ModelDiscovery::default() },
+    };
+    let view: dto::Provider = through_json(&real);
+    assert_eq!(view.id, "zhipu");
+    assert_eq!(view.display_name, "智谱");
+    assert_eq!(view.endpoints.len(), 2);
+    assert_eq!(view.endpoints[0].base_url, "https://open.bigmodel.cn/api/anthropic");
+    assert_eq!(view.default_endpoint.as_deref(), Some("intl"));
+    assert_eq!(view.auth.auth_type, "api_key", "auth 的键名应该是 type, 不是 auth_type");
+    assert!(view.model_discovery.enabled);
+    assert_eq!(view.model_discovery.example_models, vec!["glm-4.6".to_string()]);
+    assert!(!view.is_oauth());
+    assert_eq!(view.default_endpoint().map(|e| e.id.as_str()), Some("intl"), "应该取 default_endpoint 指的那一个");
+
+    // 指不到 (default_endpoint 是个不存在的 id) 就落回第一个。
+    let mut dangling = view.clone();
+    dangling.default_endpoint = Some("no-such-id".into());
+    assert_eq!(dangling.default_endpoint().map(|e| e.id.as_str()), Some("default"));
+
+    // chatgpt_oauth / kiro_oauth 这两类应该被 TUI 判定为 OAuth (厂商选择器里置灰)。`ProviderInfo`/
+    // `Auth` 都没有 `Clone`, 这里重新构造一份而不是拿 `real` 改字段。
+    let oauth_real = ProviderInfo {
+        id: "chatgpt".into(),
+        display_name: "ChatGPT".into(),
+        description: None,
+        homepage: None,
+        docs_url: None,
+        api_key_url: None,
+        icon: None,
+        compatibility: Compatibility::Untested,
+        compatibility_notes: None,
+        category: ProviderCategory::SecondParty,
+        endpoints: vec![],
+        default_endpoint: None,
+        auth: Auth { auth_type: AuthType::ChatgptOauth, header_name: "Authorization".into(), header_format: AuthHeaderFormat::Bearer },
+        model_discovery: ModelDiscovery::default(),
+    };
+    let oauth_view: dto::Provider = through_json(&oauth_real);
+    assert!(oauth_view.is_oauth());
+}
+
+/// `CreateInput::to_args()["input"]` 能被后端 `CreateSubscriptionInput` 反序列化——内置模板
+/// (`from_template`) 与自定义 (`custom`) 两个 source 变体各来一次; `custom` 再单独验证
+/// `models_url = None` 时整个键都不出现 (不是发 `null`), 有值时正常带上。
+#[test]
+fn create_subscription_input_matches() {
+    let via_template = dto::CreateInput {
+        display_name: "智谱主号".into(),
+        api_key: Secret::new("sk-test"),
+        model_slots: dto::ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new() },
+        source: dto::CreateSource::Builtin { provider_id: "zhipu".into(), endpoint_id: "default".into() },
+    };
+    let args = via_template.to_args();
+    let input: CreateSubscriptionInput = serde_json::from_value(args["input"].clone())
+        .unwrap_or_else(|e| panic!("后端读不了 TUI 发的 from_template CreateInput: {e}\n{args:#}"));
+    assert_eq!(input.display_name, "智谱主号");
+    assert_eq!(input.api_key, "sk-test");
+    assert_eq!(input.model_slots.fable, "f");
+    match input.source {
+        CreateSource::FromTemplate { provider_id, endpoint_id } => {
+            assert_eq!(provider_id, "zhipu");
+            assert_eq!(endpoint_id, "default");
+        }
+        other => panic!("应该是 FromTemplate: {other:?}"),
+    }
+
+    let mut via_custom = dto::CreateInput {
+        display_name: "中转站".into(),
+        api_key: Secret::new("sk-relay"),
+        model_slots: dto::ModelSlots::pending(),
+        source: dto::CreateSource::Custom(Box::new(dto::CustomSource {
+            provider_display_name: "中转站".into(),
+            base_url: "https://relay.example.com".into(),
+            messages_path: "/v1/messages".into(),
+            auth_header_name: "Authorization".into(),
+            auth_header_format: dto::AuthHeaderFormat::Bearer,
+            protocol: dto::CustomProtocol::Anthropic,
+            models_url: None,
+        })),
+    };
+    let args = via_custom.to_args();
+    assert!(args["input"]["source"].get("models_url").is_none(), "models_url 为 None 时整个键不该出现: {args:#}");
+    let input: CreateSubscriptionInput = serde_json::from_value(args["input"].clone())
+        .unwrap_or_else(|e| panic!("后端读不了 TUI 发的 custom CreateInput (无 models_url): {e}\n{args:#}"));
+    match input.source {
+        CreateSource::Custom { protocol, models_url, base_url, .. } => {
+            assert_eq!(protocol, CustomProtocol::Anthropic);
+            assert_eq!(models_url, None);
+            assert_eq!(base_url, "https://relay.example.com");
+        }
+        other => panic!("应该是 Custom: {other:?}"),
+    }
+
+    let dto::CreateSource::Custom(custom) = &mut via_custom.source else { unreachable!() };
+    custom.models_url = Some("https://relay.example.com/v1/models".into());
+    let args = via_custom.to_args();
+    assert_eq!(args["input"]["source"]["models_url"], "https://relay.example.com/v1/models");
+    let input: CreateSubscriptionInput = serde_json::from_value(args["input"].clone())
+        .unwrap_or_else(|e| panic!("后端读不了 TUI 发的 custom CreateInput (带 models_url): {e}\n{args:#}"));
+    match input.source {
+        CreateSource::Custom { models_url, .. } => assert_eq!(models_url.as_deref(), Some("https://relay.example.com/v1/models")),
+        other => panic!("应该是 Custom: {other:?}"),
+    }
+}
+
+/// `ProbeInput::to_args()["input"]` 能被后端 `ProbeCustomModelsInput` 反序列化; `ProbeModelsResult`
+/// 的两个变体能从后端 `ProbeCustomModelsResult` 序列化结果读回来。
+#[test]
+fn probe_custom_models_input_and_result_match() {
+    let input = dto::ProbeInput {
+        base_url: "https://relay.example.com".into(),
+        auth_header_name: "Authorization".into(),
+        auth_header_format: dto::AuthHeaderFormat::Bearer,
+        api_key: Secret::new("sk-test"),
+        protocol: dto::CustomProtocol::OpenaiChatCompletions,
+    };
+    let args = input.to_args();
+    let real: ProbeCustomModelsInput = serde_json::from_value(args["input"].clone())
+        .unwrap_or_else(|e| panic!("后端读不了 TUI 发的 ProbeInput: {e}\n{args:#}"));
+    assert_eq!(real.base_url, "https://relay.example.com");
+    assert_eq!(real.auth_header_name, "Authorization");
+    assert_eq!(real.auth_header_format, AuthHeaderFormat::Bearer);
+    assert_eq!(real.api_key, "sk-test");
+    assert_eq!(real.protocol, CustomProtocol::OpenaiChatCompletions);
+
+    let auto = ProbeCustomModelsResult::Auto {
+        models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }],
+        models_url: "https://relay.example.com/v1/models".into(),
+    };
+    let view: dto::ProbeModelsResult = through_json(&auto);
+    assert_eq!(
+        view,
+        dto::ProbeModelsResult::Auto {
+            models: vec![dto::ModelInfo { id: "glm-4.6".into(), display_name: None }],
+            models_url: "https://relay.example.com/v1/models".into(),
+        }
+    );
+
+    let manual = ProbeCustomModelsResult::ManualFallback { reason: "拒绝连接".into() };
+    let view: dto::ProbeModelsResult = through_json(&manual);
+    assert_eq!(view, dto::ProbeModelsResult::ManualFallback { reason: "拒绝连接".into() });
+}
+
+/// `CustomProtocol::ALL` 的 `as_wire()` 逐个能被后端 `CustomProtocol` 反序列化, 解析回同一个变体。
+#[test]
+fn custom_protocol_wire_names_round_trip() {
+    for (tui_protocol, expected_real) in [
+        (dto::CustomProtocol::Anthropic, CustomProtocol::Anthropic),
+        (dto::CustomProtocol::Gemini, CustomProtocol::Gemini),
+        (dto::CustomProtocol::OpenaiResponses, CustomProtocol::OpenaiResponses),
+        (dto::CustomProtocol::OpenaiChatCompletions, CustomProtocol::OpenaiChatCompletions),
+        (dto::CustomProtocol::GeminiInteractions, CustomProtocol::GeminiInteractions),
+    ] {
+        let wire = tui_protocol.as_wire();
+        let real: CustomProtocol = serde_json::from_value(serde_json::Value::String(wire.to_string()))
+            .unwrap_or_else(|e| panic!("后端 CustomProtocol 读不了 TUI 发的线上名字 {wire:?}: {e}"));
+        assert_eq!(real, expected_real, "{wire:?} 应该解析回 {expected_real:?}");
+    }
+}
+
+/// `AuthHeaderFormat::as_wire()` 的两个取值能被后端 `AuthHeaderFormat` 反序列化。
+#[test]
+fn auth_header_format_wire_names_round_trip() {
+    for (tui_format, expected_real) in [(dto::AuthHeaderFormat::Raw, AuthHeaderFormat::Raw), (dto::AuthHeaderFormat::Bearer, AuthHeaderFormat::Bearer)]
+    {
+        let wire = tui_format.as_wire();
+        let real: AuthHeaderFormat = serde_json::from_value(serde_json::Value::String(wire.to_string()))
+            .unwrap_or_else(|e| panic!("后端 AuthHeaderFormat 读不了 TUI 发的线上名字 {wire:?}: {e}"));
+        assert_eq!(real, expected_real, "{wire:?}");
+    }
+}
+
+/// TUI 拿来判断「该在厂商选择器里置灰」的两个 auth type 字符串, 后端 `AuthType` 都必须认得——
+/// 否则 TUI 判 OAuth 判空、把设备码登录的厂商当普通 api_key 厂商展示。
+#[test]
+fn the_auth_types_the_tui_greys_out_exist_in_the_backend() {
+    for wire in dto::OAUTH_AUTH_TYPES {
+        let real: Result<AuthType, _> = serde_json::from_value(serde_json::Value::String(wire.to_string()));
+        assert!(real.is_ok(), "后端 AuthType 读不了 TUI OAUTH_AUTH_TYPES 里的 {wire:?}: {real:?}");
+    }
+}
+
+/// `PENDING_MODEL` 与桌面端 `src/routes/SubscriptionNew.tsx` 的字面量约定 (`uniformSlots("(pending)")`)
+/// 逐字相同; `ModelSlots::pending()` 四个核心槽是它、兜底槽是空串——后端没有这个常量, 这条测试锁的
+/// 是跨端约定而不是某个后端类型的字段形状。
+#[test]
+fn pending_placeholder_matches_the_desktop_wizard() {
+    assert_eq!(dto::PENDING_MODEL, "(pending)");
+    let slots = dto::ModelSlots::pending();
+    assert_eq!(slots.fable, dto::PENDING_MODEL);
+    assert_eq!(slots.opus, dto::PENDING_MODEL);
+    assert_eq!(slots.sonnet, dto::PENDING_MODEL);
+    assert_eq!(slots.haiku, dto::PENDING_MODEL);
+    assert_eq!(slots.fallback, "", "兜底槽应该留空串, 不是占位值");
 }

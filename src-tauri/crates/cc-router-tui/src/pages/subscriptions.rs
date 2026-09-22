@@ -18,7 +18,7 @@ use unicode_width::UnicodeWidthStr;
 use super::draft::Draft;
 use super::{Component, DrawCtx};
 use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation};
-use crate::client::dto::{BalanceSeverity, ModelSlots, QuotaUsage, Slot, SlotEfforts, Subscription, EFFORT_CHOICES};
+use crate::client::dto::{BalanceSeverity, ModelSlots, QuotaUsage, Slot, SlotEfforts, Subscription, EFFORT_CHOICES, PENDING_MODEL};
 use crate::client::events::SUBSCRIPTION_CHANGES;
 use crate::format::{compact, fit};
 use crate::i18n::Strings;
@@ -58,8 +58,6 @@ const EFFORT_COL: usize = 8;
 const LAST_ERROR_ROWS: u16 = 4;
 /// I1: 「上次操作」最多占的行数, 比「最近错误」少一行——它是补充信息, 不该比主字段还显眼。
 const LAST_ACTION_ROWS: u16 = 3;
-/// 两步向导没走完时槽位留下的占位模型名。
-const PENDING_MODEL: &str = "(pending)";
 /// `PageUp` / `PageDown` 在第一帧画出来之前没有真实的可视行数可用, 先给个不至于原地不动的默认值。
 const DEFAULT_PAGE_ROWS: usize = 10;
 

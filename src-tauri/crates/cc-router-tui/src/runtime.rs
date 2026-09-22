@@ -14,7 +14,10 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 use crate::action::{Action, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, OverviewData, WizardCmd, WizardResult};
 use crate::app::App;
-use crate::client::dto::{Provider, RefreshBalanceResult, RefreshModelsResult, RequestPage, Subscription, TestConnectionResult, VirtualModel};
+use crate::client::dto::{
+    CreatedSubscription, ProbeModelsResult, Provider, RefreshBalanceResult, RefreshModelsResult, RequestPage, Subscription,
+    TestConnectionResult, VirtualModel,
+};
 use crate::client::{commands, Client, ClientError};
 
 const TICK: Duration = Duration::from_millis(250);
@@ -140,17 +143,36 @@ fn spawn_mutation(client: Arc<Client>, tx: UnboundedSender<Action>, mutation: Mu
     });
 }
 
-/// 按 [`WizardCmd`] 分派到对应 command。P5 Task 2 只有 `LoadProviders` 一个分支; 其余四个
-/// (`create_subscription` / `refresh_model_list` / `probe_custom_models` / `update_subscription`)
-/// 依赖 Task 3 才引入的 DTO (`CreateInput` / `ProbeInput` / …), 由 Task 3 补齐。`"list_providers"`
-/// 这里先写字面量: 给 `client::commands` 加 `LIST_PROVIDERS` 常量是 Task 3 的改动范围 (见计划
-/// File Structure 表, `client/mod.rs` 只在 Task 3/7 touch), Task 3 补齐其余分支时会顺带把这一行
-/// 换成 `commands::LIST_PROVIDERS`。
+/// 按 [`WizardCmd`] 分派到对应 command。`LoadModels`/`Probe` 复用刷新模型的 30 秒超时
+/// ([`REFRESH_TIMEOUT`]): 拉候选模型 / 探测自定义厂商都可能要真的打一次上游, 与订阅页「刷新模型」
+/// 同一档超时。`Create`/`SaveSlots` 用默认超时 (`Client::call`, 不单独指定)。
 async fn call_wizard(client: &Client, cmd: &WizardCmd) -> WizardResult {
     match cmd {
         WizardCmd::LoadProviders => {
-            let result = client.call::<Vec<Provider>>("list_providers", json!({})).await;
+            let result = client.call::<Vec<Provider>>(commands::LIST_PROVIDERS, json!({})).await;
             WizardResult::Providers(result.map_err(|e: ClientError| e.to_string()))
+        }
+        WizardCmd::Create(input) => {
+            let result = client.call::<CreatedSubscription>(commands::CREATE_SUBSCRIPTION, input.to_args()).await;
+            WizardResult::Created(result.map_err(|e: ClientError| e.to_string()))
+        }
+        WizardCmd::LoadModels { id } => {
+            let result =
+                client.call_with_timeout::<RefreshModelsResult>(commands::REFRESH_MODEL_LIST, json!({ "id": id }), REFRESH_TIMEOUT).await;
+            WizardResult::Models(result.map_err(|e: ClientError| e.to_string()))
+        }
+        WizardCmd::Probe(input) => {
+            let result =
+                client.call_with_timeout::<ProbeModelsResult>(commands::PROBE_CUSTOM_MODELS, input.to_args(), REFRESH_TIMEOUT).await;
+            WizardResult::Probed(result.map_err(|e: ClientError| e.to_string()))
+        }
+        WizardCmd::SaveSlots { id, model_slots } => {
+            // 只带 `model_slots` 这一块 patch (不带 `slot_efforts`): 向导不设置思考档位, 少发一个
+            // 字段就不会把已有值清掉 (与 `call_mutation` 的 `Mutation::UpdateSlots` 分支整块替换两个
+            // 字段不同, 这里刻意只发一个)。
+            let patch = json!({ "model_slots": model_slots });
+            let result = client.call::<serde_json::Value>(commands::UPDATE_SUBSCRIPTION, json!({ "id": id, "patch": patch })).await;
+            WizardResult::SlotsSaved(result.map(|_| ()).map_err(|e: ClientError| e.to_string()))
         }
     }
 }
@@ -1095,7 +1117,7 @@ mod tests {
 
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::WizardDone(result) = done else { panic!("{done:?}") };
-        let WizardResult::Providers(providers) = *result;
+        let WizardResult::Providers(providers) = *result else { panic!("{result:?}") };
         let providers = providers.expect("应该成功");
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "zhipu");
@@ -1120,7 +1142,7 @@ mod tests {
 
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::WizardDone(result) = done else { panic!("{done:?}") };
-        let WizardResult::Providers(providers) = *result;
+        let WizardResult::Providers(providers) = *result else { panic!("{result:?}") };
         assert!(providers.is_err(), "{providers:?}");
     }
 

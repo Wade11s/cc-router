@@ -21,6 +21,12 @@ pub mod commands {
     pub const LIST_VIRTUAL_MODELS: &str = "list_virtual_models";
     pub const UPDATE_VIRTUAL_MODEL: &str = "update_virtual_model";
     pub const LIST_REQUESTS: &str = "list_requests";
+    /// 新建订阅向导 (P5 Task 3): 拉厂商列表 / 创建 / 自定义厂商探测模型。
+    pub const LIST_PROVIDERS: &str = "list_providers";
+    pub const CREATE_SUBSCRIPTION: &str = "create_subscription";
+    pub const PROBE_CUSTOM_MODELS: &str = "probe_custom_models";
+    /// 删除订阅 (P5 Task 3 只加常量, 接线留给消费它的后续 Task)。
+    pub const DELETE_SUBSCRIPTION: &str = "delete_subscription";
     /// 契约测试遍历这张表; 加新 command 时同时加进来。
     pub const ALL: &[&str] = &[
         PROXY_STATUS,
@@ -36,6 +42,10 @@ pub mod commands {
         LIST_VIRTUAL_MODELS,
         UPDATE_VIRTUAL_MODEL,
         LIST_REQUESTS,
+        LIST_PROVIDERS,
+        CREATE_SUBSCRIPTION,
+        PROBE_CUSTOM_MODELS,
+        DELETE_SUBSCRIPTION,
     ];
 }
 
