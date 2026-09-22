@@ -6,18 +6,19 @@
 
 use std::time::Duration;
 
-use cc_router_tui::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOutcome, OverviewData, Tab, WizardResult};
+use cc_router_tui::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOutcome, OverviewData, Tab, WizardCmd, WizardResult};
 use cc_router_tui::app::{App, AppOptions, MIN_HEIGHT};
 use cc_router_tui::client::dto::{
-    BalanceCache, BalanceEntry, BalanceSeverity, BalanceSnapshot, ModelCache, ModelInfo, ModelSlots, OverallStats, ProxyStatus,
-    QuotaPeriod, QuotaUsage, RefreshBalanceResult, RefreshModelsResult, RequestFilters, RequestLog, RequestPage, RequestQuery,
-    RequestStatus, RoutingMode, SeriesPoint, Settings, SlotEfforts, Subscription, SubscriptionState, TestConnectionResult, VirtualModel,
-    EFFORT_CHOICES,
+    BalanceCache, BalanceEntry, BalanceSeverity, BalanceSnapshot, CreateInput, CreateSource, ModelCache, ModelDiscovery, ModelInfo,
+    ModelSlots, OverallStats, Provider, ProviderAuth, ProviderEndpoint, ProxyStatus, QuotaPeriod, QuotaUsage, RefreshBalanceResult,
+    RefreshModelsResult, RequestFilters, RequestLog, RequestPage, RequestQuery, RequestStatus, RoutingMode, SeriesPoint, Settings,
+    SlotEfforts, Subscription, SubscriptionState, TestConnectionResult, VirtualModel, EFFORT_CHOICES,
 };
 use cc_router_tui::client::events::{ROUTE_ATTEMPT_FINISHED, ROUTE_ATTEMPT_STARTED};
 use cc_router_tui::format::Tz;
 use cc_router_tui::i18n::ZH;
 use cc_router_tui::pages::Pages;
+use cc_router_tui::secret::Secret;
 use cc_router_tui::theme::{ColorMode, Theme};
 use cc_router_tui::widgets::detail::{DetailRow, DetailSpec, Tone};
 use cc_router_tui::widgets::picker::{self, PickerChoice, PickerItem, PickerSpec, PickerTag, Slot};
@@ -356,6 +357,148 @@ fn wizard_load_failure_shows_the_reason_and_esc_still_closes() {
 
     assert_eq!(a.handle_key(key(KeyCode::Esc)), Some(Action::CloseWizard));
     assert_eq!(a.update(Action::CloseWizard), vec![Cmd::Fetch(Fetch::Subscriptions)]);
+}
+
+// ---------- P5 Task 4: 向导第一步 (内置厂商) ----------
+
+/// 内置厂商 (智谱 AI) 的假 `Provider`: 两个接入点, 默认选中国内版——`wizard_basics_80x24`
+/// 等用例照着 task-4-brief.md 的 80×24 布局例子选它。
+fn zhipu_provider() -> Provider {
+    Provider {
+        id: "zhipu".into(),
+        display_name: "智谱 AI".into(),
+        description: Some("智谱 AI 大模型".into()),
+        endpoints: vec![
+            ProviderEndpoint { id: "cn".into(), label: "国内版".into(), base_url: "https://open.bigmodel.cn/api/anthropic".into() },
+            ProviderEndpoint { id: "intl".into(), label: "国际版".into(), base_url: "https://api.z.ai/api/anthropic".into() },
+        ],
+        default_endpoint: Some("cn".into()),
+        auth: ProviderAuth { auth_type: "api_key".into() },
+        model_discovery: ModelDiscovery { enabled: true, example_models: vec![] },
+    }
+}
+
+/// OAuth 类厂商 (ChatGPT), TUI 不做设备码流程, 选中只给提示、不设值。
+fn chatgpt_provider() -> Provider {
+    Provider {
+        id: "openai_codex".into(),
+        display_name: "ChatGPT".into(),
+        description: None,
+        endpoints: vec![],
+        default_endpoint: None,
+        auth: ProviderAuth { auth_type: "chatgpt_oauth".into() },
+        model_discovery: ModelDiscovery { enabled: false, example_models: vec![] },
+    }
+}
+
+/// 打开向导并喂一份厂商列表, 停在 `Stage::Basics`、焦点在 `Provider` 行。
+fn wizard_with_providers(providers: Vec<Provider>) -> App {
+    let mut a = app(false);
+    a.update(Action::OpenWizard);
+    a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(providers)))));
+    a
+}
+
+/// `Provider` 行 `⏎` → 打开厂商 picker → 选中智谱 AI。选中后焦点应该已经移到 `ApiKey`
+/// (`apply_provider_choice` 的行为), 后续测试从这里接着打字。
+fn select_zhipu(a: &mut App) {
+    let open_action = a.handle_key(key(KeyCode::Enter)).expect("Provider 行 ⏎ 应该产出 Action::OpenPicker");
+    a.update(open_action);
+    a.update(Action::PickerDone { tag: PickerTag::WizardProvider, choice: PickerChoice::Item("zhipu".into()) });
+}
+
+fn type_str(a: &mut App, text: &str) {
+    for c in text.chars() {
+        a.handle_key(key(KeyCode::Char(c)));
+    }
+}
+
+/// 简报 80×24 例子: 厂商已选 (智谱 AI / 国内版, 都由选厂商时自动填好)、API Key 已填两个字符
+/// ("sk")、备注名是自动生成的默认值。**焦点落在 `ApiKey`** (选厂商后的自然结果, 简报手绘的
+/// ASCII 图里画在「厂商」行只是示意——见 task-4-report.md 里的说明)。
+#[test]
+fn wizard_basics_80x24() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut a);
+    type_str(&mut a, "sk");
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+/// 选 `chatgpt_oauth` 那一项之后 `provider_id` 仍然是空 (`Endpoint` 行 `⏎` 应该被拒绝, 而不是
+/// 打开一个空的接入点列表), 且屏幕上出现 `ZH.wiz_desktop_only`。
+#[test]
+fn picking_an_oauth_provider_only_explains_where_to_add_it() {
+    let mut a = wizard_with_providers(vec![chatgpt_provider()]);
+    let open_action = a.handle_key(key(KeyCode::Enter)).expect("Provider 行 ⏎ 应该产出 Action::OpenPicker");
+    a.update(open_action);
+    a.update(Action::PickerDone { tag: PickerTag::WizardProvider, choice: PickerChoice::Item("openai_codex".into()) });
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(ZH.wiz_desktop_only), "选中 OAuth 厂商应该显示「请在桌面端添加」\n{out}");
+
+    a.handle_key(key(KeyCode::Down)); // Provider -> Endpoint (焦点没有因为选 OAuth 厂商而移动)
+    assert_eq!(
+        a.handle_key(key(KeyCode::Enter)),
+        Some(Action::Notify { kind: ToastKind::Info, text: ZH.wiz_pick_provider_first.to_string() }),
+        "provider_id 没被设置, 接入点行应该拒绝而不是打开空列表"
+    );
+}
+
+/// 填完四个字段、焦点到按钮、`⏎` → 返回的 `Cmd` 是 `Wizard(Create(..))`, 且 `model_slots` 四个
+/// 核心槽是 "(pending)"、fallback 是空串、source 是 `Builtin`。
+#[test]
+fn the_wizard_builds_a_create_command_with_pending_slots() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut a);
+    type_str(&mut a, "sk-test");
+    a.handle_key(key(KeyCode::Tab)); // ApiKey -> DisplayName
+    a.handle_key(key(KeyCode::Tab)); // DisplayName -> Submit
+    let submit_action = a.handle_key(key(KeyCode::Enter)).expect("填完表单提交应该产出 Action");
+    let cmds = a.update(submit_action);
+    assert_eq!(
+        cmds,
+        vec![Cmd::Wizard(Box::new(WizardCmd::Create(CreateInput {
+            display_name: "智谱 AI".into(),
+            api_key: Secret::new("sk-test"),
+            model_slots: ModelSlots::pending(),
+            source: CreateSource::Builtin { provider_id: "zhipu".into(), endpoint_id: "cn".into() },
+        })))]
+    );
+}
+
+/// 不填 key 直接提交 → 不产出 `Cmd`, 屏幕上出现 `ZH.wiz_err_api_key` (焦点也应该跳回 `ApiKey`,
+/// 用下一次 `Ctrl+R` 依然作用在它身上间接验证)。
+#[test]
+fn submitting_an_incomplete_form_moves_the_cursor_to_the_bad_field() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut a);
+    a.handle_key(key(KeyCode::Tab)); // ApiKey -> DisplayName (key 还是空的)
+    a.handle_key(key(KeyCode::Tab)); // DisplayName -> Submit
+    assert!(a.handle_key(key(KeyCode::Enter)).is_none(), "校验失败不该产出 Action");
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(ZH.wiz_err_api_key), "{out}");
+}
+
+/// 打字之后屏幕上是 `••`; `Ctrl+R` 之后是明文; 再 `Ctrl+R` 又变回掩码。
+#[test]
+fn the_api_key_is_masked_until_ctrl_r() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut a);
+    type_str(&mut a, "sk");
+
+    let masked = render(&mut a, 80, 24);
+    assert!(masked.contains("••"), "{masked}");
+    assert!(!masked.contains("sk"), "按 Ctrl+R 之前不该看到明文\n{masked}");
+
+    let ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+    a.handle_key(ctrl_r);
+    let revealed = render(&mut a, 80, 24);
+    assert!(revealed.contains("sk"), "{revealed}");
+    assert!(!revealed.contains("••"), "{revealed}");
+
+    a.handle_key(ctrl_r);
+    let masked_again = render(&mut a, 80, 24);
+    assert!(masked_again.contains("••"), "{masked_again}");
+    assert!(!masked_again.contains("sk"), "{masked_again}");
 }
 
 // ---------- 订阅页 ----------
@@ -1618,6 +1761,15 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     let first = render(&mut s, 80, 24);
     let second = render(&mut s, 80, 24);
     assert_eq!(first, second, "向导加载中的状态应该幂等");
+
+    // P5 Task 4: 向导 Basics 阶段 (已选厂商 + API Key 打了几个字符, 光标在 value 里的位置由
+    // `visual_cursor()` 现算) 应该幂等。
+    let mut t = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut t);
+    type_str(&mut t, "sk");
+    let first = render(&mut t, 80, 24);
+    let second = render(&mut t, 80, 24);
+    assert_eq!(first, second, "向导 Basics 阶段应该幂等");
 }
 
 /// F3: 空列表加载时没有「旧」行可以比较, 不该把更早排队、还没画出来的闪烁带到后面某一帧。

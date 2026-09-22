@@ -84,9 +84,12 @@ mod tests {
     /// 另外加一条「白名单成员必须真的存在于 `src/` 下」的断言, 防止以后再出现同类死条目。
     #[test]
     fn expose_is_only_called_in_allowlisted_files() {
-        const EXPOSE_ALLOWLIST: [&str; 2] = [
+        const EXPOSE_ALLOWLIST: [&str; 3] = [
             "secret.rs",     // 定义处与它自己的测试
             "client/dto.rs", // `CreateInput::to_args()` / `ProbeInput::to_args()`, 唯一把它变成线上 JSON 的地方 (Task 3)
+            // `fields::api_key_display()`: 向导 API Key 行 `Ctrl+R` 就地切换明文/掩码显示,
+            // `wizard/mod.rs::draw` 只调这一个函数, 不直接碰 `expose` (P5 Task 4)。
+            "wizard/fields.rs",
         ];
 
         fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

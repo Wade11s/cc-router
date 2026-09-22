@@ -331,7 +331,13 @@ impl Subscriptions {
                 };
                 self.draft.edit(&base, |d| d.slot_efforts.set(*slot, value));
             }
-            PickerTag::VmAddSubscription { .. } | PickerTag::LiveFilter | PickerTag::LogsFilter => (),
+            // 跟订阅页无关的 tag (虚拟模型页的 `VmAddSubscription`、实时路由/日志页的过滤弹窗、
+            // P5 Task 4 起向导自己的选厂商/选接入点) 直接忽略——订阅页压根不会打开这些弹窗。
+            PickerTag::VmAddSubscription { .. }
+            | PickerTag::LiveFilter
+            | PickerTag::LogsFilter
+            | PickerTag::WizardProvider
+            | PickerTag::WizardEndpoint => (),
         }
     }
 

@@ -7,51 +7,94 @@
 //! `on_open` 又不在里面。方法签名仍然照着 `Component` 写, 调用约定一致 (`App` 那一侧的
 //! `update_wizard` helper与 `update_page` 一一对应)。
 //!
-//! P5 Task 2 只搭这一层的架子: 拉厂商列表、画一个加载中/失败的空容器、`Esc` 退出。表单本身 (选
-//! 厂商 / 填 API Key / 绑定模型) 从 Task 4 起分阶段加进 [`Stage`]。
+//! **表单交互的总规则** (`Basics` / Task 5 的 `Slots` / Task 6 的 `Custom` 三个阶段共用):
+//! - 表单是一列「行」, `↑` / `↓` 在**可聚焦**的行之间移动 (说明行与空行跳过), 不绕回。
+//! - **文本行**: 直接打字 (不用先进入编辑模式); `⏎` / `Tab` = 移到下一个可聚焦行。
+//! - **选择行**: `⏎` = 打开选择弹窗; 不能直接打字。
+//! - **按钮行**: `⏎` = 执行。所以「下一步」「保存」「获取模型列表」**都不占用任何字符键**——
+//!   这是表单吞掉全部按键之后唯一安全的做法。
+//! - `Esc` = 退出向导 (`has_input()` 为真时先弹确认)。
+//! - 有请求在飞时: 整张表单只读 (按键除 `Esc` 外全部吞掉), 按钮行显示 throbber。
+//!
+//! P5 Task 2 只搭了骨架 (`Stage::Loading` / `LoadFailed`, 拉厂商列表、画一个加载中/失败的空容器、
+//! `Esc` 退出)。**Task 4 起加真正的表单**: 本文件当前实现了内置厂商路径的第一步
+//! (`Stage::Basics` / `Creating`)——选厂商 → 选接入点 → 填 API Key → 备注名 → 下一步; 第二步
+//! (绑定模型, `Stage::Slots` / `Saving`) 与自定义厂商的单页表单 (`Stage::Custom` / `Probing`)
+//! 留给 Task 5/6。
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent};
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
+use tui_input::backend::crossterm::EventHandler;
+use tui_input::Input;
 
 use crate::action::{Action, Cmd, WizardCmd, WizardResult};
-use crate::client::dto::Provider;
+use crate::client::dto::{CreateInput, CreateSource, CustomProtocol, ModelSlots, Provider};
 use crate::i18n::Strings;
 use crate::pages::DrawCtx;
+use crate::secret::Secret;
 use crate::store::Store;
+use crate::theme::Theme;
+use crate::widgets::form::{self, FormRow, FormView};
 use crate::widgets::keybar::Hint;
-use crate::widgets::toast::ToastKind;
+use crate::widgets::picker::{PickerChoice, PickerItem, PickerSpec, PickerTag};
 use crate::widgets::spinner_state;
+use crate::widgets::toast::ToastKind;
 
-/// 向导走到哪一步了。P5 Task 2 只有前两个, Task 4–6 各自往里加分支 (穷尽 `match`, 加了不接住
-/// 就编译失败)。
+mod fields;
+use fields::{api_key_display, default_display_name, validate_basics, BasicsDraft, BasicsField};
+
+/// 向导走到哪一步了。P5 Task 2 只有前两个, Task 4 加了 `Basics`/`Creating` (穷尽 `match`, 加了不
+/// 接住就编译失败), Task 5/6 各自继续往里加分支。
 enum Stage {
     /// 正在拉厂商列表。
     Loading,
     /// 拉失败了, 表单画不出来, 只能 `Esc` 退出。
     LoadFailed(String),
-    // Task 4: Basics / Creating
+    /// 内置路径第一步: 选厂商 / 选接入点 / 填 API Key / 备注名。
+    Basics,
+    /// `create_subscription` (以及紧随其后的 `refresh_model_list`) 在飞: 表单只读, 按钮转圈。
+    /// 本 Task 收到 `Created` 结果时只弹一条 toast 并 `Action::CloseWizard`; Task 5 接手真正的
+    /// 后续流转。
+    Creating,
     // Task 5: Slots / Saving
     // Task 6: Custom / Probing
 }
 
 pub struct Wizard {
     stage: Stage,
-    /// `list_providers` 拉到的厂商列表。P5 Task 2 只负责存 (`Stage::Loading` 的画面不随它变化),
-    /// 展示交给 Task 4 起的表单——`Stage` 那时候会从 `Loading` 换成真正的 `Basics` 之类的分支。
-    #[allow(dead_code)] // 读取点在 Task 4
+    /// `list_providers` 拉到的厂商列表。
     providers: Vec<Provider>,
     /// 与页面的 `pending_notice` 同一套约定, 见 `take_notice`。
     notice: Option<(ToastKind, String)>,
-    /// `take_close_request()` 的待办标记。P5 Task 2 生产代码里还没有任何写入点 (Task 4 起「创建
-    /// 成功」/「保存成功」才会真的置位); `App` 那一侧转发这个标记的逻辑必须现在就测到, 所以留了
-    /// `request_close_for_test` 这个测试专用入口 (与 `pages::logs::Logs::set_force_dirty` 同一套
-    /// 「只在编译本 crate 单测时存在」的做法)。
+    /// `take_close_request()` 的待办标记。`App` 那一侧转发这个标记的逻辑在 `update()` 返回之后
+    /// 轮询一次。
     close_request: bool,
+    /// `Stage::Basics` 的草稿。选中自定义厂商条目 / OAuth 厂商都不会碰这个字段——只有选中一个
+    /// 可用的内置厂商才会写 `provider_id`/`endpoint_id` (P5 Task 4)。
+    draft: BasicsDraft,
+    /// 当前聚焦的字段, `Wizard::new()` 从 `BasicsField::Provider` 起步。
+    focus: BasicsField,
+    /// API Key 输入框的编辑状态 (光标位置等); `draft.api_key` 是它的 `Secret` 投影, 每次编辑
+    /// (`handle_event` 认为值真的变了) 之后同步——与 `display_name_input` 同一条道理, 见
+    /// `BasicsDraft` 的文档注释 (`tui_input::Input` 不参与 `PartialEq`, 草稿只存文本)。
+    api_key_input: Input,
+    /// 备注名输入框的编辑状态; `draft.display_name` 是它的 `String` 投影。
+    display_name_input: Input,
+    /// API Key 行是否显示明文 (`Ctrl+R` 切换, 只影响显示, 不影响 `draft.api_key` 本身)。
+    reveal_api_key: bool,
+    /// 上一次 `apply_provider_choice` 自动算出来的备注名——据此判断用户是不是已经手动改过它
+    /// (改过就不再跟着厂商切换重算), 见 `fields::default_display_name` 的调用点。
+    last_auto_display_name: Option<String>,
+    /// 校验失败的字段与原因; `Submit` 按下但没通过时写入, 画成那一行下面的 `⚠` 提示。
+    field_error: Option<(BasicsField, &'static str)>,
+    /// `create_subscription` 失败时的原因, 挂成表单顶部的说明行 (`FormRow::Note`, Task 5 保留
+    /// 这个字段继续用)。
+    create_error: Option<String>,
 }
 
 // clippy::new_without_default: `App`/页面构造函数都带参数, 没有这条先例——`Wizard::new()` 恰好是
@@ -64,7 +107,20 @@ impl Default for Wizard {
 
 impl Wizard {
     pub fn new() -> Self {
-        Self { stage: Stage::Loading, providers: Vec::new(), notice: None, close_request: false }
+        Self {
+            stage: Stage::Loading,
+            providers: Vec::new(),
+            notice: None,
+            close_request: false,
+            draft: BasicsDraft::default(),
+            focus: BasicsField::Provider,
+            api_key_input: Input::default(),
+            display_name_input: Input::default(),
+            reveal_api_key: false,
+            last_auto_display_name: None,
+            field_error: None,
+            create_error: None,
+        }
     }
 
     /// 刚打开: 要发的请求 (拉厂商列表)。`App` 在创建它之后立刻调一次。
@@ -72,50 +128,252 @@ impl Wizard {
         vec![Cmd::Wizard(Box::new(WizardCmd::LoadProviders))]
     }
 
-    /// 除 `Ctrl+C` 外的全部按键。`None` = 吞掉 (或只改了向导自己的状态)。P5 Task 2 只认识
-    /// `Esc`——`has_input()` 恒 `false`, 所以直接关闭, 不弹确认; Task 4 起 `has_input()` 会随表单
-    /// 填写变化, 这条判断到时候自然生效, 不用改这个方法本身。
+    /// 除 `Ctrl+C` 外的全部按键。`None` = 吞掉 (或只改了向导自己的状态)。`Esc` 的处理跟阶段
+    /// 无关, 排在最前面统一判断; 其余按键只有 `Stage::Basics` 才会真的处理——`Loading` /
+    /// `LoadFailed` 没有字段可以接收输入, `Creating` 整张表单只读 (总规则: 有请求在飞时按键除
+    /// `Esc` 外全部吞掉)。
     pub fn handle_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
+        if key.code == KeyCode::Esc {
+            return Some(if self.has_input() {
+                Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::CloseWizard) }
+            } else {
+                Action::CloseWizard
+            });
+        }
+        if matches!(self.stage, Stage::Basics) {
+            self.handle_basics_key(key, s)
+        } else {
+            None
+        }
+    }
+
+    /// `Stage::Basics` 的按键表 (总规则见文件顶部文档): `↑`/`↓` 在 5 个可聚焦字段之间移动;
+    /// `Provider`/`Endpoint` 是选择行, `⏎` 开对应的 picker; `ApiKey`/`DisplayName` 是文本行,
+    /// 直接打字、`⏎`/`Tab` 移到下一行, `ApiKey` 额外认 `Ctrl+R` 切换明文/掩码; `Submit` 是
+    /// 按钮行, `⏎` 触发校验 + 提交。
+    fn handle_basics_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Esc if self.has_input() => {
-                Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::CloseWizard) })
+            KeyCode::Up => {
+                self.move_focus(-1);
+                None
             }
-            KeyCode::Esc => Some(Action::CloseWizard),
+            KeyCode::Down => {
+                self.move_focus(1);
+                None
+            }
+            KeyCode::Enter if self.focus == BasicsField::Provider => Some(self.open_provider_picker(s)),
+            KeyCode::Enter if self.focus == BasicsField::Endpoint => Some(self.open_endpoint_picker(s)),
+            KeyCode::Enter | KeyCode::Tab if matches!(self.focus, BasicsField::ApiKey | BasicsField::DisplayName) => {
+                self.move_focus(1);
+                None
+            }
+            KeyCode::Enter if self.focus == BasicsField::Submit => self.submit(s),
+            // 必须排在下面两条打字分支之前: 否则 Ctrl+R 会被 `ApiKey` 的编辑分支当成字符 'r' 吃掉。
+            KeyCode::Char('r') if ctrl && self.focus == BasicsField::ApiKey => {
+                self.reveal_api_key = !self.reveal_api_key;
+                None
+            }
+            _ if self.focus == BasicsField::ApiKey => {
+                self.edit_api_key(key);
+                None
+            }
+            _ if self.focus == BasicsField::DisplayName => {
+                self.edit_display_name(key);
+                None
+            }
+            // 选择行 (`Provider`/`Endpoint`) 上除了上面已经接住的 `⏎`, 其余按键 (含字符键) 一律
+            // 吞掉——"选择行不能直接打字"。
             _ => None,
         }
     }
 
-    /// 目前只消费 `Action::WizardDone`; `Action::PickerDone` 留给 Task 4 起的选厂商/选模型弹窗,
-    /// 现在没有任何 picker 会以向导为目标, 其余 action 一律忽略。
-    pub fn update(&mut self, action: &Action, _store: &Store, _s: &'static Strings) -> Vec<Cmd> {
-        if let Action::WizardDone(result) = action {
-            self.apply_wizard_result(result);
+    fn move_focus(&mut self, delta: isize) {
+        let idx = BasicsField::ALL.iter().position(|f| *f == self.focus).unwrap_or(0);
+        let next = (idx as isize + delta).clamp(0, BasicsField::ALL.len() as isize - 1) as usize;
+        self.focus = BasicsField::ALL[next];
+    }
+
+    fn edit_api_key(&mut self, key: KeyEvent) {
+        if self.api_key_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
+            self.draft.api_key = Secret::new(self.api_key_input.value());
+        }
+    }
+
+    fn edit_display_name(&mut self, key: KeyEvent) {
+        if self.display_name_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
+            self.draft.display_name = self.display_name_input.value().to_string();
+        }
+    }
+
+    /// `Provider` 行 `⏎`: 条目是全部厂商 + 5 个自定义协议。OAuth 类厂商 (TUI 不做设备码流程)
+    /// 的 label 后面追加提示语, picker 本身没有"置灰不可选"的能力, 选中时用「可选但选了只给
+    /// 提示」等效 (`apply_provider_choice` 里判断)。
+    fn open_provider_picker(&self, s: &'static Strings) -> Action {
+        let mut items: Vec<PickerItem> = self
+            .providers
+            .iter()
+            .map(|p| {
+                let label = if p.is_oauth() { format!("{} · {}", p.display_name, s.wiz_desktop_only) } else { p.display_name.clone() };
+                PickerItem { id: p.id.clone(), label, hint: p.description.clone() }
+            })
+            .collect();
+        for (protocol, label) in CustomProtocol::ALL.iter().zip(s.wiz_custom_labels.iter()) {
+            items.push(PickerItem { id: format!("custom:{}", protocol.as_wire()), label: (*label).to_string(), hint: None });
+        }
+        Action::OpenPicker(PickerSpec {
+            tag: PickerTag::WizardProvider,
+            title: s.wiz_pick_provider.to_string(),
+            items,
+            allow_custom: false,
+            initial: self.draft.provider_id.clone(),
+        })
+    }
+
+    /// `Endpoint` 行 `⏎`: 厂商还没选时 (或者选中的 id 在厂商列表里找不到, 防御性地) 就地拒绝,
+    /// 不开弹窗。
+    fn open_endpoint_picker(&self, s: &'static Strings) -> Action {
+        let Some(provider) = self.providers.iter().find(|p| p.id == self.draft.provider_id) else {
+            return Action::Notify { kind: ToastKind::Info, text: s.wiz_pick_provider_first.to_string() };
+        };
+        let items =
+            provider.endpoints.iter().map(|e| PickerItem { id: e.id.clone(), label: e.label.clone(), hint: Some(e.base_url.clone()) }).collect();
+        Action::OpenPicker(PickerSpec {
+            tag: PickerTag::WizardEndpoint,
+            title: s.wiz_pick_endpoint.to_string(),
+            items,
+            allow_custom: false,
+            initial: self.draft.endpoint_id.clone(),
+        })
+    }
+
+    /// `Action::PickerDone` 落地: 按 `tag` 分派给厂商 / 接入点两条分支; 跟向导无关的 tag (其它
+    /// 页面自己的弹窗) 直接忽略——**穷尽 `match`**, 新增 `PickerTag` 变体时这里会编译失败, 逼着
+    /// 显式决定向导要不要关心它。
+    fn apply_picker_choice(&mut self, tag: &PickerTag, choice: &PickerChoice, store: &Store, s: &'static Strings) {
+        match tag {
+            PickerTag::WizardProvider => self.apply_provider_choice(choice, store, s),
+            PickerTag::WizardEndpoint => self.apply_endpoint_choice(choice),
+            PickerTag::SlotModel { .. }
+            | PickerTag::SlotEffort { .. }
+            | PickerTag::VmAddSubscription { .. }
+            | PickerTag::LiveFilter
+            | PickerTag::LogsFilter => {}
+        }
+    }
+
+    /// 选中内置厂商 → 记 `provider_id`, `endpoint_id` 置为 `provider.default_endpoint()`,
+    /// `display_name` 若为空**或**等于上一次自动生成的值则重算, 焦点移到 `ApiKey`。选中自定义
+    /// 条目 → 进 Task 6 的 `Stage::Custom` (本 Task 先弹一条 `wiz_custom_todo` 的 Info toast
+    /// 占位, Task 6 替换掉这一行并删掉这个字段)。选中 OAuth 厂商 → 不设值, 只弹
+    /// `wiz_desktop_only`。
+    fn apply_provider_choice(&mut self, choice: &PickerChoice, store: &Store, s: &'static Strings) {
+        // `allow_custom: false`: picker 理论上不会产出 `Custom`, 防御性地忽略。
+        let PickerChoice::Item(id) = choice else { return };
+        if let Some(wire) = id.strip_prefix("custom:") {
+            let _ = wire; // Task 6 会解析回 `CustomProtocol` 并进 `Stage::Custom`; 本 Task 只占位。
+            self.notice = Some((ToastKind::Info, s.wiz_custom_todo.to_string()));
+            return;
+        }
+        let Some(provider) = self.providers.iter().find(|p| &p.id == id) else { return };
+        if provider.is_oauth() {
+            self.notice = Some((ToastKind::Info, s.wiz_desktop_only.to_string()));
+            return;
+        }
+        self.draft.provider_id = provider.id.clone();
+        self.draft.endpoint_id = provider.default_endpoint().map(|e| e.id.clone()).unwrap_or_default();
+        let still_auto =
+            self.draft.display_name.is_empty() || self.last_auto_display_name.as_deref() == Some(self.draft.display_name.as_str());
+        if still_auto {
+            let name = default_display_name(&provider.display_name, store);
+            self.draft.display_name = name.clone();
+            self.display_name_input = Input::new(name.clone());
+            self.last_auto_display_name = Some(name);
+        }
+        self.focus = BasicsField::ApiKey;
+    }
+
+    fn apply_endpoint_choice(&mut self, choice: &PickerChoice) {
+        if let PickerChoice::Item(id) = choice {
+            self.draft.endpoint_id = id.clone();
+        }
+    }
+
+    /// `Submit` 行 `⏎`: 先 `validate_basics`, 失败则把焦点移到那个字段、把 `error` 挂上去 (Task 8
+    /// 会在这里播 `fx::field_err`——焦点此刻已经落在出错的那一行, 用 `form::draw` 返回的聚焦行
+    /// 矩形就够); 通过则打包 `WizardCmd::Create` 并进 `Stage::Creating`。
+    fn submit(&mut self, s: &'static Strings) -> Option<Action> {
+        match validate_basics(&self.draft, s) {
+            Some((field, message)) => {
+                self.focus = field;
+                self.field_error = Some((field, message));
+                None
+            }
+            None => {
+                self.field_error = None;
+                self.create_error = None;
+                let cmd = WizardCmd::Create(CreateInput {
+                    display_name: self.draft.display_name.clone(),
+                    api_key: self.draft.api_key.clone(),
+                    model_slots: ModelSlots::pending(),
+                    source: CreateSource::Builtin { provider_id: self.draft.provider_id.clone(), endpoint_id: self.draft.endpoint_id.clone() },
+                });
+                self.stage = Stage::Creating;
+                Some(Action::WizardRequest(Box::new(cmd)))
+            }
+        }
+    }
+
+    /// 消费 `Action::WizardDone` (异步结果) 与 `Action::PickerDone` (选厂商/选接入点弹窗的结果);
+    /// `Submit` 触发的请求走的是另一条路 (`Action::WizardRequest`, 由 `App::update` 直接转成
+    /// `Cmd::Wizard`, 不经过这里——见该 action 的文档注释), 所以这个方法目前仍然不产出任何
+    /// `Cmd`, 返回值恒为空。
+    pub fn update(&mut self, action: &Action, store: &Store, s: &'static Strings) -> Vec<Cmd> {
+        match action {
+            Action::WizardDone(result) => self.apply_wizard_result(result, s),
+            Action::PickerDone { tag, choice } => self.apply_picker_choice(tag, choice, store, s),
+            _ => {}
         }
         Vec::new()
     }
 
     /// **刻意写成穷尽 `match`, 不用 `_` 兜底、也不用任何 `#[allow]`**: `WizardResult` 每加一个新
-    /// 变体, 这里就必须显式接一条臂——哪怕暂时只是空臂 `=> {}`——否则编译期就 `E0004` 失败。这是
-    /// 上一轮评审专门要的保护: 不这样做的话,「表单填完按了创建, 结果被静默吞掉, 向导永远转圈」这种
-    /// 事只会在运行时才暴露 (Review round 1)。`Created`/`Models`/`Probed`/`SlotsSaved` 四个空臂由
-    /// Task 3 加入, 真实处理 (创建成功后进 Basics→Slots / 探测结果写进表单 / 保存成功后关闭向导) 留给
-    /// Task 4–6, 不是这里的改动范围。
-    fn apply_wizard_result(&mut self, result: &WizardResult) {
+    /// 变体, 这里就必须显式接一条臂——哪怕暂时只是空臂 `=> {}`——否则编译期就 `E0004` 失败。
+    /// `Providers` 成功后转进 `Stage::Basics`; `Created` 的处理是**临时的** (Task 4 只关掉向导 /
+    /// 回填错误说明, Task 5 换成"进 Stage::Slots 接着拉模型列表")。`Models`/`Probed`/`SlotsSaved`
+    /// 三个空臂留给 Task 5/6。
+    fn apply_wizard_result(&mut self, result: &WizardResult, s: &'static Strings) {
         match result {
-            WizardResult::Providers(Ok(list)) => self.providers = list.clone(),
+            WizardResult::Providers(Ok(list)) => {
+                self.providers = list.clone();
+                self.stage = Stage::Basics;
+            }
             WizardResult::Providers(Err(reason)) => self.stage = Stage::LoadFailed(reason.clone()),
-            WizardResult::Created(_) => {}
+            WizardResult::Created(Ok(_)) => {
+                self.notice = Some((ToastKind::Success, (s.wiz_created)(&self.draft.display_name)));
+                self.close_request = true;
+            }
+            WizardResult::Created(Err(e)) => {
+                self.stage = Stage::Basics;
+                self.create_error = Some((s.wiz_create_failed)(e));
+            }
             WizardResult::Models(_) => {}
             WizardResult::Probed(_) => {}
             WizardResult::SlotsSaved(_) => {}
         }
     }
 
-    /// P5 Task 2 只画一个带边框的空容器: 标题 `s.wiz_title`, 正文居中一行——加载中带 throbber
-    /// (与总览页「重连中」同一套 `spinner_state` + `to_symbol_span`), 失败时改成一行错误文案。
     pub fn draw(&mut self, frame: &mut Frame, area: Rect, ctx: &mut DrawCtx) {
         let theme = ctx.theme;
         let s = ctx.s;
+        if matches!(self.stage, Stage::Basics | Stage::Creating) {
+            self.draw_basics(frame, area, theme, s, ctx.tick);
+            return;
+        }
+
+        // P5 Task 2 的原始画法 (`Loading` / `LoadFailed`): 带边框的空容器 + 居中一行——加载中带
+        // throbber (与总览页「重连中」同一套 `spinner_state` + `to_symbol_span`), 失败时改成一行
+        // 错误文案。
         let block = Block::bordered().border_type(BorderType::Rounded).border_style(theme.border_style()).title_top(format!(" {} ", s.wiz_title));
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -130,20 +388,121 @@ impl Wizard {
                 Line::from(vec![spinner, Span::raw(s.wiz_loading_providers)]).centered()
             }
             Stage::LoadFailed(reason) => Line::styled((s.wiz_load_failed)(reason), Style::new().fg(theme.err)).centered(),
+            Stage::Basics | Stage::Creating => unreachable!("这两个分支已经在函数顶部 return 了"),
         };
         frame.render_widget(line, inner.centered_vertically(Constraint::Length(1)));
     }
 
-    /// 底栏左侧。P5 Task 2 没有任何可操作的字段, 唯一的键 (`Esc`) 由 `App::draw` 固定画在右侧
-    /// (`s.key_cancel`), 这里留空。
-    pub fn hints(&self, _s: &'static Strings) -> Vec<Hint<'static>> {
-        Vec::new()
+    /// `Stage::Basics` / `Stage::Creating` 共用: 后者只是把全部字段画成 `locked`、按钮画成
+    /// `busy`、标签换成 `wiz_creating`——两个阶段的行结构完全一样, 拆成两份反而要重复一遍组装
+    /// 逻辑。
+    fn draw_basics(&self, frame: &mut Frame, area: Rect, theme: &Theme, s: &'static Strings, tick: u64) {
+        let busy = matches!(self.stage, Stage::Creating);
+
+        let provider_label = self.provider_label();
+        let endpoint_label = self.endpoint_label();
+        let api_key_text = api_key_display(&self.draft.api_key, self.reveal_api_key);
+        let pick_hint = format!("⏎ {}", s.key_pick);
+        let reveal_hint = format!("Ctrl+R {}", s.key_reveal);
+        let api_key_cursor = self.api_key_input.visual_cursor();
+        let display_name_cursor = self.display_name_input.visual_cursor();
+        let field_error = |field: BasicsField| self.field_error.and_then(|(f, msg)| (f == field).then_some(msg));
+
+        let mut rows: Vec<FormRow> = Vec::new();
+        if let Some(err) = &self.create_error {
+            rows.push(FormRow::Note { text: err });
+            rows.push(FormRow::Spacer);
+        }
+        rows.push(FormRow::Field {
+            label: s.wiz_f_provider,
+            value: &provider_label,
+            placeholder: "",
+            hint: Some(&pick_hint),
+            cursor: None,
+            error: field_error(BasicsField::Provider),
+            locked: busy,
+        });
+        rows.push(FormRow::Field {
+            label: s.wiz_f_endpoint,
+            value: &endpoint_label,
+            placeholder: "",
+            hint: Some(&pick_hint),
+            cursor: None,
+            error: field_error(BasicsField::Endpoint),
+            locked: busy,
+        });
+        rows.push(FormRow::Field {
+            label: s.wiz_f_api_key,
+            value: &api_key_text,
+            placeholder: "",
+            hint: Some(&reveal_hint),
+            cursor: Some(api_key_cursor),
+            error: field_error(BasicsField::ApiKey),
+            locked: busy,
+        });
+        rows.push(FormRow::Field {
+            label: s.wiz_f_display_name,
+            value: &self.draft.display_name,
+            placeholder: "",
+            hint: None,
+            cursor: Some(display_name_cursor),
+            error: field_error(BasicsField::DisplayName),
+            locked: busy,
+        });
+        rows.push(FormRow::Spacer);
+        rows.push(FormRow::Button { label: if busy { s.wiz_creating } else { s.wiz_btn_next }, busy });
+
+        // 有说明行时整体后移 2 行 (Note + Spacer); Submit 前面还有一个 Spacer (下标 4), 按钮排在
+        // 它后面 (下标 5)。
+        let offset = if self.create_error.is_some() { 2 } else { 0 };
+        let focus = offset
+            + match self.focus {
+                BasicsField::Provider => 0,
+                BasicsField::Endpoint => 1,
+                BasicsField::ApiKey => 2,
+                BasicsField::DisplayName => 3,
+                BasicsField::Submit => 5,
+            };
+
+        let view = FormView { title: s.wiz_title, steps: Some((0, s.wiz_steps.as_slice())), rows: &rows, focus, tick };
+        // Task 8 会用这个返回值播 fx::field_err (校验失败时焦点一定落在出错的那一行)。
+        let _focus_rect = form::draw(frame, area, &view, theme, s);
     }
 
-    /// 用户已经填过东西 / 已经创建过订阅 —— `Esc` 要不要先确认看这个。P5 Task 2 恒 `false`
-    /// (还没有任何字段), Task 4 起填真实实现。
+    fn provider_label(&self) -> String {
+        self.providers.iter().find(|p| p.id == self.draft.provider_id).map(|p| p.display_name.clone()).unwrap_or_default()
+    }
+
+    fn endpoint_label(&self) -> String {
+        self.providers
+            .iter()
+            .find(|p| p.id == self.draft.provider_id)
+            .and_then(|p| p.endpoints.iter().find(|e| e.id == self.draft.endpoint_id))
+            .map(|e| e.label.clone())
+            .unwrap_or_default()
+    }
+
+    /// 底栏左侧。`Loading`/`LoadFailed`/`Creating` 没有任何可操作的字段 (`Creating` 整张表单
+    /// 只读), 留空; `Basics` 给出三条通用提示——具体是哪一行、这一刻能不能打字, 由表单自己的
+    /// 画法 (聚焦标记 / hint) 说明, 底栏只需要点出"能做什么"这三类操作。
+    pub fn hints(&self, s: &'static Strings) -> Vec<Hint<'static>> {
+        match &self.stage {
+            Stage::Loading | Stage::LoadFailed(_) | Stage::Creating => Vec::new(),
+            Stage::Basics => vec![("↑↓", s.key_field), ("⏎", s.key_pick), ("Ctrl+R", s.key_reveal)],
+        }
+    }
+
+    /// 用户已经填过东西 / 已经创建过订阅 —— `Esc` 要不要先确认看这个。`Basics` 下「厂商已选」
+    /// 或「API Key 非空」或「备注名非空」任一成立即为真 (用户填了一半按 `Esc` 不该直接丢掉);
+    /// `Creating` 恒真 (订阅可能已经在飞行中创建)。
     pub fn has_input(&self) -> bool {
-        false
+        match &self.stage {
+            Stage::Loading | Stage::LoadFailed(_) => false,
+            Stage::Basics => {
+                !self.draft.provider_id.is_empty() || !self.draft.api_key.is_empty() || !self.draft.display_name.trim().is_empty()
+            }
+            Stage::Creating => true,
+        }
     }
 
     /// 与页面同一套: `update()` 内部想弹 toast 就存这里, `App` 调用后轮询取走。
@@ -158,18 +517,14 @@ impl Wizard {
         std::mem::take(&mut self.close_request)
     }
 
-    /// 测试专用: 直接置位「向导想关闭自己」。P5 Task 2 的生产代码里没有任何路径会走到这里 (那要
-    /// 等 Task 4 的「创建成功」), 但 `App::update_wizard` 转发 `take_close_request()` 的逻辑必须
-    /// 现在就有测试盯着——写法照抄 `pages::logs::Logs::set_force_dirty`。
+    /// 测试专用: 直接置位「向导想关闭自己」。写法照抄 `pages::logs::Logs::set_force_dirty`。
     #[cfg(test)]
     pub fn request_close_for_test(&mut self) {
         self.close_request = true;
     }
 
-    /// 测试专用: 直接塞一条待发的 notice。P5 Task 2 的生产代码里同样没有任何路径会写
-    /// `self.notice` (那要等 Task 4 起「校验失败」之类的场景), 与 `request_close_for_test` 同一
-    /// 条理由——`App::update_wizard` 转发 `take_notice()` 的逻辑 (Review round 1) 需要一个能从
-    /// 外面戳进 notice 的入口。
+    /// 测试专用: 直接塞一条待发的 notice。`App::update_wizard` 转发 `take_notice()` 的逻辑
+    /// (Review round 1) 需要一个能从外面戳进 notice 的入口。
     #[cfg(test)]
     pub fn request_notice_for_test(&mut self, kind: ToastKind, text: impl Into<String>) {
         self.notice = Some((kind, text.into()));
@@ -209,7 +564,8 @@ mod tests {
         assert_eq!(w.handle_key(key(KeyCode::Esc), &crate::i18n::ZH), Some(Action::CloseWizard));
     }
 
-    /// 除 `Esc` 外的按键在这个骨架阶段一律被吞掉——没有任何字段可以接收字符输入。
+    /// 除 `Esc` 外的按键在 `Stage::Loading` 一律被吞掉——没有任何字段可以接收字符输入 (`Basics`
+    /// 起才有, 见 `wizard_basics_snapshot_80x24` 等 `tests/ui.rs` 里的用例)。
     #[test]
     fn other_keys_are_swallowed() {
         let mut w = Wizard::new();
@@ -226,7 +582,7 @@ mod tests {
         assert!(cmds.is_empty());
         assert!(w.take_notice().is_none());
         assert!(!w.take_close_request());
-        // 仍然按「没有输入」处理 (骨架阶段 has_input 恒 false), Esc 照常直接关闭。
+        // 进了 `Stage::Basics`, 但草稿还是空的 (`has_input()` 仍然为假), Esc 照常直接关闭。
         assert_eq!(w.handle_key(key(KeyCode::Esc), &crate::i18n::ZH), Some(Action::CloseWizard));
     }
 

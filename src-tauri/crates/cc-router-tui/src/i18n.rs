@@ -347,6 +347,46 @@ pub struct Strings {
     pub wiz_title: &'static str,
     pub wiz_loading_providers: &'static str,
     pub wiz_load_failed: fn(reason: &str) -> String,
+
+    // ---------- P5 Task 4: 向导第一步 (内置厂商: 选厂商 / 选接入点 / API Key / 备注名) ----------
+    /// 步骤条的两段文案 (含序号), `form::FormView::steps` 直接用。
+    pub wiz_steps: [&'static str; 2],
+    pub wiz_f_provider: &'static str,
+    pub wiz_f_endpoint: &'static str,
+    pub wiz_f_api_key: &'static str,
+    pub wiz_f_display_name: &'static str,
+    pub wiz_btn_next: &'static str,
+    pub wiz_pick_provider: &'static str,
+    pub wiz_pick_endpoint: &'static str,
+    /// 厂商还没选时按 `⏎` 打开接入点 picker 的拒绝提示。
+    pub wiz_pick_provider_first: &'static str,
+    /// OAuth 类厂商 (`chatgpt_oauth` / `kiro_oauth`, TUI 不做设备码流程) 选中时的提示; 同时也
+    /// 追加在厂商 picker 里这一项的 label 后面 (`label · wiz_desktop_only`)。
+    pub wiz_desktop_only: &'static str,
+    /// 自定义厂商条目选中后的占位提示 (Task 6 会把这一条换成真正的 `Stage::Custom`, 并删掉这个
+    /// 字段——见 `wizard/mod.rs::apply_provider_choice`)。
+    pub wiz_custom_todo: &'static str,
+    /// 5 个自定义协议条目的 label, 顺序与 `CustomProtocol::ALL` 一致。
+    pub wiz_custom_labels: [&'static str; 5],
+    pub wiz_err_api_key: &'static str,
+    pub wiz_err_display_name: &'static str,
+    pub wiz_err_provider: &'static str,
+    pub wiz_err_endpoint: &'static str,
+    /// `Stage::Creating` 时表单的按钮文案 (busy 态)。
+    pub wiz_creating: &'static str,
+    /// `create_subscription` 成功后的 notice 文案 (Task 4 临时关掉向导时用; Task 5 换成"接着拉
+    /// 模型列表"之后这条文案挪到保存槽位成功那一刻, 但字段本身继续用)。
+    pub wiz_created: fn(name: &str) -> String,
+    /// `create_subscription` 失败时挂在表单顶部的说明行 (`FormRow::Note`)。
+    pub wiz_create_failed: fn(reason: &str) -> String,
+    /// 向导表单底栏: `↑↓` 在字段间移动。
+    pub key_field: &'static str,
+    /// 向导表单底栏 / 选择行右端 hint: `⏎` 打开选择弹窗。
+    pub key_pick: &'static str,
+    /// 向导表单底栏 / API Key 行右端 hint: `Ctrl+R` 切换明文/掩码。
+    pub key_reveal: &'static str,
+    /// 表单内容超过可视高度、被截断时最后一行的提示。
+    pub form_more: &'static str,
 }
 
 impl Strings {
@@ -688,6 +728,36 @@ pub const ZH: Strings = Strings {
     wiz_title: "新建订阅",
     wiz_loading_providers: "正在获取厂商列表…",
     wiz_load_failed: |reason| format!("获取厂商列表失败: {reason}"),
+
+    wiz_steps: ["① 基本信息", "② 绑定模型"],
+    wiz_f_provider: "厂商",
+    wiz_f_endpoint: "接入点",
+    wiz_f_api_key: "API Key",
+    wiz_f_display_name: "备注名",
+    wiz_btn_next: "下一步",
+    wiz_pick_provider: "选择厂商",
+    wiz_pick_endpoint: "选择接入点",
+    wiz_pick_provider_first: "请先选择厂商",
+    wiz_desktop_only: "请在桌面端添加",
+    wiz_custom_todo: "自定义厂商下一步做",
+    wiz_custom_labels: [
+        "自定义 · Anthropic 兼容",
+        "自定义 · Gemini",
+        "自定义 · OpenAI Responses",
+        "自定义 · OpenAI Chat Completions",
+        "自定义 · Gemini Interactions",
+    ],
+    wiz_err_api_key: "API Key 不能为空",
+    wiz_err_display_name: "备注名不能为空",
+    wiz_err_provider: "请选择厂商",
+    wiz_err_endpoint: "请选择接入点",
+    wiz_creating: "正在创建订阅…",
+    wiz_created: |name| format!("已创建「{name}」"),
+    wiz_create_failed: |reason| format!("创建失败: {reason}"),
+    key_field: "字段",
+    key_pick: "选择",
+    key_reveal: "显示 / 隐藏",
+    form_more: "… 内容放不下",
 };
 
 pub fn strings(lang: Lang) -> &'static Strings {

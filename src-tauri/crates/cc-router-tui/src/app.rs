@@ -501,6 +501,13 @@ impl App {
                 }
             }
             Action::WizardDone(_) => self.update_wizard(&action),
+            // P5 Task 4: 向导表单提交按钮触发的请求。`handle_key` 已经校验并打包好 `WizardCmd`,
+            // 这里直接转成 `Cmd::Wizard`——跟上面 `OpenWizard` 直接调用 `wizard.on_open()` 是
+            // 同一条思路 (触发点是按键本身, 不经过 `Wizard::update()` 那条给结果用的路径)。理论上
+            // 只有 `Stage::Basics`(及以后 Slots/Custom)的 `handle_key` 才会产出这个 action, 但
+            // 即便向导已经不存在也无害地发出去——回来的 `WizardResult` 会在 `WizardDone` 分支被
+            // "没有向导就丢弃"接住, 不需要在这里再判一次 `self.wizard.is_some()`。
+            Action::WizardRequest(cmd) => vec![Cmd::Wizard(cmd)],
             Action::Tick { now_ms } => {
                 self.now_ms = now_ms;
                 self.tick += 1;

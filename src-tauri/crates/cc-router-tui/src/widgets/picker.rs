@@ -49,6 +49,11 @@ pub enum PickerTag {
     /// 日志页 (Task 8) 按订阅 / 虚拟模型 / 状态过滤; 与 `LiveFilter` 分开是因为可选值的形状不同
     /// (多了状态维度)。
     LogsFilter,
+    /// 向导第一步选厂商 (P5 Task 4)。不带实体 id: 向导只有一个, 不存在"结果落地时选中项已经
+    /// 变了"的问题 (`subscription_id()` 对它返回 `None`, 所以订阅列表刷新时不会误关它)。
+    WizardProvider,
+    /// 向导第一步选接入点 (P5 Task 4)。
+    WizardEndpoint,
 }
 
 impl PickerTag {
@@ -59,7 +64,11 @@ impl PickerTag {
     pub fn subscription_id(&self) -> Option<&str> {
         match self {
             PickerTag::SlotModel { sub_id, .. } | PickerTag::SlotEffort { sub_id, .. } => Some(sub_id.as_str()),
-            PickerTag::VmAddSubscription { .. } | PickerTag::LiveFilter | PickerTag::LogsFilter => None,
+            PickerTag::VmAddSubscription { .. }
+            | PickerTag::LiveFilter
+            | PickerTag::LogsFilter
+            | PickerTag::WizardProvider
+            | PickerTag::WizardEndpoint => None,
         }
     }
 }

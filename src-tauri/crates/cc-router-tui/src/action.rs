@@ -241,6 +241,15 @@ pub enum Action {
     CloseWizard,
     /// 一次向导请求的结果。没有向导时 (用户在结果回来之前就退出了) 直接丢弃。
     WizardDone(Box<WizardResult>),
+    /// 向导表单的提交类按钮 (Basics 的「下一步」、Task 5 的「保存」、Task 6 的「创建」/「探测」)
+    /// 校验通过时触发 (P5 Task 4 新增)。**`handle_key` 阶段就已经把 `WizardCmd` 打包好了**,
+    /// `App::update` 原样转成 `Cmd::Wizard`——跟 `Action::OpenWizard` 直接调用
+    /// `wizard.on_open()` 拿 `Cmd` 是同一条思路: 触发点是一次按键而不是收到的某个异步结果, 不需要
+    /// 也不该走 `Wizard::update()` 那条专给"结果"设计的路径 (那条路径靠 `WizardDone` 触发, 且
+    /// `update()` 的返回值语义是"这次 action 引出的新请求", 不适合用来表达"这次按键本身就是一个
+    /// 请求")。`Box`: `WizardCmd::Create`/`SaveSlots` 都带整块 `CreateInput`/`ModelSlots`, 同
+    /// `Cmd::Wizard` 一样提前装箱, 避免 `Action` 的每个变体都按最大的那个分配。
+    WizardRequest(Box<WizardCmd>),
     Refresh,
     /// 250ms 一次。`now_ms` 是 Unix 毫秒 —— 冷却倒计时要和后端给的 `cooldown_until` 比。
     Tick { now_ms: i64 },
