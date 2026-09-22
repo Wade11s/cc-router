@@ -332,14 +332,16 @@ impl Subscriptions {
                 self.draft.edit(&base, |d| d.slot_efforts.set(*slot, value));
             }
             // 跟订阅页无关的 tag (虚拟模型页的 `VmAddSubscription`、实时路由/日志页的过滤弹窗、
-            // P5 Task 4/5 起向导自己的选厂商/选接入点/选槽位模型) 直接忽略——订阅页压根不会打开
-            // 这些弹窗。
+            // P5 Task 4/5/6 起向导自己的选厂商/选接入点/选槽位模型/选协议/选鉴权方式) 直接忽略——
+            // 订阅页压根不会打开这些弹窗。
             PickerTag::VmAddSubscription { .. }
             | PickerTag::LiveFilter
             | PickerTag::LogsFilter
             | PickerTag::WizardProvider
             | PickerTag::WizardEndpoint
-            | PickerTag::WizardSlot { .. } => (),
+            | PickerTag::WizardSlot { .. }
+            | PickerTag::WizardProtocol
+            | PickerTag::WizardAuth => (),
         }
     }
 

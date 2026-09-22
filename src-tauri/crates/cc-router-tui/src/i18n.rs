@@ -363,10 +363,8 @@ pub struct Strings {
     /// OAuth 类厂商 (`chatgpt_oauth` / `kiro_oauth`, TUI 不做设备码流程) 选中时的提示; 同时也
     /// 追加在厂商 picker 里这一项的 label 后面 (`label · wiz_desktop_only`)。
     pub wiz_desktop_only: &'static str,
-    /// 自定义厂商条目选中后的占位提示 (Task 6 会把这一条换成真正的 `Stage::Custom`, 并删掉这个
-    /// 字段——见 `wizard/mod.rs::apply_provider_choice`)。
-    pub wiz_custom_todo: &'static str,
-    /// 5 个自定义协议条目的 label, 顺序与 `CustomProtocol::ALL` 一致。
+    /// 5 个自定义协议条目的 label, 顺序与 `CustomProtocol::ALL` 一致——既用于厂商 picker 里的
+    /// `custom:<protocol>` 条目, 也用于自定义表单自己的协议 picker (`wiz_pick_protocol`)。
     pub wiz_custom_labels: [&'static str; 5],
     pub wiz_err_api_key: &'static str,
     pub wiz_err_display_name: &'static str,
@@ -403,6 +401,30 @@ pub struct Strings {
     pub wiz_confirm_exit_pending: &'static str,
     /// `Stage::Saving` 的按钮文案 (busy 态)。
     pub wiz_saving: &'static str,
+
+    // ---------- P5 Task 6: 向导自定义厂商单页 (协议 / Base URL / 鉴权 / 探测) ----------
+    pub wiz_custom_title: &'static str,
+    pub wiz_f_protocol: &'static str,
+    pub wiz_f_provider_name: &'static str,
+    pub wiz_f_base_url: &'static str,
+    pub wiz_f_messages_path: &'static str,
+    pub wiz_f_auth: &'static str,
+    pub wiz_btn_probe: &'static str,
+    pub wiz_btn_create: &'static str,
+    pub wiz_pick_protocol: &'static str,
+    /// 只有 Anthropic (未锁定鉴权头) 才会打开这个 picker。
+    pub wiz_pick_auth: &'static str,
+    /// 与 `ANTHROPIC_AUTH_PRESETS` 顺序一致的两项 label。
+    pub wiz_auth_labels: [&'static str; 2],
+    pub wiz_err_provider_name: &'static str,
+    pub wiz_err_base_url_empty: &'static str,
+    pub wiz_err_base_url_scheme: &'static str,
+    /// 请求路径不以 `/` 开头 (所有协议共用)。
+    pub wiz_err_messages_path: &'static str,
+    /// 只有 `Gemini` (不含 `GeminiInteractions`) 要求请求路径含 `{model}`。
+    pub wiz_err_gemini_placeholder: &'static str,
+    /// `Stage::Probing` 的按钮文案 (busy 态)。
+    pub wiz_probing: &'static str,
 
     /// 向导表单底栏: `↑↓` 在字段间移动。
     pub key_field: &'static str,
@@ -768,7 +790,6 @@ pub const ZH: Strings = Strings {
     wiz_pick_endpoint: "选择接入点",
     wiz_pick_provider_first: "请先选择厂商",
     wiz_desktop_only: "请在桌面端添加",
-    wiz_custom_todo: "自定义厂商下一步做",
     wiz_custom_labels: [
         "自定义 · Anthropic 兼容",
         "自定义 · Gemini",
@@ -792,6 +813,24 @@ pub const ZH: Strings = Strings {
     wiz_err_slot: "请填写模型",
     wiz_confirm_exit_pending: "订阅已经创建, 但模型槽位还是 (pending)。退出向导? (稍后可以在订阅页设置)",
     wiz_saving: "正在保存…",
+
+    wiz_custom_title: "新建订阅 · 自定义",
+    wiz_f_protocol: "协议",
+    wiz_f_provider_name: "厂商名",
+    wiz_f_base_url: "Base URL",
+    wiz_f_messages_path: "请求路径",
+    wiz_f_auth: "鉴权",
+    wiz_btn_probe: "获取模型列表",
+    wiz_btn_create: "创建",
+    wiz_pick_protocol: "选择协议",
+    wiz_pick_auth: "选择鉴权方式",
+    wiz_auth_labels: ["Authorization: Bearer <key>", "x-api-key: <key>"],
+    wiz_err_provider_name: "请填写厂商名",
+    wiz_err_base_url_empty: "请填写 Base URL",
+    wiz_err_base_url_scheme: "Base URL 必须以 http:// 或 https:// 开头",
+    wiz_err_messages_path: "请求路径必须以 / 开头",
+    wiz_err_gemini_placeholder: "Gemini 的请求路径必须包含 {model}",
+    wiz_probing: "正在获取模型列表…",
 
     key_field: "字段",
     key_pick: "选择",

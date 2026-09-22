@@ -29,8 +29,11 @@
 //! 选厂商 → 选接入点 → 填 API Key → 备注名 → 下一步。**Task 5 加第二步** (绑定模型,
 //! `Stage::LoadingModels` / `Slots` / `Saving`)——创建成功后拉候选模型 → 五个槽位选模型 → 保存,
 //! 向导里**不**设置 reasoning effort (与 spec §5.4 的偏离, 见 `WizardCmd::SaveSlots` 的文档
-//! 注释: 四个槽全 auto, 用户创建完在订阅详情页按 `o` 就能改)。自定义厂商的单页表单
-//! (`Stage::Custom` / `Probing`) 留给 Task 6。
+//! 注释: 四个槽全 auto, 用户创建完在订阅详情页按 `o` 就能改)。**Task 6 加自定义厂商的单页表单**
+//! (`Stage::Custom` / `Probing`): 协议 / 厂商名 / Base URL / 请求路径 / 鉴权 / API Key / 备注名 /
+//! 五个槽位挤在同一屏, `Probe` 按钮探测模型 (不落库)、`Submit` 按钮一次创建 (槽位已经是真值,
+//! 不需要 Task 5 那样的第二步 `SaveSlots`)。`Stage::Creating` 被两条路径共用, `custom_draft` 是不是
+//! `Some` 就是分流判据 (两条路径互斥)。
 
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Rect};
@@ -43,7 +46,10 @@ use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
 use crate::action::{Action, Cmd, WizardCmd, WizardResult};
-use crate::client::dto::{CreateInput, CreateSource, CustomProtocol, ModelSlots, Provider, RefreshModelsResult, Slot};
+use crate::client::dto::{
+    AuthHeaderFormat, CreateInput, CreateSource, CustomProtocol, CustomSource, ModelSlots, ProbeInput, ProbeModelsResult, Provider,
+    RefreshModelsResult, Slot, ANTHROPIC_AUTH_PRESETS, CUSTOM_BASE_URL_PLACEHOLDER,
+};
 use crate::i18n::Strings;
 use crate::pages::subscriptions::slot_label;
 use crate::pages::DrawCtx;
@@ -57,7 +63,10 @@ use crate::widgets::spinner_state;
 use crate::widgets::toast::ToastKind;
 
 mod fields;
-use fields::{api_key_display, default_display_name, validate_basics, validate_slots, BasicsDraft, BasicsField, SlotsDraft, SlotsField};
+use fields::{
+    api_key_display, default_display_name, validate_basics, validate_custom, validate_slots, BasicsDraft, BasicsField, CustomDraft,
+    CustomField, ProbedModels, SlotsDraft, SlotsField,
+};
 
 /// 向导走到哪一步了。P5 Task 2 只有前两个, Task 4 加了 `Basics`/`Creating`, Task 5 加了
 /// `LoadingModels`/`Slots`/`Saving` (穷尽 `match`, 加了不接住就编译失败), Task 6 继续往里加
@@ -83,7 +92,16 @@ enum Stage {
     /// `SaveSlots` (只带 `model_slots` 的 patch, 向导不设置 effort) 在飞: 表单只读, 按钮转圈,
     /// 连 `Esc` 也吞掉 (同 `Creating`, 这个请求会落库)。
     Saving,
-    // Task 6: Custom / Probing
+    /// 自定义路径单页表单: 协议 / 厂商名 / Base URL / 请求路径 / 鉴权 / API Key / 备注名 / 五个
+    /// 槽位。`custom_draft` 恒为 `Some` (由 `apply_provider_choice` 保证)。`Stage::Creating` 与
+    /// 内置路径共用 (`custom_draft.is_some()` 是分流判据), 但这一步与下面的 `Probing` 只属于这
+    /// 条路径。
+    Custom,
+    /// `probe_custom_models` 在飞: 表单只读, `Probe` 按钮转圈。这是**只读请求**——`Esc` 可用
+    /// (`can_cancel()` 天然为真, 它不在 `Creating | Saving` 集合里), 按 `has_input()`(自定义
+    /// 路径恒真) 弹 `confirm_discard`(不是 `wiz_confirm_exit_pending`——创建之前什么都没落库,
+    /// 见评审裁决第 3 条)。
+    Probing,
 }
 
 pub struct Wizard {
@@ -124,6 +142,28 @@ pub struct Wizard {
     slots_focus: SlotsField,
     /// 槽位校验失败的字段与原因; `Save` 按下但没通过时写入, 与 `field_error` 同一条道理。
     slot_error: Option<(Slot, &'static str)>,
+    /// `Stage::Custom` 的草稿; `None` 直到用户从厂商 picker 选中一个 `custom:<protocol>` 条目。
+    /// **是否处于自定义路径由它是不是 `Some` 判定**(`Stage::Creating` 的分流依据同样是这个,
+    /// `apply_slot_choice` 该写回哪一份草稿也是这个)。
+    custom_draft: Option<CustomDraft>,
+    /// 当前聚焦的自定义表单字段; 只在 `custom_draft` 为 `Some` 时有意义, `apply_provider_choice`
+    /// 进 `Stage::Custom` 时重置成 `CustomField::ProviderName`。
+    custom_focus: CustomField,
+    /// 厂商名输入框的编辑状态, `custom_draft.provider_display_name` 是它的 `String` 投影。
+    provider_name_input: Input,
+    /// Base URL 输入框; `custom_draft.base_url` 是它的投影。
+    base_url_input: Input,
+    /// 请求路径输入框; `custom_draft.messages_path` 是它的投影。
+    messages_path_input: Input,
+    /// 自定义表单的 API Key 输入框, 与 `Basics` 的 `api_key_input` 分开——两条路径互斥, 但分开
+    /// 字段更清楚, 不必在切路径时清空共用状态。
+    custom_api_key_input: Input,
+    /// 自定义表单的备注名输入框, 理由同上。
+    custom_display_name_input: Input,
+    /// 自定义表单 API Key 行是否显示明文, 与 `reveal_api_key` 分开的理由同上。
+    reveal_custom_api_key: bool,
+    /// 自定义表单校验失败的字段与原因, 与 `field_error`/`slot_error` 同一条道理。
+    custom_field_error: Option<(CustomField, &'static str)>,
 }
 
 // clippy::new_without_default: `App`/页面构造函数都带参数, 没有这条先例——`Wizard::new()` 恰好是
@@ -153,6 +193,15 @@ impl Wizard {
             slots_draft: SlotsDraft::default(),
             slots_focus: SlotsField::Row(Slot::Fable),
             slot_error: None,
+            custom_draft: None,
+            custom_focus: CustomField::ProviderName,
+            provider_name_input: Input::default(),
+            base_url_input: Input::default(),
+            messages_path_input: Input::default(),
+            custom_api_key_input: Input::default(),
+            custom_display_name_input: Input::default(),
+            reveal_custom_api_key: false,
+            custom_field_error: None,
         }
     }
 
@@ -180,6 +229,8 @@ impl Wizard {
             self.handle_basics_key(key, s)
         } else if matches!(self.stage, Stage::Slots) {
             self.handle_slots_key(key, s)
+        } else if matches!(self.stage, Stage::Custom) {
+            self.handle_custom_key(key, s)
         } else {
             None
         }
@@ -290,6 +341,284 @@ impl Wizard {
         }
     }
 
+    /// `Stage::Custom` 的按键表 (总规则同 `Basics`/`Slots`): `↑`/`↓`/`Tab`/`BackTab` 在
+    /// [`CustomField::all`] 给出的可聚焦字段间移动 (`Auth` 锁定时被排除); `Protocol`/未锁定时的
+    /// `Auth` 是选择行, `⏎` 开对应 picker; `ProviderName`/`BaseUrl`/`MessagesPath`/`ApiKey`/
+    /// `DisplayName` 是文本行, 直接打字、`⏎` 移到下一行, `ApiKey` 额外认 `Ctrl+R`; `Probe`/
+    /// `Submit` 是按钮行, `⏎` 触发对应请求; 槽位行 `⏎` 开模型 picker。`custom_draft` 是 `None`
+    /// 时 (理论不该发生, `Stage::Custom` 只由 `apply_provider_choice` 设置且同时写好
+    /// `custom_draft`) 防御性地什么都不做。
+    fn handle_custom_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
+        let locked = self.custom_draft.as_ref()?.protocol.auth_locked();
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Up | KeyCode::BackTab => {
+                self.move_custom_focus(-1);
+                None
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                self.move_custom_focus(1);
+                None
+            }
+            KeyCode::Enter => match self.custom_focus {
+                CustomField::Protocol => Some(self.open_protocol_picker(s)),
+                CustomField::Auth if !locked => Some(self.open_auth_picker(s)),
+                // 锁定态理论上不会被聚焦到 (`CustomField::all` 已经把它排除在导航列表之外), 但
+                // `⏎` 落在这里防御性地吞掉, 不做任何事。
+                CustomField::Auth => None,
+                CustomField::ProviderName | CustomField::BaseUrl | CustomField::MessagesPath | CustomField::ApiKey | CustomField::DisplayName => {
+                    self.move_custom_focus(1);
+                    None
+                }
+                CustomField::Probe => self.submit_probe(s),
+                CustomField::Slot(slot) => Some(self.open_custom_slot_picker(slot, s)),
+                CustomField::Submit => self.submit_custom(s),
+            },
+            // 必须排在下面的打字分支之前, 同 `handle_basics_key` 的 Ctrl+R 分支——否则会被
+            // `ApiKey` 的编辑分支当成字符 'r' 吃掉。
+            KeyCode::Char('r') if ctrl && self.custom_focus == CustomField::ApiKey => {
+                self.reveal_custom_api_key = !self.reveal_custom_api_key;
+                None
+            }
+            _ if self.custom_focus == CustomField::ProviderName => {
+                self.edit_custom_provider_name(key);
+                None
+            }
+            _ if self.custom_focus == CustomField::BaseUrl => {
+                self.edit_custom_base_url(key);
+                None
+            }
+            _ if self.custom_focus == CustomField::MessagesPath => {
+                self.edit_custom_messages_path(key);
+                None
+            }
+            _ if self.custom_focus == CustomField::ApiKey => {
+                self.edit_custom_api_key(key);
+                None
+            }
+            _ if self.custom_focus == CustomField::DisplayName => {
+                self.edit_custom_display_name(key);
+                None
+            }
+            // 选择行 (`Protocol`/`Auth`) 与按钮行 (`Probe`/`Submit`/槽位行) 上除了上面已经接住的
+            // `⏎`, 其余按键一律吞掉——"选择行不能直接打字"。
+            _ => None,
+        }
+    }
+
+    fn move_custom_focus(&mut self, delta: isize) {
+        let Some(draft) = &self.custom_draft else { return };
+        let all = CustomField::all(draft.protocol.auth_locked());
+        let idx = all.iter().position(|f| *f == self.custom_focus).unwrap_or(0);
+        let next = (idx as isize + delta).clamp(0, all.len() as isize - 1) as usize;
+        self.custom_focus = all[next];
+    }
+
+    /// 换协议之后, 若当前焦点恰好停在刚被锁定的 `Auth` 行 (少见: 焦点停在 Auth 行时重新打开
+    /// 协议 picker 并选中一个锁定协议), 挪到相邻的 `ApiKey` 行——避免焦点停在一个再也进不了
+    /// `move_custom_focus` 导航列表的字段上。
+    fn clamp_custom_focus(&mut self) {
+        let Some(draft) = &self.custom_draft else { return };
+        if self.custom_focus == CustomField::Auth && draft.protocol.auth_locked() {
+            self.custom_focus = CustomField::ApiKey;
+        }
+    }
+
+    /// 与 `clear_field_error`/`clear_slot_error` 同一条道理, 作用于 `Stage::Custom` 自己的校验
+    /// 错误。
+    fn clear_custom_field_error(&mut self, field: CustomField) {
+        if self.custom_field_error.is_some_and(|(f, _)| f == field) {
+            self.custom_field_error = None;
+        }
+    }
+
+    fn edit_custom_provider_name(&mut self, key: KeyEvent) {
+        if self.provider_name_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
+            if let Some(draft) = &mut self.custom_draft {
+                draft.provider_display_name = self.provider_name_input.value().to_string();
+            }
+            self.clear_custom_field_error(CustomField::ProviderName);
+        }
+    }
+
+    /// 编辑 Base URL **不清 `probe`**(评审裁决第 7 条)——`CustomDraft::models_url()` 自己按值
+    /// 比对, 编辑时提前清空反而会丢掉"改回去又生效"这条桌面端行为; 只有换协议
+    /// (`apply_protocol_choice`) 才清。
+    fn edit_custom_base_url(&mut self, key: KeyEvent) {
+        if self.base_url_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
+            if let Some(draft) = &mut self.custom_draft {
+                draft.base_url = self.base_url_input.value().to_string();
+            }
+            self.clear_custom_field_error(CustomField::BaseUrl);
+        }
+    }
+
+    fn edit_custom_messages_path(&mut self, key: KeyEvent) {
+        if self.messages_path_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
+            if let Some(draft) = &mut self.custom_draft {
+                draft.messages_path = self.messages_path_input.value().to_string();
+            }
+            self.clear_custom_field_error(CustomField::MessagesPath);
+        }
+    }
+
+    fn edit_custom_api_key(&mut self, key: KeyEvent) {
+        if self.custom_api_key_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
+            if let Some(draft) = &mut self.custom_draft {
+                draft.api_key = Secret::new(self.custom_api_key_input.value());
+            }
+            self.clear_custom_field_error(CustomField::ApiKey);
+        }
+    }
+
+    fn edit_custom_display_name(&mut self, key: KeyEvent) {
+        if self.custom_display_name_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
+            if let Some(draft) = &mut self.custom_draft {
+                draft.display_name = self.custom_display_name_input.value().to_string();
+            }
+            self.clear_custom_field_error(CustomField::DisplayName);
+        }
+    }
+
+    /// `Protocol` 行 `⏎`: 5 项, label 复用厂商 picker 里那份 `wiz_custom_labels`(与 Step 1 选择
+    /// `custom:<protocol>` 条目时看到的文案一致)。
+    fn open_protocol_picker(&self, s: &'static Strings) -> Action {
+        let current = self.custom_draft.as_ref().map(|d| d.protocol.as_wire().to_string()).unwrap_or_default();
+        let items = CustomProtocol::ALL
+            .iter()
+            .zip(s.wiz_custom_labels.iter())
+            .map(|(p, label)| PickerItem { id: p.as_wire().to_string(), label: (*label).to_string(), hint: None })
+            .collect();
+        Action::OpenPicker(PickerSpec {
+            tag: PickerTag::WizardProtocol,
+            title: s.wiz_pick_protocol.to_string(),
+            items,
+            allow_custom: false,
+            initial: current,
+        })
+    }
+
+    /// `Auth` 行 `⏎` (只有 Anthropic 未锁定鉴权头时才会被派发到这里): `ANTHROPIC_AUTH_PRESETS`
+    /// 两项, id 用头名本身当唯一标识 (两个预设的头名不同, 天然唯一)。
+    fn open_auth_picker(&self, s: &'static Strings) -> Action {
+        let current = self.custom_draft.as_ref().map(|d| d.auth_header_name.clone()).unwrap_or_default();
+        let items = ANTHROPIC_AUTH_PRESETS
+            .iter()
+            .zip(s.wiz_auth_labels.iter())
+            .map(|((header, _format), label)| PickerItem { id: (*header).to_string(), label: (*label).to_string(), hint: None })
+            .collect();
+        Action::OpenPicker(PickerSpec { tag: PickerTag::WizardAuth, title: s.wiz_pick_auth.to_string(), items, allow_custom: false, initial: current })
+    }
+
+    /// 槽位行 `⏎`: 与 Task 5 完全同一套 `PickerTag::WizardSlot`(`apply_slot_choice` 按
+    /// `custom_draft` 是不是 `Some` 分流写回哪一份草稿), 候选来自 `custom_draft.slots.models`
+    /// (探测到的模型; 探测前 / 探测失败时为空, 引导手输)——自定义厂商没有 `example_models` 这个
+    /// 概念, 候选为空时不像 `open_slot_picker` 那样还有厂商兜底可退。
+    fn open_custom_slot_picker(&self, slot: Slot, s: &'static Strings) -> Action {
+        let (models, initial) = match &self.custom_draft {
+            Some(draft) => (draft.slots.models.clone(), draft.slots.slots.get(slot).to_string()),
+            None => (Vec::new(), String::new()),
+        };
+        let mut items = Vec::new();
+        if slot == Slot::Fallback {
+            items.push(PickerItem { id: String::new(), label: s.pick_clear_fallback.to_string(), hint: None });
+        }
+        items.extend(models.iter().map(|m| PickerItem { id: m.id.clone(), label: m.id.clone(), hint: m.display_name.clone() }));
+        Action::OpenPicker(PickerSpec {
+            tag: PickerTag::WizardSlot { slot },
+            title: (s.wiz_pick_model)(slot_label(slot, s)),
+            items,
+            allow_custom: true,
+            initial,
+        })
+    }
+
+    /// 换协议: 重置连接相关字段的草稿与对应的 `Input`(与草稿保持同步, 见 `provider_name_input`
+    /// 等字段的文档注释), 清掉这三个字段自己的校验错误 (评审 M3 同一条道理——被 `apply_protocol`
+    /// 重写的字段等同于被"编辑"过), 再 `clamp_custom_focus` 防止焦点悬空。
+    fn apply_protocol_choice(&mut self, choice: &PickerChoice) {
+        let PickerChoice::Item(id) = choice else { return };
+        let Some(protocol) = CustomProtocol::ALL.iter().find(|p| p.as_wire() == id).copied() else { return };
+        let Some(draft) = &mut self.custom_draft else { return };
+        draft.apply_protocol(protocol);
+        self.base_url_input = Input::new(draft.base_url.clone());
+        self.messages_path_input = Input::new(draft.messages_path.clone());
+        self.clear_custom_field_error(CustomField::BaseUrl);
+        self.clear_custom_field_error(CustomField::MessagesPath);
+        self.clear_custom_field_error(CustomField::Auth);
+        self.clamp_custom_focus();
+    }
+
+    fn apply_auth_choice(&mut self, choice: &PickerChoice) {
+        let PickerChoice::Item(id) = choice else { return };
+        let Some((header, format)) = ANTHROPIC_AUTH_PRESETS.iter().find(|entry| entry.0 == id.as_str()) else { return };
+        if let Some(draft) = &mut self.custom_draft {
+            draft.auth_header_name = (*header).to_string();
+            draft.auth_header_format = *format;
+        }
+        self.clear_custom_field_error(CustomField::Auth);
+    }
+
+    /// `Probe` 行 `⏎`: 只校验 `base_url` 非空 + API Key 非空 (与桌面端一致, 其余字段这一步不
+    /// 校验), 通过则打包 `WizardCmd::Probe` 并进 `Stage::Probing`。
+    fn submit_probe(&mut self, s: &'static Strings) -> Option<Action> {
+        let draft = self.custom_draft.as_ref()?;
+        if draft.base_url.trim().is_empty() {
+            self.custom_focus = CustomField::BaseUrl;
+            self.custom_field_error = Some((CustomField::BaseUrl, s.wiz_err_base_url_empty));
+            return None;
+        }
+        if draft.api_key.is_empty() {
+            self.custom_focus = CustomField::ApiKey;
+            self.custom_field_error = Some((CustomField::ApiKey, s.wiz_err_api_key));
+            return None;
+        }
+        self.custom_field_error = None;
+        let cmd = WizardCmd::Probe(ProbeInput {
+            base_url: draft.base_url.trim().to_string(),
+            auth_header_name: draft.auth_header_name.clone(),
+            auth_header_format: draft.auth_header_format,
+            api_key: draft.api_key.clone(),
+            protocol: draft.protocol,
+        });
+        self.stage = Stage::Probing;
+        Some(Action::WizardRequest(Box::new(cmd)))
+    }
+
+    /// `Submit`(「创建」) 行 `⏎`: `validate_custom` 失败则把焦点移到那个字段并挂错误 (与
+    /// `submit`/`submit_slots` 同一条道理); 通过则打包 `WizardCmd::Create`——`model_slots` 是
+    /// 真实选值 (不是 `ModelSlots::pending()`, `validate_custom` 已经保证四个核心槽非空),
+    /// `models_url` 由 `CustomDraft::models_url()` 按"探测后 base_url 没再改过"这条规则算。
+    fn submit_custom(&mut self, s: &'static Strings) -> Option<Action> {
+        let draft = self.custom_draft.as_ref()?;
+        match validate_custom(draft, s) {
+            Some((field, message)) => {
+                self.custom_focus = field;
+                self.custom_field_error = Some((field, message));
+                None
+            }
+            None => {
+                self.custom_field_error = None;
+                let cmd = WizardCmd::Create(CreateInput {
+                    display_name: draft.display_name.clone(),
+                    api_key: draft.api_key.clone(),
+                    model_slots: draft.slots.slots.clone(),
+                    source: CreateSource::Custom(Box::new(CustomSource {
+                        provider_display_name: draft.provider_display_name.clone(),
+                        base_url: draft.base_url.trim().to_string(),
+                        messages_path: draft.messages_path.trim().to_string(),
+                        auth_header_name: draft.auth_header_name.clone(),
+                        auth_header_format: draft.auth_header_format,
+                        protocol: draft.protocol,
+                        models_url: draft.models_url().map(str::to_string),
+                    })),
+                });
+                self.stage = Stage::Creating;
+                Some(Action::WizardRequest(Box::new(cmd)))
+            }
+        }
+    }
+
     /// `Provider` 行 `⏎`: 条目是全部厂商 + 5 个自定义协议。OAuth 类厂商 (TUI 不做设备码流程)
     /// 的 label 后面追加提示语, picker 本身没有"置灰不可选"的能力, 选中时用「可选但选了只给
     /// 提示」等效 (`apply_provider_choice` 里判断)。
@@ -362,14 +691,16 @@ impl Wizard {
         })
     }
 
-    /// `Action::PickerDone` 落地: 按 `tag` 分派给厂商 / 接入点 / 槽位三条分支; 跟向导无关的 tag
-    /// (其它页面自己的弹窗) 直接忽略——**穷尽 `match`**, 新增 `PickerTag` 变体时这里会编译失败,
-    /// 逼着显式决定向导要不要关心它。
+    /// `Action::PickerDone` 落地: 按 `tag` 分派给厂商 / 接入点 / 槽位 / 协议 / 鉴权方式五条分支;
+    /// 跟向导无关的 tag (其它页面自己的弹窗) 直接忽略——**穷尽 `match`**, 新增 `PickerTag` 变体时
+    /// 这里会编译失败, 逼着显式决定向导要不要关心它。
     fn apply_picker_choice(&mut self, tag: &PickerTag, choice: &PickerChoice, store: &Store, s: &'static Strings) {
         match tag {
             PickerTag::WizardProvider => self.apply_provider_choice(choice, store, s),
             PickerTag::WizardEndpoint => self.apply_endpoint_choice(choice),
             PickerTag::WizardSlot { slot } => self.apply_slot_choice(*slot, choice),
+            PickerTag::WizardProtocol => self.apply_protocol_choice(choice),
+            PickerTag::WizardAuth => self.apply_auth_choice(choice),
             PickerTag::SlotModel { .. }
             | PickerTag::SlotEffort { .. }
             | PickerTag::VmAddSubscription { .. }
@@ -382,15 +713,25 @@ impl Wizard {
     /// `display_name` 若为空**或**等于上一次自动生成的值则重算, 焦点移到 `ApiKey`。**重选同一个
     /// 厂商 (评审 M2) 什么都不重算**——接入点/备注名/焦点原样保留, 否则用户手动把接入点从默认值
     /// 改成别的、又不小心在厂商行按了 `⏎` 确认同一个厂商, 接入点会被悄悄弹回默认值, 用户毫无
-    /// 察觉。选中自定义条目 → 进 Task 6 的 `Stage::Custom` (本 Task 先弹一条 `wiz_custom_todo`
-    /// 的 Info toast 占位, Task 6 替换掉这一行并删掉这个字段)。选中 OAuth 厂商 → 不设值, 只弹
-    /// `wiz_desktop_only`。
+    /// 察觉。选中自定义条目 (P5 Task 6) → 构造一份全新 `CustomDraft`(`CustomDraft::new` 已经按
+    /// 协议预设填好连接字段), 重置对应的 `Input`, 焦点落在 `ProviderName`, 进 `Stage::Custom`。
+    /// 选中 OAuth 厂商 → 不设值, 只弹 `wiz_desktop_only`。
     fn apply_provider_choice(&mut self, choice: &PickerChoice, store: &Store, s: &'static Strings) {
         // `allow_custom: false`: picker 理论上不会产出 `Custom`, 防御性地忽略。
         let PickerChoice::Item(id) = choice else { return };
         if let Some(wire) = id.strip_prefix("custom:") {
-            let _ = wire; // Task 6 会解析回 `CustomProtocol` 并进 `Stage::Custom`; 本 Task 只占位。
-            self.notice = Some((ToastKind::Info, s.wiz_custom_todo.to_string()));
+            let Some(protocol) = CustomProtocol::ALL.iter().find(|p| p.as_wire() == wire).copied() else { return };
+            let draft = CustomDraft::new(protocol);
+            self.provider_name_input = Input::default();
+            self.base_url_input = Input::new(draft.base_url.clone());
+            self.messages_path_input = Input::new(draft.messages_path.clone());
+            self.custom_api_key_input = Input::default();
+            self.custom_display_name_input = Input::default();
+            self.reveal_custom_api_key = false;
+            self.custom_field_error = None;
+            self.custom_draft = Some(draft);
+            self.custom_focus = CustomField::ProviderName;
+            self.stage = Stage::Custom;
             return;
         }
         let Some(provider) = self.providers.iter().find(|p| &p.id == id) else { return };
@@ -434,14 +775,23 @@ impl Wizard {
 
     /// 兜底槽的「清空」项 (`id: ""`) 与其它槽位的正常选值走同一条路径: 写回空串本来就是它的语义
     /// (未配置), 不需要特殊分支。自定义输入 (`Custom`) `trim` 一下, 与订阅详情页 `open_model_picker`
-    /// 那条路径同规则。
+    /// 那条路径同规则。**P5 Task 6 起按 `custom_draft` 是不是 `Some` 分流写回哪一份草稿**——
+    /// `Stage::Slots`(内置路径) 与 `Stage::Custom`(自定义路径) 共用同一个 `PickerTag::WizardSlot`
+    /// (见 `open_custom_slot_picker` 的文档注释), 但落地的存储位置不同 (`self.slots_draft` vs
+    /// `self.custom_draft.slots`); 两条路径互斥 (`custom_draft` 只在自定义路径下是 `Some`), 这个
+    /// 判据是安全的。
     fn apply_slot_choice(&mut self, slot: Slot, choice: &PickerChoice) {
         let value = match choice {
             PickerChoice::Item(id) => id.clone(),
             PickerChoice::Custom(text) => text.trim().to_string(),
         };
-        self.slots_draft.slots.set(slot, value);
-        self.clear_slot_error(slot);
+        if let Some(draft) = &mut self.custom_draft {
+            draft.slots.slots.set(slot, value);
+            self.clear_custom_field_error(CustomField::Slot(slot));
+        } else {
+            self.slots_draft.slots.set(slot, value);
+            self.clear_slot_error(slot);
+        }
     }
 
     /// `Submit` 行 `⏎`: 先 `validate_basics`, 失败则把焦点移到那个字段、把 `error` 挂上去 (Task 8
@@ -512,24 +862,28 @@ impl Wizard {
     /// **刻意写成穷尽 `match`, 不用 `_` 兜底、也不用任何 `#[allow]`**: `WizardResult` 每加一个新
     /// 变体, 这里就必须显式接一条臂——哪怕暂时只是空臂 `=> {}`——否则编译期就 `E0004` 失败。
     ///
-    /// **每个结果只在发起它的那个阶段被接受, 其余一律丢弃** (Task 5 评审): 向导同一时刻最多一个
-    /// 请求在飞, 按 `self.stage` 判就够, 不需要 `Fetch` 那套 `issued` 序号。`Providers` 只认
-    /// `Stage::Loading`; `Created` 只认 `Stage::Creating`; `Models` 只认 `Stage::LoadingModels`;
-    /// `SlotsSaved` 只认 `Stage::Saving`; `Probed` 留给 Task 6 引入 `Stage::Probing` 时接上同样
-    /// 的守卫, 现在保持空臂 (`WizardCmd::Probe` 目前没有任何调用点会真的发出这个请求)。**不这样
-    /// 做的失败场景**: 按 `n` 打开向导 → 厂商列表还没回来就 `Esc` → 再按 `n` 重开; 旧的
-    /// `Providers` 结果晚到时, 如果不管阶段直接接受, 会把已经走到 `Slots` 的表单打回
-    /// `Basics`——`self.providers` 也被换成旧的那一份, 草稿里的 `provider_id` 可能已经不在这份
-    /// 新列表里。`Created`/`Models`/`SlotsSaved` 同理: 晚到的 `Created` 会覆盖已经在用的
-    /// `created_id` 并再发一次 `LoadModels`; 晚到的 `Models` 会在 `created_id` 还是 `None` 时
-    /// 把表单带进 `Slots`, 保存时变成无声的空操作; 晚到的 `SlotsSaved` 会在错误的阶段关掉向导或
-    /// 弹一条不该出现的 toast。
+    /// **每个结果只在发起它的那个阶段被接受, 其余一律丢弃** (Task 5 评审, Task 6 给 `Probed` 补上
+    /// 同一条守卫): 向导同一时刻最多一个请求在飞, 按 `self.stage` 判就够, 不需要 `Fetch` 那套
+    /// `issued` 序号。`Providers` 只认 `Stage::Loading`; `Created` 只认 `Stage::Creating`;
+    /// `Models` 只认 `Stage::LoadingModels`; `SlotsSaved` 只认 `Stage::Saving`; `Probed` 只认
+    /// `Stage::Probing`。**不这样做的失败场景**: 按 `n` 打开向导 → 厂商列表还没回来就 `Esc` →
+    /// 再按 `n` 重开; 旧的 `Providers` 结果晚到时, 如果不管阶段直接接受, 会把已经走到 `Slots` 的
+    /// 表单打回 `Basics`——`self.providers` 也被换成旧的那一份, 草稿里的 `provider_id` 可能已经
+    /// 不在这份新列表里。`Created`/`Models`/`SlotsSaved`/`Probed` 同理: 晚到的 `Created` 会覆盖
+    /// 已经在用的 `created_id` 并再发一次 `LoadModels`; 晚到的 `Models` 会在 `created_id` 还是
+    /// `None` 时把表单带进 `Slots`, 保存时变成无声的空操作; 晚到的 `SlotsSaved` 会在错误的阶段
+    /// 关掉向导或弹一条不该出现的 toast; 晚到的 `Probed` 会把过期的候选模型塞进当前 (可能早已
+    /// 不是同一次探测发起的) 表单。
     ///
-    /// `Providers` 成功后转进 `Stage::Basics`; `Created(Ok)` 记下 id, 发 `LoadModels`, 进
-    /// `Stage::LoadingModels` (不再是"停在 `Creating` 换按钮文案"); `Created(Err)` 回 `Basics`
-    /// 并挂说明行; `Models` 的两个 `Ok` 分支 (`Auto`/`ManualFallback`) 与 `Err` 都进
-    /// `Stage::Slots`, 区别只在有没有候选、有没有说明行; `SlotsSaved(Ok)` 关掉向导 + Success
-    /// toast, `SlotsSaved(Err)` 回 `Slots` 并挂说明行。
+    /// `Providers` 成功后转进 `Stage::Basics`; `Created(Ok)` 按 `custom_draft` 是不是 `Some`
+    /// 分流 (P5 Task 6, `Stage::Creating` 被两条路径共用)——内置路径记下 id、发 `LoadModels`、进
+    /// `Stage::LoadingModels` (不再是"停在 `Creating` 换按钮文案"); 自定义路径槽位此刻已经是
+    /// 真值, 直接关向导 + Success toast, **不**发 `LoadModels`/`SaveSlots`。`Created(Err)` 同样
+    /// 按路径分流: 内置回 `Basics`, 自定义回 `Stage::Custom`, 都挂 `wiz_create_failed` 说明行。
+    /// `Models` 的两个 `Ok` 分支 (`Auto`/`ManualFallback`) 与 `Err` 都进 `Stage::Slots`, 区别只在
+    /// 有没有候选、有没有说明行; `Probed` 三个分支都回 `Stage::Custom`、焦点落在 `Slot(Fable)`,
+    /// 区别同样只在有没有候选、有没有说明行 (`Auto` 额外记下 `ProbedModels` 供 `models_url()`
+    /// 使用); `SlotsSaved(Ok)` 关掉向导 + Success toast, `SlotsSaved(Err)` 回 `Slots` 并挂说明行。
     fn apply_wizard_result(&mut self, result: &WizardResult, s: &'static Strings) -> Vec<Cmd> {
         match result {
             WizardResult::Providers(inner) => {
@@ -547,6 +901,25 @@ impl Wizard {
             }
             WizardResult::Created(inner) => {
                 if !matches!(self.stage, Stage::Creating) {
+                    return Vec::new();
+                }
+                // P5 Task 6: `Stage::Creating` 被两条路径共用, 用 `custom_draft` 是不是 `Some`
+                // 分流——只有自定义路径会设置它 (`apply_provider_choice` 进 `Stage::Custom` 时
+                // 写, 全程不清空, `Stage::Creating` 期间照样是 `Some`)。
+                if self.custom_draft.is_some() {
+                    match inner {
+                        Ok(_created) => {
+                            let name = self.custom_draft.as_ref().map(|d| d.display_name.clone()).unwrap_or_default();
+                            self.notice = Some((ToastKind::Success, (s.wiz_created)(&name)));
+                            self.close_request = true;
+                        }
+                        Err(e) => {
+                            self.stage = Stage::Custom;
+                            if let Some(draft) = &mut self.custom_draft {
+                                draft.slots.note = Some((s.wiz_create_failed)(e));
+                            }
+                        }
+                    }
                     return Vec::new();
                 }
                 match inner {
@@ -585,7 +958,34 @@ impl Wizard {
                     Err(e) => self.enter_slots_with_note((s.wiz_models_manual)(e)),
                 }
             }
-            WizardResult::Probed(_) => Vec::new(),
+            WizardResult::Probed(inner) => {
+                if !matches!(self.stage, Stage::Probing) {
+                    return Vec::new();
+                }
+                let Some(draft) = &mut self.custom_draft else { return Vec::new() };
+                match inner {
+                    Ok(ProbeModelsResult::Auto { models, models_url }) => {
+                        draft.slots.models = models.clone();
+                        draft.slots.note = None;
+                        // 不自动预填槽位 (与桌面端一致): 自定义中转的模型名千差万别, 猜错不如
+                        // 留空, 与 Task 5 内置路径"有候选就预填四个核心槽"故意不同。
+                        draft.probe = Some(ProbedModels { base_url: draft.base_url.trim().to_string(), models_url: models_url.clone() });
+                    }
+                    Ok(ProbeModelsResult::ManualFallback { reason }) => {
+                        draft.slots.models = Vec::new();
+                        draft.probe = None;
+                        draft.slots.note = Some((s.wiz_models_manual)(reason));
+                    }
+                    Err(e) => {
+                        draft.slots.models = Vec::new();
+                        draft.probe = None;
+                        draft.slots.note = Some((s.wiz_models_manual)(e));
+                    }
+                }
+                self.custom_focus = CustomField::Slot(Slot::Fable);
+                self.stage = Stage::Custom;
+                Vec::new()
+            }
             WizardResult::SlotsSaved(inner) => {
                 if !matches!(self.stage, Stage::Saving) {
                     return Vec::new();
@@ -643,10 +1043,20 @@ impl Wizard {
                 Self::draw_placeholder(frame, area, theme, s, line);
             }
             Stage::Basics => self.draw_basics(frame, area, theme, s, ctx.tick, popup_open),
-            Stage::Creating => self.draw_basics(frame, area, theme, s, ctx.tick, popup_open),
+            // `Stage::Creating` 被两条路径共用 (P5 Task 6): `custom_draft` 是不是 `Some` 决定画
+            // 哪张表单——与 `apply_wizard_result` 的 `Created` 分流用的是同一个判据。
+            Stage::Creating => {
+                if self.custom_draft.is_some() {
+                    self.draw_custom(frame, area, theme, s, ctx.tick, popup_open);
+                } else {
+                    self.draw_basics(frame, area, theme, s, ctx.tick, popup_open);
+                }
+            }
             Stage::LoadingModels => self.draw_basics(frame, area, theme, s, ctx.tick, popup_open),
             Stage::Slots => self.draw_slots(frame, area, theme, s, ctx.tick, popup_open),
             Stage::Saving => self.draw_slots(frame, area, theme, s, ctx.tick, popup_open),
+            Stage::Custom => self.draw_custom(frame, area, theme, s, ctx.tick, popup_open),
+            Stage::Probing => self.draw_custom(frame, area, theme, s, ctx.tick, popup_open),
         }
     }
 
@@ -790,6 +1200,164 @@ impl Wizard {
         let _focus_rect = form::draw(frame, area, &view, theme, s);
     }
 
+    /// `Stage::Custom` / `Stage::Creating`(自定义路径) / `Stage::Probing` 共用: 14 行固定内容
+    /// (协议 / 厂商名 / Base URL / 请求路径 / 鉴权 / API Key / 备注名 / [获取模型列表] / 5 个
+    /// 槽位 / [创建]) —— 与两步向导的 `draw_basics`/`draw_slots` 不同, 这里**没有 Spacer**(简报
+    /// 80×24 布局逐行紧跟, 14 行内容在 20 行内容区还有富余, 不需要用空行分组)。`Auth` 行**总是
+    /// 画出来**(哪怕锁定), 只是这时 `locked: true`——锁定与否不影响行数, 只影响
+    /// `CustomField::all` 的焦点导航列表 (见 `move_custom_focus`)。`custom_draft` 是 `None` 时
+    /// (不该发生) 什么都不画。
+    fn draw_custom(&self, frame: &mut Frame, area: Rect, theme: &Theme, s: &'static Strings, tick: u64, popup_open: bool) {
+        let Some(draft) = &self.custom_draft else { return };
+        let probing = matches!(self.stage, Stage::Probing);
+        let creating = matches!(self.stage, Stage::Creating);
+        let locked_form = probing || creating;
+        let locked_auth = draft.protocol.auth_locked();
+
+        let protocol_label = Self::custom_protocol_label(draft.protocol, s);
+        let auth_label = format!("{} · {}", draft.auth_header_name, Self::auth_format_label(draft.auth_header_format));
+        let api_key_text = api_key_display(&draft.api_key, self.reveal_custom_api_key);
+        let pick_hint = format!("⏎ {}", s.key_pick);
+        let reveal_hint = format!("Ctrl+R {}", s.key_reveal);
+        // 弹窗叠在表单上面时终端光标该不该显示由 `FormView::show_cursor` 统一把关, 这里恢复成
+        // 无条件给值 (同 `draw_basics`)。
+        let provider_name_cursor = Some(self.provider_name_input.visual_cursor());
+        let base_url_cursor = Some(self.base_url_input.visual_cursor());
+        let messages_path_cursor = Some(self.messages_path_input.visual_cursor());
+        let api_key_cursor = Some(self.custom_api_key_input.visual_cursor());
+        let display_name_cursor = Some(self.custom_display_name_input.visual_cursor());
+        let field_error = |field: CustomField| self.custom_field_error.and_then(|(f, msg)| (f == field).then_some(msg));
+
+        let mut rows: Vec<FormRow> = Vec::new();
+        if let Some(note) = &draft.slots.note {
+            rows.push(FormRow::Note { text: note });
+            rows.push(FormRow::Spacer);
+        }
+        rows.push(FormRow::Field {
+            label: s.wiz_f_protocol,
+            value: protocol_label,
+            placeholder: "",
+            hint: Some(&pick_hint),
+            cursor: None,
+            error: field_error(CustomField::Protocol),
+            locked: locked_form,
+        });
+        rows.push(FormRow::Field {
+            label: s.wiz_f_provider_name,
+            value: &draft.provider_display_name,
+            placeholder: "",
+            hint: None,
+            cursor: provider_name_cursor,
+            error: field_error(CustomField::ProviderName),
+            locked: locked_form,
+        });
+        rows.push(FormRow::Field {
+            label: s.wiz_f_base_url,
+            value: &draft.base_url,
+            placeholder: CUSTOM_BASE_URL_PLACEHOLDER,
+            hint: None,
+            cursor: base_url_cursor,
+            error: field_error(CustomField::BaseUrl),
+            locked: locked_form,
+        });
+        rows.push(FormRow::Field {
+            label: s.wiz_f_messages_path,
+            value: &draft.messages_path,
+            placeholder: "",
+            hint: None,
+            cursor: messages_path_cursor,
+            error: field_error(CustomField::MessagesPath),
+            locked: locked_form,
+        });
+        rows.push(FormRow::Field {
+            label: s.wiz_f_auth,
+            value: &auth_label,
+            placeholder: "",
+            hint: (!locked_auth).then_some(pick_hint.as_str()),
+            cursor: None,
+            error: field_error(CustomField::Auth),
+            locked: locked_form || locked_auth,
+        });
+        rows.push(FormRow::Field {
+            label: s.wiz_f_api_key,
+            value: &api_key_text,
+            placeholder: "",
+            hint: Some(&reveal_hint),
+            cursor: api_key_cursor,
+            error: field_error(CustomField::ApiKey),
+            locked: locked_form,
+        });
+        rows.push(FormRow::Field {
+            label: s.wiz_f_display_name,
+            value: &draft.display_name,
+            placeholder: "",
+            hint: None,
+            cursor: display_name_cursor,
+            error: field_error(CustomField::DisplayName),
+            locked: locked_form,
+        });
+        rows.push(FormRow::Button { label: if probing { s.wiz_probing } else { s.wiz_btn_probe }, busy: probing });
+        for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku, Slot::Fallback] {
+            // 兜底槽留空时画成灰字「(未配置)」, 与 `draw_slots` 同规则。
+            let placeholder = if slot == Slot::Fallback { s.sub_slot_unset } else { "" };
+            rows.push(FormRow::Field {
+                label: slot_label(slot, s),
+                value: draft.slots.slots.get(slot),
+                placeholder,
+                hint: Some(&pick_hint),
+                cursor: None,
+                error: field_error(CustomField::Slot(slot)),
+                locked: locked_form,
+            });
+        }
+        rows.push(FormRow::Button { label: if creating { s.wiz_creating } else { s.wiz_btn_create }, busy: creating });
+
+        // 有说明行时整体后移 2 行, 同 `draw_basics`/`draw_slots`。基础 14 行下标: 协议 0 / 厂商名
+        // 1 / Base URL 2 / 请求路径 3 / 鉴权 4 / API Key 5 / 备注名 6 / 探测按钮 7 / 5 个槽位
+        // 8..12 / 创建按钮 13。
+        let offset = if draft.slots.note.is_some() { 2 } else { 0 };
+        let focus = offset
+            + match self.custom_focus {
+                CustomField::Protocol => 0,
+                CustomField::ProviderName => 1,
+                CustomField::BaseUrl => 2,
+                CustomField::MessagesPath => 3,
+                CustomField::Auth => 4,
+                CustomField::ApiKey => 5,
+                CustomField::DisplayName => 6,
+                CustomField::Probe => 7,
+                CustomField::Slot(Slot::Fable) => 8,
+                CustomField::Slot(Slot::Opus) => 9,
+                CustomField::Slot(Slot::Sonnet) => 10,
+                CustomField::Slot(Slot::Haiku) => 11,
+                CustomField::Slot(Slot::Fallback) => 12,
+                CustomField::Submit => 13,
+            };
+
+        // 自定义单页没有 Task 4/5 那样的两步步骤条 (`steps: None`, `FormView.steps` 的文档注释里
+        // "自定义单页" 说的就是这里), 标题换成专属的 `wiz_custom_title`。
+        let view = FormView { title: s.wiz_custom_title, steps: None, rows: &rows, focus, tick, show_cursor: !popup_open };
+        let _focus_rect = form::draw(frame, area, &view, theme, s);
+    }
+
+    /// `wiz_custom_labels` 复用自厂商 picker (带 `自定义 · ` 前缀, 用于在一长串厂商里认出这一类
+    /// 条目); 自定义表单自己的「协议」行不需要重复这个前缀 (标题已经写明「新建订阅 · 自定义」),
+    /// 所以剥掉它——两处共用同一份文案表, 不新造一份只差几个字的翻译。
+    fn custom_protocol_label(protocol: CustomProtocol, s: &'static Strings) -> &'static str {
+        let idx = CustomProtocol::ALL.iter().position(|p| *p == protocol).unwrap_or(0);
+        let full = s.wiz_custom_labels[idx];
+        full.strip_prefix("自定义 · ").unwrap_or(full)
+    }
+
+    /// 鉴权格式的展示名——英文技术词汇 (与请求头名 "Authorization"/"x-api-key" 同类), 不进
+    /// `Strings`。
+    fn auth_format_label(format: AuthHeaderFormat) -> &'static str {
+        match format {
+            AuthHeaderFormat::Bearer => "Bearer",
+            AuthHeaderFormat::Raw => "Raw",
+        }
+    }
+
     fn provider_label(&self) -> String {
         self.providers.iter().find(|p| p.id == self.draft.provider_id).map(|p| p.display_name.clone()).unwrap_or_default()
     }
@@ -803,17 +1371,18 @@ impl Wizard {
             .unwrap_or_default()
     }
 
-    /// 底栏左侧。`Loading`/`LoadFailed`/`Creating` 没有任何可操作的字段 (`Creating` 整张表单
-    /// 只读), 留空; `Basics`/`Slots` 按**当前聚焦行的类型**给提示 (评审 I2: 旧版三条提示写死不
-    /// 随焦点变, 在文本行上 `⏎` 实际是"下一项"却显示成"选择", 在按钮上 `⏎` 会真的调用后端却看
-    /// 不出来)——`↑↓ 字段` 常驻; 选择行 (`Provider`/`Endpoint`/`Slots` 的槽位行) 追加 `⏎ 选择`;
-    /// 文本行 (`ApiKey`/`DisplayName`) 追加 `⏎ 下一项`, `ApiKey` 再多一条 `Ctrl+R 显示/隐藏`
-    /// (只在这一行有效); 按钮行 (`Submit`/`Save`) 追加 `⏎` + **按钮自己的标签**, 而不是一个通用
-    /// 词, 让用户一眼知道回车会发生什么。行内的 hint (行右端「⏎ 选择」之类) 不受这条规则影响,
-    /// 照旧固定。
+    /// 底栏左侧。`Loading`/`LoadFailed`/`Creating`/`Probing` 没有任何可操作的字段 (整张表单
+    /// 只读), 留空; `Basics`/`Slots`/`Custom` 按**当前聚焦行的类型**给提示 (评审 I2: 旧版三条
+    /// 提示写死不随焦点变, 在文本行上 `⏎` 实际是"下一项"却显示成"选择", 在按钮上 `⏎` 会真的调用
+    /// 后端却看不出来)——`↑↓ 字段` 常驻; 选择行 (`Provider`/`Endpoint`/`Slots` 的槽位行/
+    /// `Custom` 的 `Protocol`/未锁定的 `Auth`/槽位行) 追加 `⏎ 选择`; 文本行 (`ApiKey`/
+    /// `DisplayName`/`Custom` 的厂商名/Base URL/请求路径/API Key/备注名) 追加 `⏎ 下一项`,
+    /// `ApiKey` 再多一条 `Ctrl+R 显示/隐藏` (只在这一行有效); 按钮行 (`Submit`/`Save`/`Custom`
+    /// 的 `Probe`/`Submit`) 追加 `⏎` + **按钮自己的标签**, 而不是一个通用词, 让用户一眼知道回车
+    /// 会发生什么。行内的 hint (行右端「⏎ 选择」之类) 不受这条规则影响, 照旧固定。
     pub fn hints(&self, s: &'static Strings) -> Vec<Hint<'static>> {
         match &self.stage {
-            Stage::Loading | Stage::LoadFailed(_) | Stage::Creating | Stage::LoadingModels | Stage::Saving => Vec::new(),
+            Stage::Loading | Stage::LoadFailed(_) | Stage::Creating | Stage::LoadingModels | Stage::Saving | Stage::Probing => Vec::new(),
             Stage::Basics => {
                 let mut hints = vec![("↑↓", s.key_field)];
                 match self.focus {
@@ -835,27 +1404,51 @@ impl Wizard {
                 }
                 hints
             }
+            Stage::Custom => {
+                let mut hints = vec![("↑↓", s.key_field)];
+                let locked = self.custom_draft.as_ref().map(|d| d.protocol.auth_locked()).unwrap_or(false);
+                match self.custom_focus {
+                    CustomField::Protocol => hints.push(("⏎", s.key_pick)),
+                    CustomField::Auth if !locked => hints.push(("⏎", s.key_pick)),
+                    CustomField::Auth => {} // 锁定态理论不会被聚焦到, 防御性地不给提示。
+                    CustomField::ProviderName | CustomField::BaseUrl | CustomField::MessagesPath | CustomField::DisplayName => {
+                        hints.push(("⏎", s.key_next_field));
+                    }
+                    CustomField::ApiKey => {
+                        hints.push(("⏎", s.key_next_field));
+                        hints.push(("Ctrl+R", s.key_reveal));
+                    }
+                    CustomField::Probe => hints.push(("⏎", s.wiz_btn_probe)),
+                    CustomField::Slot(_) => hints.push(("⏎", s.key_pick)),
+                    CustomField::Submit => hints.push(("⏎", s.wiz_btn_create)),
+                }
+                hints
+            }
         }
     }
 
     /// 请求在飞时能不能按 `Esc` 退出——`App::draw` 据此决定要不要在底栏右侧显示 `Esc 取消`。
     /// 只有**会落库**的请求 (`Creating`/`Saving`) 在飞时才吞 `Esc` (评审 M9: 撤不回后端落库,
-    /// 继续显示这条提示就是纯误导); `LoadingModels` 等的是只读的 `refresh_model_list`, 不落库,
-    /// 所以能取消 (评审收窄, 见 `Stage::LoadingModels` 的文档注释)。
+    /// 继续显示这条提示就是纯误导); `LoadingModels`/`Probing` 等的是只读请求 (`refresh_model_list`
+    /// / `probe_custom_models`), 不落库, 所以能取消 (评审收窄, 见 `Stage::LoadingModels` 的文档
+    /// 注释——`Probing` 是 P5 Task 6 同理的第二个只读"在飞"阶段)。
     pub fn can_cancel(&self) -> bool {
         !matches!(self.stage, Stage::Creating | Stage::Saving)
     }
 
     /// 用户已经填过东西 / 已经创建过订阅 —— `Esc` 要不要先确认看这个。`Basics` 下「厂商已选」
     /// 或「API Key 非空」或「备注名非空」任一成立即为真 (用户填了一半按 `Esc` 不该直接丢掉);
-    /// `Creating`/`LoadingModels`/`Slots`/`Saving` 恒真 (订阅已经在飞行中创建, 或者已经建好了)。
+    /// `Creating`/`LoadingModels`/`Slots`/`Saving` 恒真 (订阅已经在飞行中创建, 或者已经建好了);
+    /// `Custom`/`Probing` 同样恒真——能进这两个阶段本身就意味着用户已经从厂商 picker 里选中了
+    /// 一个 `custom:<protocol>` 条目 (与 `Basics` 里「厂商已选」是同一件事), 不存在"刚进来什么
+    /// 都没做"的状态。
     pub fn has_input(&self) -> bool {
         match &self.stage {
             Stage::Loading | Stage::LoadFailed(_) => false,
             Stage::Basics => {
                 !self.draft.provider_id.is_empty() || !self.draft.api_key.is_empty() || !self.draft.display_name.trim().is_empty()
             }
-            Stage::Creating | Stage::LoadingModels | Stage::Slots | Stage::Saving => true,
+            Stage::Creating | Stage::LoadingModels | Stage::Slots | Stage::Saving | Stage::Custom | Stage::Probing => true,
         }
     }
 

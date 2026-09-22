@@ -1,7 +1,7 @@
 //! 两条路径各自的字段、校验与预填。与 `mod.rs` 分开是因为这些是**纯数据与纯函数**: 给定
 //! 一份草稿, 算出要画哪些行、哪些字段不合法。没有 `Frame`, 没有 `Cmd`, 好测。
 
-use crate::client::dto::{ModelInfo, ModelSlots, Slot};
+use crate::client::dto::{AuthHeaderFormat, CustomProtocol, ModelInfo, ModelSlots, Slot};
 use crate::i18n::Strings;
 use crate::secret::Secret;
 use crate::store::Store;
@@ -130,6 +130,144 @@ pub fn validate_slots(d: &SlotsDraft, s: &'static Strings) -> Option<(Slot, &'st
     None
 }
 
+/// 自定义厂商单页 (P5 Task 6) 的草稿。与 `BasicsDraft`/`SlotsDraft` 不同, 这一页把"选协议"
+/// "填连接信息""探测模型""选槽位"全放在同一屏, 所以字段更多; `slots` 直接复用 `SlotsDraft`
+/// (含它自己的 `note`——探测失败 / 创建失败的说明行共用这一个字段, 与 `Stage::Slots` 里
+/// `ManualFallback` 与 `SaveSlots` 失败共用同一个 `note` 是同一条设计, "谁最后发生谁的文案盖住")。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomDraft {
+    pub protocol: CustomProtocol,
+    pub provider_display_name: String,
+    pub base_url: String,
+    pub messages_path: String,
+    /// 锁定协议下恒等于 `protocol.preset()` 的那一对; Anthropic 下是 `ANTHROPIC_AUTH_PRESETS`
+    /// 里选的那一对。
+    pub auth_header_name: String,
+    pub auth_header_format: AuthHeaderFormat,
+    pub api_key: Secret,
+    pub display_name: String,
+    pub slots: SlotsDraft,
+    /// 上一次**成功**探测的结果: 那一刻的 `base_url` 与后端回的 `models_url`。换协议、探测失败
+    /// 都要清空 (`apply_protocol`); **编辑 `base_url` 本身不清**——`models_url()` 自己按值比对,
+    /// 提前清空反而会丢掉"改回去又生效"这条桌面端行为。
+    pub probe: Option<ProbedModels>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbedModels {
+    pub base_url: String,
+    pub models_url: String,
+}
+
+impl CustomDraft {
+    /// 选中厂商 picker 里的 `custom:<protocol>` 条目时构造一份全新草稿——除了协议预设字段,
+    /// 其余全是空值 (还没填过任何东西)。内部就是"造一个占位壳 + `apply_protocol`", 不重复
+    /// 一遍预设填充逻辑。
+    pub fn new(protocol: CustomProtocol) -> Self {
+        let mut draft = CustomDraft {
+            protocol,
+            provider_display_name: String::new(),
+            base_url: String::new(),
+            messages_path: String::new(),
+            auth_header_name: String::new(),
+            auth_header_format: AuthHeaderFormat::Bearer,
+            api_key: Secret::default(),
+            display_name: String::new(),
+            slots: SlotsDraft::default(),
+            probe: None,
+        };
+        draft.apply_protocol(protocol);
+        draft
+    }
+
+    /// 换协议: 把 `base_url` / `messages_path` / 鉴权头重置成这个协议的预设, 并清掉 `probe`
+    /// (旧的探测结果对新协议没有意义)。**已经填过的 API Key / 备注名 / 槽位不动** (桌面端也
+    /// 不动——用户切协议大概率是选错了重选, 不该连已经填好的凭据/名字都丢)。
+    pub fn apply_protocol(&mut self, protocol: CustomProtocol) {
+        let preset = protocol.preset();
+        self.protocol = protocol;
+        self.base_url = preset.base_url.to_string();
+        self.messages_path = preset.messages_path.to_string();
+        self.auth_header_name = preset.auth_header_name.to_string();
+        self.auth_header_format = preset.auth_header_format;
+        self.probe = None;
+    }
+
+    /// 只有探测成功、且此后 `base_url`(trim 后) 一个字都没改过时才回传 `models_url`。与桌面端
+    /// `customProbe.baseUrl === baseUrl` 同规则——`probe.base_url` 在探测那一刻已经 trim 过
+    /// (见 `wizard::mod::apply_wizard_result` 的 `Probed(Ok(Auto))` 分支), 这里只需要再 trim
+    /// 一遍*当前*的 `base_url` 参与比较, 用户中途多打的首尾空白不该算"改过"。
+    pub fn models_url(&self) -> Option<&str> {
+        match &self.probe {
+            Some(p) if p.base_url == self.base_url.trim() => Some(p.models_url.as_str()),
+            _ => None,
+        }
+    }
+}
+
+/// 自定义单页的字段, 顺序即上下键的顺序——但与 `BasicsField`/`SlotsField` 不同, 这里的可聚焦
+/// 列表**依赖运行时状态** (`Auth` 锁定时被排除), 所以没有固定的 `ALL` 常量, 改用 [`CustomField::all`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustomField {
+    Protocol,
+    ProviderName,
+    BaseUrl,
+    MessagesPath,
+    Auth,
+    ApiKey,
+    DisplayName,
+    Probe,
+    Slot(Slot),
+    Submit,
+}
+
+impl CustomField {
+    /// 焦点导航顺序。`auth_locked` 为真时 `Auth` 被剔除在外 (↑↓ 跳过它)——这一行仍然会被画出来
+    /// (锁定态, muted), 只是键盘导航永远不会落到它上面; `⏎` 在它身上的时候 (理论上不该发生,
+    /// 见 `wizard::mod::handle_custom_key`) 也什么都不做。
+    pub fn all(auth_locked: bool) -> Vec<CustomField> {
+        let mut fields = vec![CustomField::Protocol, CustomField::ProviderName, CustomField::BaseUrl, CustomField::MessagesPath];
+        if !auth_locked {
+            fields.push(CustomField::Auth);
+        }
+        fields.push(CustomField::ApiKey);
+        fields.push(CustomField::DisplayName);
+        fields.push(CustomField::Probe);
+        fields.extend([Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku, Slot::Fallback].map(CustomField::Slot));
+        fields.push(CustomField::Submit);
+        fields
+    }
+}
+
+/// 校验顺序与桌面端 `saveCustom` 逐条对齐: 厂商名 → base_url 非空 → base_url 前缀 →
+/// messages_path 前缀 → gemini 的 `{model}` → API Key → 备注名 → 四个核心槽。
+pub fn validate_custom(d: &CustomDraft, s: &'static Strings) -> Option<(CustomField, &'static str)> {
+    if d.provider_display_name.trim().is_empty() {
+        return Some((CustomField::ProviderName, s.wiz_err_provider_name));
+    }
+    let base_url = d.base_url.trim();
+    if base_url.is_empty() {
+        return Some((CustomField::BaseUrl, s.wiz_err_base_url_empty));
+    }
+    if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
+        return Some((CustomField::BaseUrl, s.wiz_err_base_url_scheme));
+    }
+    let messages_path = d.messages_path.trim();
+    if !messages_path.starts_with('/') {
+        return Some((CustomField::MessagesPath, s.wiz_err_messages_path));
+    }
+    if d.protocol.requires_model_placeholder() && !messages_path.contains("{model}") {
+        return Some((CustomField::MessagesPath, s.wiz_err_gemini_placeholder));
+    }
+    if d.api_key.is_empty() {
+        return Some((CustomField::ApiKey, s.wiz_err_api_key));
+    }
+    if d.display_name.trim().is_empty() {
+        return Some((CustomField::DisplayName, s.wiz_err_display_name));
+    }
+    validate_slots(&d.slots, s).map(|(slot, message)| (CustomField::Slot(slot), message))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,5 +377,102 @@ mod tests {
         // 兜底槽本身留空不该被当成校验失败的对象。
         let fallback_only = SlotsDraft { slots: ModelSlots { fallback: String::new(), ..filled_slots() }, ..full.clone() };
         assert_eq!(validate_slots(&fallback_only, s), None, "兜底槽空着不该报错");
+    }
+
+    /// 五个协议各一次: `base_url`/`messages_path`/鉴权头都应该等于 `preset()`, 且旧的 `probe`
+    /// 应该被清空——`apply_protocol` 是唯一改这三个连接字段的入口, 不管调用前草稿是什么状态。
+    #[test]
+    fn apply_protocol_prefills_and_clears_the_probe() {
+        for protocol in CustomProtocol::ALL {
+            let mut d = CustomDraft::new(protocol);
+            d.probe = Some(ProbedModels { base_url: "https://old.example.com".into(), models_url: "https://old.example.com/v1/models".into() });
+
+            d.apply_protocol(protocol);
+
+            let preset = protocol.preset();
+            assert_eq!(d.base_url, preset.base_url, "{protocol:?}");
+            assert_eq!(d.messages_path, preset.messages_path, "{protocol:?}");
+            assert_eq!(d.auth_header_name, preset.auth_header_name, "{protocol:?}");
+            assert_eq!(d.auth_header_format, preset.auth_header_format, "{protocol:?}");
+            assert!(d.probe.is_none(), "换协议应该清空 probe ({protocol:?})");
+        }
+    }
+
+    /// 一份填满全部字段 (含四个核心槽) 的草稿——`CustomProtocol::Anthropic` 的预设 `base_url`
+    /// 是空串, 这里补一个真实值, 其它协议的预设本来就是非空 https 地址, 原样保留。
+    fn filled_custom_draft(protocol: CustomProtocol) -> CustomDraft {
+        let mut d = CustomDraft::new(protocol);
+        d.provider_display_name = "中转站".into();
+        if d.base_url.is_empty() {
+            d.base_url = "https://relay.example.com".into();
+        }
+        d.api_key = Secret::new("sk-test");
+        d.display_name = "中转站".into();
+        d.slots.slots = filled_slots();
+        d
+    }
+
+    /// 逐条构造只违反其中一条规则的草稿, 断言 `validate_custom` 报的是那一条、不是别的——顺序
+    /// 与桌面端 `saveCustom` 一致 (简报): 厂商名 → base_url 非空 → base_url 前缀 → messages_path
+    /// 前缀 → gemini 的 `{model}` → API Key → 备注名 → 四个核心槽。
+    #[test]
+    fn validate_custom_follows_the_desktop_order() {
+        let s = &crate::i18n::ZH;
+
+        let empty = CustomDraft::new(CustomProtocol::Anthropic);
+        assert_eq!(validate_custom(&empty, s), Some((CustomField::ProviderName, s.wiz_err_provider_name)), "全空应该先报厂商名");
+
+        let mut bad_scheme = filled_custom_draft(CustomProtocol::Anthropic);
+        bad_scheme.base_url = "api.example.com".into();
+        assert_eq!(validate_custom(&bad_scheme, s), Some((CustomField::BaseUrl, s.wiz_err_base_url_scheme)), "base_url 缺 scheme 应该报这一条");
+
+        let mut bad_path = filled_custom_draft(CustomProtocol::Anthropic);
+        bad_path.messages_path = "v1/messages".into();
+        assert_eq!(validate_custom(&bad_path, s), Some((CustomField::MessagesPath, s.wiz_err_messages_path)), "请求路径不带前导 / 应该报这一条");
+
+        let mut gemini_missing_placeholder = filled_custom_draft(CustomProtocol::Gemini);
+        gemini_missing_placeholder.messages_path = "/v1beta/models/generateContent".into();
+        assert_eq!(
+            validate_custom(&gemini_missing_placeholder, s),
+            Some((CustomField::MessagesPath, s.wiz_err_gemini_placeholder)),
+            "Gemini 的请求路径缺 {{model}} 应该单独报这一条"
+        );
+
+        // 变异验证目标: 这一条如果被误改成对 GeminiInteractions 也要求占位符, 这里就会失败——
+        // `requires_model_placeholder()` 只对 `Gemini` 返回真。
+        let mut gemini_interactions_same_path = filled_custom_draft(CustomProtocol::GeminiInteractions);
+        gemini_interactions_same_path.messages_path = "/v1beta/models/generateContent".into();
+        assert_eq!(validate_custom(&gemini_interactions_same_path, s), None, "GeminiInteractions 不要求占位符, 同样的路径应该通过");
+
+        let mut missing_key = filled_custom_draft(CustomProtocol::Anthropic);
+        missing_key.api_key = Secret::default();
+        assert_eq!(validate_custom(&missing_key, s), Some((CustomField::ApiKey, s.wiz_err_api_key)));
+
+        let mut missing_name = filled_custom_draft(CustomProtocol::Anthropic);
+        missing_name.display_name = "   ".into();
+        assert_eq!(validate_custom(&missing_name, s), Some((CustomField::DisplayName, s.wiz_err_display_name)));
+
+        let mut missing_slot = filled_custom_draft(CustomProtocol::Anthropic);
+        missing_slot.slots.slots.opus = String::new();
+        assert_eq!(validate_custom(&missing_slot, s), Some((CustomField::Slot(Slot::Opus), s.wiz_err_slot)), "四个核心槽任一空都应该报到那个槽");
+
+        assert_eq!(validate_custom(&filled_custom_draft(CustomProtocol::Anthropic), s), None, "全填好应该通过");
+    }
+
+    /// 探测后原样 → `Some`; 改一个字符 → `None`; 改回去 → 又是 `Some`——与桌面端
+    /// `customProbe.baseUrl === baseUrl` 同规则。
+    #[test]
+    fn models_url_is_only_sent_back_when_the_base_url_is_unchanged() {
+        let mut d = CustomDraft::new(CustomProtocol::Anthropic);
+        d.base_url = "https://relay.example.com".into();
+        d.probe =
+            Some(ProbedModels { base_url: "https://relay.example.com".into(), models_url: "https://relay.example.com/v1/models".into() });
+        assert_eq!(d.models_url(), Some("https://relay.example.com/v1/models"), "探测后原样应该回传");
+
+        d.base_url = "https://relay.example.com/changed".into();
+        assert_eq!(d.models_url(), None, "改了一个字符应该不再回传");
+
+        d.base_url = "https://relay.example.com".into();
+        assert_eq!(d.models_url(), Some("https://relay.example.com/v1/models"), "改回去应该又生效");
     }
 }

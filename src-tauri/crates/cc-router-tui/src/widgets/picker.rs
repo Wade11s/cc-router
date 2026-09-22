@@ -56,7 +56,14 @@ pub enum PickerTag {
     WizardEndpoint,
     /// 向导第二步给某个槽位选模型 (P5 Task 5)。与 `SlotModel` 分开: 那个带订阅 id, 用于订阅
     /// 详情页的就地编辑 (订阅已经存在); 这个用于"还没保存过"的向导草稿, 同样不带实体 id。
+    /// **P5 Task 6 起自定义厂商单页也复用这同一个变体**——`wizard::apply_slot_choice` 按
+    /// `custom_draft` 是不是 `Some` 决定写回哪一份草稿, 两条路径互斥, 弹窗这一层不需要区分。
     WizardSlot { slot: Slot },
+    /// 向导自定义厂商单页 (P5 Task 6): 选协议 (5 项)。不带实体 id, 理由同 `WizardProvider`。
+    WizardProtocol,
+    /// 向导自定义厂商单页 (P5 Task 6): 只有 Anthropic 未锁定鉴权头时才会打开, 在
+    /// `ANTHROPIC_AUTH_PRESETS` 两项里选。
+    WizardAuth,
 }
 
 impl PickerTag {
@@ -72,7 +79,9 @@ impl PickerTag {
             | PickerTag::LogsFilter
             | PickerTag::WizardProvider
             | PickerTag::WizardEndpoint
-            | PickerTag::WizardSlot { .. } => None,
+            | PickerTag::WizardSlot { .. }
+            | PickerTag::WizardProtocol
+            | PickerTag::WizardAuth => None,
         }
     }
 }
