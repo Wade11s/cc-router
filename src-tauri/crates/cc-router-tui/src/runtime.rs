@@ -440,7 +440,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, client: Arc<Client>
 mod tests {
     use super::*;
     use crate::client::discovery::RUNTIME_FILE;
-    use crate::client::dto::{ModelSlots, RoutingMode, Slot, SlotEfforts};
+    use crate::client::dto::{ModelInfo, ModelSlots, RoutingMode, Slot, SlotEfforts};
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1144,6 +1144,76 @@ mod tests {
         let Action::WizardDone(result) = done else { panic!("{done:?}") };
         let WizardResult::Providers(providers) = *result else { panic!("{result:?}") };
         assert!(providers.is_err(), "{providers:?}");
+    }
+
+    /// Task 3 评审 #7: `call_mutation` 的每个分支都有 `body_json` 精确断言 (比如下面
+    /// `update_slots_sends_the_whole_patch_and_omits_auto_efforts`), `call_wizard` 里同样手写
+    /// patch 的 `SaveSlots` 分支之前却没有——`SubscriptionPatch` 全是 `Option` 且不拒绝未知键,
+    /// 键名写错时后端会回 200 什么都没改, 向导显示保存成功, 订阅却停在 `(pending)`, 不会有任何测试
+    /// 失败提醒。`body_json` 做结构化比对 (不是子集匹配), 精确锁住 patch 里**只有** `model_slots`
+    /// 一个键, **没有** `slot_efforts`——向导不设置思考档位 (Task 5 的裁决), 少发一个字段才不会把
+    /// 已有值清掉; 如果实现手滑把 `slot_efforts` 也塞进去, 这条 mock 不匹配, 请求会退化成 404,
+    /// 断言的 `Ok(())` 也就跟着失败。
+    #[tokio::test]
+    async fn wizard_save_slots_sends_only_model_slots() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/ui/api/cmd/update_subscription"))
+            .and(body_json(json!({
+                "id": "1",
+                "patch": {
+                    "model_slots": {"fable": "glm-4.6", "opus": "glm-4.6", "sonnet": "glm-4.6", "haiku": "glm-4.6", "fallback": ""},
+                }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "1", "display_name": "n"})))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        write_runtime(dir.path(), server.address().port(), "s", "9.9.9-test");
+        let client = Arc::new(Client::connect(dir.path()).unwrap());
+        let (tx, mut rx) = unbounded_channel::<Action>();
+
+        let model_slots = ModelSlots {
+            fable: "glm-4.6".into(),
+            opus: "glm-4.6".into(),
+            sonnet: "glm-4.6".into(),
+            haiku: "glm-4.6".into(),
+            fallback: String::new(),
+        };
+        spawn_wizard(client, tx, WizardCmd::SaveSlots { id: "1".into(), model_slots });
+
+        let done = rx.recv().await.expect("channel 关闭了");
+        let Action::WizardDone(result) = done else { panic!("{done:?}") };
+        assert!(matches!(*result, WizardResult::SlotsSaved(Ok(()))), "{result:?}");
+    }
+
+    /// Task 3 评审 #7 (顺手补上): `WizardCmd::LoadModels` 打对了 `refresh_model_list`、带对了
+    /// `{"id": id}`, 把响应体正确解析进 `WizardResult::Models(Ok(..))`。
+    #[tokio::test]
+    async fn wizard_load_models_reports_back() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/ui/api/cmd/refresh_model_list"))
+            .and(body_json(json!({"id": "1"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!({"kind": "auto", "models": [{"id": "glm-4.6", "display_name": null}], "fetched_at": 1}),
+            ))
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        write_runtime(dir.path(), server.address().port(), "s", "9.9.9-test");
+        let client = Arc::new(Client::connect(dir.path()).unwrap());
+        let (tx, mut rx) = unbounded_channel::<Action>();
+
+        spawn_wizard(client, tx, WizardCmd::LoadModels { id: "1".into() });
+
+        let done = rx.recv().await.expect("channel 关闭了");
+        let Action::WizardDone(result) = done else { panic!("{done:?}") };
+        let WizardResult::Models(models) = *result else { panic!("{result:?}") };
+        assert_eq!(
+            models.expect("应该成功"),
+            RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 1 }
+        );
     }
 
     /// Task 4: `Fetch::Requests` 发出的请求体精确匹配 `RequestQuery::to_args()` 文档里的例子——

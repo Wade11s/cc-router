@@ -254,9 +254,14 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps({"id": "9"}).encode()
         elif name == "delete_subscription":
             # 同上: 只记请求体, 不真的从 DATA["list_subscriptions"] 里删——按键流程留给后续 Task。
+            # 真后端签名是 AppResult<()>, serde_json::to_value(()) 是 null, 不是 {} (评审 #2:
+            # 这里原来写的 {} 会让 Task 7 照 call_mutation 的惯例写 client.call::<()>(...) 时,
+            # 对真后端成功、对假后端报 "invalid type: map, expected unit"——与本文件第 219/233 行
+            # 注释和 runtime.rs 里 update_subscription/update_virtual_model 用 json!(null) 的既有
+            # 约定一致)。
             req = json.loads(raw or b"{}")
             RECORDED["delete_subscription"] = req
-            body = json.dumps({}).encode()
+            body = json.dumps(None).encode()
         else:
             body = json.dumps(DATA[name]).encode()
         self.send_response(200)

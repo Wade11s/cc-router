@@ -33,6 +33,34 @@ fn through_json<T: Serialize, V: DeserializeOwned>(value: &T) -> V {
     serde_json::from_value(json.clone()).unwrap_or_else(|e| panic!("TUI 视图结构体读不了后端的 JSON: {e}\n{json:#}"))
 }
 
+/// TUI `CustomProtocol` → 后端 `CustomProtocol` 的期望映射, 写成对 TUI 枚举的穷尽 `match`——
+/// TUI 加协议变体时这里会 `E0004`, 逼着当场决定后端对应哪个变体, 而不是遗漏在某个手写列表里
+/// (Task 3 评审 #5)。`create_subscription_input_matches` 与 `custom_protocol_wire_names_round_trip`
+/// 共用这一份映射。
+fn expected_backend_protocol(p: dto::CustomProtocol) -> CustomProtocol {
+    match p {
+        dto::CustomProtocol::Anthropic => CustomProtocol::Anthropic,
+        dto::CustomProtocol::Gemini => CustomProtocol::Gemini,
+        dto::CustomProtocol::OpenaiResponses => CustomProtocol::OpenaiResponses,
+        dto::CustomProtocol::OpenaiChatCompletions => CustomProtocol::OpenaiChatCompletions,
+        dto::CustomProtocol::GeminiInteractions => CustomProtocol::GeminiInteractions,
+    }
+}
+
+/// 后端 `AuthType` → 是否属于「TUI 该置灰」的 OAuth 类, 写成对后端枚举的穷尽 `match`——后端加
+/// 新变体时这里会 `E0004`, 逼着当场决定它算不算 OAuth, 而不是悄悄漏在 `OAUTH_AUTH_TYPES` 之外
+/// 让 TUI 把它当普通 api_key 厂商展示 (Task 3 评审 #6)。
+fn is_oauth_auth_type(auth: AuthType) -> bool {
+    match auth {
+        AuthType::ChatgptOauth | AuthType::KiroOauth => true,
+        AuthType::ApiKey
+        | AuthType::GeminiApiKey
+        | AuthType::OpenaiResponsesApiKey
+        | AuthType::OpenaiChatCompletionsApiKey
+        | AuthType::GeminiInteractionsApiKey => false,
+    }
+}
+
 #[test]
 fn identifier_matches_tauri_conf() {
     let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
@@ -778,6 +806,7 @@ fn provider_info_matches() {
     let view: dto::Provider = through_json(&real);
     assert_eq!(view.id, "zhipu");
     assert_eq!(view.display_name, "智谱");
+    assert_eq!(view.description.as_deref(), Some("智谱 AI"), "description 字段被改名会静默变 None, 厂商选择器的 hint 会整列消失");
     assert_eq!(view.endpoints.len(), 2);
     assert_eq!(view.endpoints[0].base_url, "https://open.bigmodel.cn/api/anthropic");
     assert_eq!(view.default_endpoint.as_deref(), Some("intl"));
@@ -839,6 +868,38 @@ fn create_subscription_input_matches() {
         other => panic!("应该是 FromTemplate: {other:?}"),
     }
 
+    // custom 分支: 5 个协议全过一遍, 逐个断言后端反序列化出来的 `protocol` 就是对应的后端变体
+    // (Task 3 评审 #1)——只测缺省值 (Anthropic) 测不出「字段被改名, 后端 `#[serde(default)]`
+    // 悄悄把它吞成 Anthropic」这类回归: `CreateSource::Custom.protocol` 恰好默认就是 Anthropic,
+    // `CreateSource` 也没有 `deny_unknown_fields`, 单测一个缺省值毫无区分力。
+    for tui_protocol in dto::CustomProtocol::ALL {
+        let expected_real = expected_backend_protocol(tui_protocol);
+        let input = dto::CreateInput {
+            display_name: "中转站".into(),
+            api_key: Secret::new("sk-relay"),
+            model_slots: dto::ModelSlots::pending(),
+            source: dto::CreateSource::Custom(Box::new(dto::CustomSource {
+                provider_display_name: "中转站".into(),
+                base_url: "https://relay.example.com".into(),
+                messages_path: "/v1/messages".into(),
+                auth_header_name: "Authorization".into(),
+                auth_header_format: dto::AuthHeaderFormat::Bearer,
+                protocol: tui_protocol,
+                models_url: None,
+            })),
+        };
+        let args = input.to_args();
+        let parsed: CreateSubscriptionInput = serde_json::from_value(args["input"].clone())
+            .unwrap_or_else(|e| panic!("后端读不了 TUI 发的 custom CreateInput ({tui_protocol:?}): {e}\n{args:#}"));
+        match parsed.source {
+            CreateSource::Custom { protocol, .. } => {
+                assert_eq!(protocol, expected_real, "{tui_protocol:?} 应该解析回 {expected_real:?}, 不是被 serde(default) 吞掉");
+            }
+            other => panic!("应该是 Custom: {other:?}"),
+        }
+    }
+
+    // `models_url` 的 None/Some 两种形状与 `protocol` 本身无关, 用一个协议测就够。
     let mut via_custom = dto::CreateInput {
         display_name: "中转站".into(),
         api_key: Secret::new("sk-relay"),
@@ -858,8 +919,7 @@ fn create_subscription_input_matches() {
     let input: CreateSubscriptionInput = serde_json::from_value(args["input"].clone())
         .unwrap_or_else(|e| panic!("后端读不了 TUI 发的 custom CreateInput (无 models_url): {e}\n{args:#}"));
     match input.source {
-        CreateSource::Custom { protocol, models_url, base_url, .. } => {
-            assert_eq!(protocol, CustomProtocol::Anthropic);
+        CreateSource::Custom { models_url, base_url, .. } => {
             assert_eq!(models_url, None);
             assert_eq!(base_url, "https://relay.example.com");
         }
@@ -917,15 +977,13 @@ fn probe_custom_models_input_and_result_match() {
 }
 
 /// `CustomProtocol::ALL` 的 `as_wire()` 逐个能被后端 `CustomProtocol` 反序列化, 解析回同一个变体。
+/// 遍历 `dto::CustomProtocol::ALL` 本身 (而不是手写 5 对) 是 Task 3 评审 #5 要求的: TUI 将来往
+/// `ALL` 里加第 6 个协议时, `expected_backend_protocol` 的穷尽 `match` 会 `E0004`, 逼着这条测试
+/// 也跟着覆盖新协议——手写列表不会自动长出新的一对。
 #[test]
 fn custom_protocol_wire_names_round_trip() {
-    for (tui_protocol, expected_real) in [
-        (dto::CustomProtocol::Anthropic, CustomProtocol::Anthropic),
-        (dto::CustomProtocol::Gemini, CustomProtocol::Gemini),
-        (dto::CustomProtocol::OpenaiResponses, CustomProtocol::OpenaiResponses),
-        (dto::CustomProtocol::OpenaiChatCompletions, CustomProtocol::OpenaiChatCompletions),
-        (dto::CustomProtocol::GeminiInteractions, CustomProtocol::GeminiInteractions),
-    ] {
+    for tui_protocol in dto::CustomProtocol::ALL {
+        let expected_real = expected_backend_protocol(tui_protocol);
         let wire = tui_protocol.as_wire();
         let real: CustomProtocol = serde_json::from_value(serde_json::Value::String(wire.to_string()))
             .unwrap_or_else(|e| panic!("后端 CustomProtocol 读不了 TUI 发的线上名字 {wire:?}: {e}"));
@@ -945,22 +1003,47 @@ fn auth_header_format_wire_names_round_trip() {
     }
 }
 
-/// TUI 拿来判断「该在厂商选择器里置灰」的两个 auth type 字符串, 后端 `AuthType` 都必须认得——
-/// 否则 TUI 判 OAuth 判空、把设备码登录的厂商当普通 api_key 厂商展示。
+/// TUI 拿来判断「该在厂商选择器里置灰」的 `OAUTH_AUTH_TYPES` 集合, 必须与后端「OAuth 类」
+/// `AuthType` 变体集合**完全相等**——不只是「TUI 的两个字符串后端认得」这种单向锁 (Task 3 评审
+/// #6)。`is_oauth_auth_type` 是对后端 `AuthType` 的穷尽 `match`, 后端加新变体 (CLAUDE.md 写了
+/// Gemini OAuth / GitHub Copilot 之类的扩展点) 时这里会编译失败, 逼着当场决定它算不算 OAuth,
+/// 而不是让 TUI 把它当 api_key 厂商展示、用户粘个 key 建出一条永远鉴权失败的订阅却没有任何测试炸。
 #[test]
 fn the_auth_types_the_tui_greys_out_exist_in_the_backend() {
-    for wire in dto::OAUTH_AUTH_TYPES {
-        let real: Result<AuthType, _> = serde_json::from_value(serde_json::Value::String(wire.to_string()));
-        assert!(real.is_ok(), "后端 AuthType 读不了 TUI OAUTH_AUTH_TYPES 里的 {wire:?}: {real:?}");
-    }
+    use AuthType::*;
+    let backend_oauth: std::collections::BTreeSet<&str> = [
+        ApiKey,
+        ChatgptOauth,
+        KiroOauth,
+        GeminiApiKey,
+        OpenaiResponsesApiKey,
+        OpenaiChatCompletionsApiKey,
+        GeminiInteractionsApiKey,
+    ]
+    .into_iter()
+    .filter(|auth| is_oauth_auth_type(*auth))
+    .map(|auth| auth.as_str())
+    .collect();
+    let tui_oauth: std::collections::BTreeSet<&str> = dto::OAUTH_AUTH_TYPES.into_iter().collect();
+    assert_eq!(tui_oauth, backend_oauth, "TUI 的 OAUTH_AUTH_TYPES 应该恰好等于后端标注为 OAuth 的 AuthType 集合");
 }
 
 /// `PENDING_MODEL` 与桌面端 `src/routes/SubscriptionNew.tsx` 的字面量约定 (`uniformSlots("(pending)")`)
-/// 逐字相同; `ModelSlots::pending()` 四个核心槽是它、兜底槽是空串——后端没有这个常量, 这条测试锁的
-/// 是跨端约定而不是某个后端类型的字段形状。
+/// 逐字相同——不是自证: `include_str!` 真的把桌面端源码编译进来, 拿 **由 `PENDING_MODEL` 现算出来**
+/// 的 `uniformSlots("<PENDING_MODEL>")` 去源码里找 (Task 3 评审 #4)。之前的写法只是拿 TUI 常量和
+/// 同一条测试里再写一遍的字面量比, 从没碰过桌面端源码; 现在无论哪一边把这个占位值改掉 (桌面端改写法,
+/// 或 TUI 改 `PENDING_MODEL`), 这条测试都会跟着炸——注意桌面端同一个文件里还有一处
+/// `uniformSlots("")` (`Step`1 初始化用的空值), 所以不能只找「第一处 `uniformSlots("` 出现的位置」,
+/// 必须把 `PENDING_MODEL` 拼进 needle 里精确匹配。
 #[test]
 fn pending_placeholder_matches_the_desktop_wizard() {
-    assert_eq!(dto::PENDING_MODEL, "(pending)");
+    let desktop_source = include_str!("../../src/routes/SubscriptionNew.tsx");
+    let needle = format!("uniformSlots(\"{}\")", dto::PENDING_MODEL);
+    assert!(
+        desktop_source.contains(&needle),
+        "桌面端 SubscriptionNew.tsx 里没找到 {needle:?} —— PENDING_MODEL 与桌面端的占位值约定不一致了, 或桌面端换了写法"
+    );
+
     let slots = dto::ModelSlots::pending();
     assert_eq!(slots.fable, dto::PENDING_MODEL);
     assert_eq!(slots.opus, dto::PENDING_MODEL);

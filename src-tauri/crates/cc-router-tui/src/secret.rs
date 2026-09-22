@@ -64,7 +64,7 @@ mod tests {
 
     /// 照抄主 crate `runtime_file.rs::tests::local_secret_is_only_touched_by_allowlisted_files`
     /// 的写法: 遍历 `src/` 下的 `.rs`, 凡是出现 `expose(` 的文件名必须在白名单里——防止有人在
-    /// 表单渲染 / 日志 / 别的随手一个地方直接读明文。白名单三个成员见各自的注释。
+    /// 表单渲染 / 日志 / 别的随手一个地方直接读明文。白名单两个成员见各自的注释。
     ///
     /// Review round 1 的两处修正:
     /// - `p.strip_prefix(&src)` 产出的是**相对 `src/` 的路径**, 与后端 `runtime_file.rs` 白名单
@@ -76,13 +76,17 @@ mod tests {
     ///   `Secret::expose(&x)` 不含 `.` 会被绕过。放宽后会多抓到本文件自己的定义/文档, 但白名单本来
     ///   就含 `secret.rs`, 无妨。
     ///
+    /// Task 3 评审 #8: `runtime.rs` 曾经也在这张白名单里 (当初是「留给将来」占的位), 但
+    /// `call_wizard`/`call_mutation` 实际调的是 `to_args()`, 一个 `expose(` 都没有——它又恰好是
+    /// 「最容易不小心把明文拼进某条错误文本 / 日志」的地方, 所以从白名单里去掉: 谁真的要在这个文件
+    /// 里读明文, 得先说明白为什么, 而不是顺着一个「留着也无妨」的旧条目继续写下去。
+    ///
     /// 另外加一条「白名单成员必须真的存在于 `src/` 下」的断言, 防止以后再出现同类死条目。
     #[test]
     fn expose_is_only_called_in_allowlisted_files() {
-        const EXPOSE_ALLOWLIST: [&str; 3] = [
+        const EXPOSE_ALLOWLIST: [&str; 2] = [
             "secret.rs",     // 定义处与它自己的测试
             "client/dto.rs", // `CreateInput::to_args()` / `ProbeInput::to_args()`, 唯一把它变成线上 JSON 的地方 (Task 3)
-            "runtime.rs",    // 把 to_args() 的结果发出去 (不直接碰明文, 但留给将来) (Task 3)
         ];
 
         fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
