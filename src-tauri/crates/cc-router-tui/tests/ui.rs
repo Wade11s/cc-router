@@ -501,6 +501,135 @@ fn the_api_key_is_masked_until_ctrl_r() {
     assert!(!masked_again.contains("sk"), "{masked_again}");
 }
 
+/// I1: 掩码不能封顶 (`Secret::MASK_CAP` = 24) —— 108 字符的 key (Anthropic 实测长度) 掩码后
+/// 值区里应该还能看到点、光标落在点串末尾一格 (紧跟其后的空位); 左移几下光标应该跟着点串一起
+/// 移动, 不会飞到空白区域 (那正是封顶版本会出的问题: 掩码文本比明文短, 光标按明文位置算却找
+/// 不到对应的点)。
+#[test]
+fn a_long_api_key_keeps_the_cursor_aligned_with_the_mask() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut a);
+    let long_key = "x".repeat(108);
+    type_str(&mut a, &long_key);
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|f| a.draw(f, Duration::ZERO)).unwrap();
+    let out = terminal.backend().to_string();
+    assert!(out.contains('•'), "108 字符的 key 掩码后应该还能看到点, 不该被封顶成空\n{out}");
+    let cursor = terminal.backend().cursor_position();
+    let buf = terminal.backend().buffer();
+    assert_eq!(buf[(cursor.x, cursor.y)].symbol(), " ", "光标应该落在点串之后的空位, 不是盖在最后一个点上面");
+    assert_eq!(buf[(cursor.x - 1, cursor.y)].symbol(), "•", "光标前一格应该是点, 不该飞到空白区域");
+
+    for _ in 0..5 {
+        a.handle_key(key(KeyCode::Left));
+    }
+    let mut terminal2 = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal2.draw(|f| a.draw(f, Duration::ZERO)).unwrap();
+    let cursor2 = terminal2.backend().cursor_position();
+    let buf2 = terminal2.backend().buffer();
+    assert_eq!(buf2[(cursor2.x, cursor2.y)].symbol(), "•", "左移之后光标应该仍然落在一个点上, 不是空白\n{}", terminal2.backend());
+}
+
+/// M2: 重选同一个厂商不该把用户手动改过的接入点弹回默认值。
+#[test]
+fn reselecting_the_same_provider_keeps_the_manually_chosen_endpoint() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut a); // provider_id=zhipu, endpoint_id=cn (默认), 焦点在 ApiKey
+
+    // 手动把接入点改成国际版。
+    a.handle_key(key(KeyCode::Up)); // ApiKey -> Endpoint
+    let open_endpoint = a.handle_key(key(KeyCode::Enter)).expect("Endpoint 行 ⏎ 应该产出 Action::OpenPicker");
+    a.update(open_endpoint);
+    a.update(Action::PickerDone { tag: PickerTag::WizardEndpoint, choice: PickerChoice::Item("intl".into()) });
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains("国际版"), "改接入点应该生效\n{out}");
+
+    // 回到厂商行, 重新确认同一个厂商 (智谱)。
+    a.handle_key(key(KeyCode::Up)); // Endpoint -> Provider
+    let open_provider = a.handle_key(key(KeyCode::Enter)).expect("Provider 行 ⏎ 应该产出 Action::OpenPicker");
+    a.update(open_provider);
+    a.update(Action::PickerDone { tag: PickerTag::WizardProvider, choice: PickerChoice::Item("zhipu".into()) });
+    let out2 = render(&mut a, 80, 24);
+    assert!(out2.contains("国际版"), "重选同一个厂商不该把手动改过的接入点弹回默认值\n{out2}");
+}
+
+/// M3: 校验失败挂上的字段错误, 在那个字段被编辑/重新选定之后应该消失。
+#[test]
+fn editing_a_field_clears_only_its_own_error() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    // 什么都不填直接提交: 第一个不合法的字段 (厂商) 报错, 焦点也被 `submit()` 拨回那个字段。
+    a.handle_key(key(KeyCode::Down)); // Provider -> Endpoint
+    a.handle_key(key(KeyCode::Down)); // Endpoint -> ApiKey
+    a.handle_key(key(KeyCode::Down)); // ApiKey -> DisplayName
+    a.handle_key(key(KeyCode::Down)); // DisplayName -> Submit
+    assert!(a.handle_key(key(KeyCode::Enter)).is_none(), "校验失败不该产出 Action");
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(ZH.wiz_err_provider), "应该先报厂商未选\n{out}");
+
+    // 选厂商修好这一项 (`submit()` 已经把焦点拨回了 Provider 行, `select_zhipu` 的前提成立)。
+    select_zhipu(&mut a);
+    let out2 = render(&mut a, 80, 24);
+    assert!(!out2.contains(ZH.wiz_err_provider), "选了厂商之后, 厂商自己的错误应该消失\n{out2}");
+}
+
+/// M5: 确认弹窗叠在表单上时, 终端光标不该还留在被压暗的输入框里——`Terminal::draw` 按
+/// `Frame::set_cursor_position` 有没有在这一帧被调过来决定显示/隐藏光标, 向导在有弹窗时应该
+/// 完全不调它。
+#[test]
+fn wizard_cursor_is_hidden_while_a_popup_is_on_top() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut a);
+    type_str(&mut a, "sk");
+    let confirm_action = a.handle_key(key(KeyCode::Esc)).expect("有输入时 Esc 应该弹确认");
+    a.update(confirm_action);
+
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|f| a.draw(f, Duration::ZERO)).unwrap();
+    assert!(!terminal.backend().cursor_visible(), "确认弹窗叠在表单上时不该显示终端光标");
+}
+
+/// M8: `Tab`/`BackTab` 现在在所有行类型上都分别等同 `↓`/`↑`, 不再只在文本行才认。
+#[test]
+fn tab_and_backtab_move_focus_on_every_row_type() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    // 初始焦点在 Provider (选择行)。Tab 应该移到 Endpoint——用「厂商还没选, Endpoint 行 ⏎ 该被
+    // 拒绝」这个只在焦点真的到了 Endpoint 才会触发的行为间接验证 (选择行本身不接受直接打字,
+    // 之前 Tab 在选择行上什么都不做, 现在应该像 ↓ 一样移动焦点)。
+    a.handle_key(key(KeyCode::Tab));
+    assert_eq!(
+        a.handle_key(key(KeyCode::Enter)),
+        Some(Action::Notify { kind: ToastKind::Info, text: ZH.wiz_pick_provider_first.to_string() }),
+        "Tab 应该已经把焦点移到 Endpoint 行"
+    );
+
+    // BackTab 应该把焦点移回 Provider。
+    let backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE);
+    a.handle_key(backtab);
+    let open_action = a.handle_key(key(KeyCode::Enter)).expect("回到 Provider 行, ⏎ 应该开厂商 picker");
+    match open_action {
+        Action::OpenPicker(spec) => assert_eq!(spec.tag, PickerTag::WizardProvider, "应该是厂商 picker"),
+        other => panic!("BackTab 应该已经把焦点移回 Provider 行, 实际 {other:?}"),
+    }
+}
+
+/// M9: 请求在飞 (`Stage::Creating`) 时 `Esc` 应该被吞掉 (不弹确认、不关闭), 底栏也不该显示
+/// `Esc 取消`——继续显示是纯误导, 这时候按了也没反应。
+#[test]
+fn creating_swallows_escape_and_hides_the_cancel_hint() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut a);
+    type_str(&mut a, "sk-test");
+    a.handle_key(key(KeyCode::Tab)); // ApiKey -> DisplayName
+    a.handle_key(key(KeyCode::Tab)); // DisplayName -> Submit
+    let submit_action = a.handle_key(key(KeyCode::Enter)).expect("提交应该产出 Action");
+    a.update(submit_action); // 进入 Stage::Creating
+
+    assert_eq!(a.handle_key(key(KeyCode::Esc)), None, "在飞时 Esc 应该被吞掉");
+    let out = render(&mut a, 80, 24);
+    assert!(!out.contains("Esc 取消"), "在飞时底栏不该显示 Esc 提示\n{out}");
+}
+
 // ---------- 订阅页 ----------
 
 #[test]

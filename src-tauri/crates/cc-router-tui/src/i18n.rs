@@ -383,6 +383,10 @@ pub struct Strings {
     pub key_field: &'static str,
     /// 向导表单底栏 / 选择行右端 hint: `⏎` 打开选择弹窗。
     pub key_pick: &'static str,
+    /// 向导表单底栏: 焦点在文本行 (`ApiKey`/`DisplayName`) 时 `⏎` 的说明 (移到下一项, 不是提交)。
+    /// 评审 I2: 底栏之前写死三条固定提示, 文本行上 `⏎` 实际是"下一项"却显示成"选择", 需要单独
+    /// 一个字段区分开。
+    pub key_next_field: &'static str,
     /// 向导表单底栏 / API Key 行右端 hint: `Ctrl+R` 切换明文/掩码。
     pub key_reveal: &'static str,
     /// 表单内容超过可视高度、被截断时最后一行的提示。
@@ -756,6 +760,7 @@ pub const ZH: Strings = Strings {
     wiz_create_failed: |reason| format!("创建失败: {reason}"),
     key_field: "字段",
     key_pick: "选择",
+    key_next_field: "下一项",
     key_reveal: "显示 / 隐藏",
     form_more: "… 内容放不下",
 };

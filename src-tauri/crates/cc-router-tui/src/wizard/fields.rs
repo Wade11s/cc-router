@@ -73,8 +73,18 @@ pub fn default_display_name(provider_name: &str, store: &Store) -> String {
 /// 界面上要显示 API Key 时的**唯一**明文出口 (`Ctrl+R` 就地切换)。`reveal` 为假返回掩码,
 /// 为真返回明文——`wizard/mod.rs::draw` 只调这一个函数, 不直接碰 `Secret::expose`
 /// (`secret.rs::EXPOSE_ALLOWLIST` 的源码扫描测试盯着这一点)。
+///
+/// **刻意不用 `Secret::masked()`**（评审 I1）: 那个版本为了不泄露真实长度, 封顶在 `MASK_CAP`
+/// (24) 个点; 但这里的光标 / 横向滚动是按**明文**的 `Input::visual_cursor()` 算的 (`wizard/mod.rs
+/// ::draw_basics`), 一旦掩码文本比明文短, 光标就会飞到掩码串右边的空白里——64 字符以上的 key
+/// (Anthropic 的约 108 字符) 掩码后甚至一个点都不剩, 看起来像没填, 用户会以为粘贴失败再粘一次,
+/// 内容被拼成两份。这里要的是"挡住肉眼"而不是"隐藏长度"(表单正在编辑一条还没保存的 key, 长度
+/// 泄露不是这个场景的威胁模型), 所以逐字给一个点、不封顶, 让掩码文本与明文逐字对齐, 光标/滚动
+/// 天然正确。`Secret::masked()` 本身不改——它留给"不可编辑的只读展示"这个未来场景, 那里不涉及
+/// 光标对齐, 封顶避免泄露长度是对的。
 pub fn api_key_display(key: &Secret, reveal: bool) -> String {
-    if reveal { key.expose().to_string() } else { key.masked() }
+    let plain = key.expose();
+    if reveal { plain.to_string() } else { "•".repeat(plain.chars().count()) }
 }
 
 #[cfg(test)]
@@ -152,7 +162,20 @@ mod tests {
     #[test]
     fn api_key_display_masks_unless_revealed() {
         let key = Secret::new("sk-test");
-        assert_eq!(api_key_display(&key, false), key.masked());
+        assert_eq!(api_key_display(&key, false), "•".repeat(7));
         assert_eq!(api_key_display(&key, true), "sk-test");
+    }
+
+    /// I1: 掩码不能封顶在 `Secret::MASK_CAP` (24) —— 否则超长 key (Anthropic 实测约 108 字符)
+    /// 掩码后比明文短, 靠明文 `visual_cursor()` 算的光标会飞到掩码串右边的空白里, 64 字符以上
+    /// 甚至会显示成空字符串。
+    #[test]
+    fn api_key_display_masks_without_a_length_cap() {
+        let long_key = "x".repeat(108);
+        let key = Secret::new(long_key.clone());
+        let masked = api_key_display(&key, false);
+        assert_eq!(masked.chars().count(), 108, "掩码应该逐字对应明文长度, 不能封顶");
+        assert_ne!(masked, key.masked(), "这里不该复用 Secret::masked() 的封顶版本");
+        assert_eq!(api_key_display(&key, true), long_key);
     }
 }

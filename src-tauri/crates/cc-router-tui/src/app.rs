@@ -503,11 +503,20 @@ impl App {
             Action::WizardDone(_) => self.update_wizard(&action),
             // P5 Task 4: 向导表单提交按钮触发的请求。`handle_key` 已经校验并打包好 `WizardCmd`,
             // 这里直接转成 `Cmd::Wizard`——跟上面 `OpenWizard` 直接调用 `wizard.on_open()` 是
-            // 同一条思路 (触发点是按键本身, 不经过 `Wizard::update()` 那条给结果用的路径)。理论上
-            // 只有 `Stage::Basics`(及以后 Slots/Custom)的 `handle_key` 才会产出这个 action, 但
-            // 即便向导已经不存在也无害地发出去——回来的 `WizardResult` 会在 `WizardDone` 分支被
-            // "没有向导就丢弃"接住, 不需要在这里再判一次 `self.wizard.is_some()`。
-            Action::WizardRequest(cmd) => vec![Cmd::Wizard(cmd)],
+            // 同一条思路 (触发点是按键本身, 不经过 `Wizard::update()` 那条给结果用的路径)。
+            // **必须判 `self.wizard.is_some()` 才转发**(评审 M1)——"没有向导也无害" 这个说法只
+            // 对 `WizardDone` 成立 (它落地时向导已经不在, `apply_wizard_result` 那条"没有向导就
+            // 丢弃"的路径正好接住), 对 `Create` 这类会写库的请求不成立: 如果这个 action 被塞进某个
+            // 确认弹窗的 `on_yes` (`Action::Confirmed` 会先 `discard_current()` 关掉向导再执行
+            // `inner`), 订阅会在向导已经关闭、没人接收结果的情况下照常建到后端, 订阅列表里凭空
+            // 多出一条 `(pending)`, 用户毫无察觉也没有 toast。
+            Action::WizardRequest(cmd) => {
+                if self.wizard.is_some() {
+                    vec![Cmd::Wizard(cmd)]
+                } else {
+                    Vec::new()
+                }
+            }
             Action::Tick { now_ms } => {
                 self.now_ms = now_ms;
                 self.tick += 1;
@@ -750,11 +759,17 @@ impl App {
             tz: self.tz,
         };
         // 有向导时内容区整个归它 (先 `Clear` 再画, 不叠在页面上面); 底栏左侧换成向导自己的键位,
-        // 右侧固定只剩 `Esc` (`?` 帮助 / `q` 退出在向导里按不出来, 继续提示会误导, P5 Task 2)。
+        // 右侧固定只剩 `Esc` (`?` 帮助 / `q` 退出在向导里按不出来, 继续提示会误导, P5 Task 2)——
+        // **除非请求正在飞** (`can_cancel()` 为假, 评审 M9): 那种情况下 `Esc` 也按不出反应,
+        // 继续显示这条提示就是纯误导, 右侧整个留空。`self.popup.is_some()` 在调 `wizard.draw`
+        // 之前先取出来: 向导 (评审 M5) 据此决定要不要设终端光标——有弹窗叠在上面时它自己的输入框
+        // 不该再显示光标, 交给弹窗决定 (picker 会设、confirm/help 不设即隐藏)。
+        let popup_open = self.popup.is_some();
         let (left, right): (Vec<Hint>, Vec<Hint>) = if let Some(wizard) = &mut self.wizard {
             frame.render_widget(Clear, content);
-            wizard.draw(frame, content, &mut ctx);
-            (wizard.hints(s), vec![("Esc", s.key_cancel)])
+            wizard.draw(frame, content, &mut ctx, popup_open);
+            let right = if wizard.can_cancel() { vec![("Esc", s.key_cancel)] } else { Vec::new() };
+            (wizard.hints(s), right)
         } else {
             let page = self.pages.get_mut(self.tab);
             page.draw(frame, content, &mut ctx);
@@ -1095,6 +1110,19 @@ mod tests {
         assert!(a.wizard.is_none(), "准备: 没有打开过向导");
         let result = WizardResult::Providers(Ok(vec![]));
         assert!(a.update(Action::WizardDone(Box::new(result))).is_empty(), "没有向导时应该直接丢弃, 不 panic");
+    }
+
+    /// 评审 M1: 没有向导时 `Action::WizardRequest` 不该被转成 `Cmd::Wizard`——不像
+    /// `WizardDone`(落地时向导已经不在也无害, "没有向导就丢弃" 这条路径正好接住), `WizardRequest`
+    /// 背后是 `create_subscription` 这类会写库的请求, 真发出去就会在没人接收结果的情况下把订阅
+    /// 建到后端。`WizardCmd::LoadProviders` 不带负载, 用它当占位验证"没有向导就不转发"这条纯粹的
+    /// 判断逻辑, 具体是哪个 `WizardCmd` 变体不重要。
+    #[test]
+    fn wizard_request_without_a_wizard_produces_nothing() {
+        let mut a = app();
+        assert!(a.wizard.is_none(), "准备: 没有打开过向导");
+        let cmds = a.update(Action::WizardRequest(Box::new(WizardCmd::LoadProviders)));
+        assert!(cmds.is_empty(), "没有向导时不该产出任何 Cmd: {cmds:?}");
     }
 
     #[test]

@@ -9,8 +9,13 @@
 //!   不手算——超长的值交给 [`crate::format::fit`] 截断 (无光标行) 或 `Paragraph::scroll` 裁切
 //!   (有光标行)。
 //! - `error` 另起一行, 缩进到值那一列, `⚠ ` 前缀 + warn 色。
-//! - `Button` 居中画 `"[ 标签 ]"`, 聚焦时整体 `REVERSED`; `busy` 时标签前面插一个 throbber 符号
-//!   (`to_symbol_span` 自带的尾随空格正好当分隔)。
+//! - `Note` 按显示宽度折行 (`crate::format::wrap`), 最多 3 行, 超出时第 3 行截断收尾补 `…`——
+//!   与订阅详情页「最近错误」超长截断同一套先例 (评审 M6, `Created(Err)` 的后端报错原文可能很长)。
+//! - `Button` 居中画 `"[ 标签 ]"`, 聚焦时**只给这一段 span** 加 `REVERSED`——`Line` 自己的
+//!   `style()` 会把整个 `area` 宽度都铺上反色 (`Buffer::set_style` 先垫一层背景再画 span), 之前
+//!   踩过这个坑 (评审 M4): 焦点移到按钮上时一整行 (含左右大片空白) 都被反色, 看起来像列表选中条,
+//!   方括号失去意义。改成只在 `Span::styled` 上加修饰符, `Line` 本身不设 `style`。`busy` 时标签
+//!   前面插一个 throbber 符号 (`to_symbol_span` 自带的尾随空格正好当分隔)。
 //! - 光标: **照抄 `widgets::picker::draw` 的算法** (Fix round F 同款坑)——可视宽度先减 1 再算
 //!   滚动量, 光标 x 再 `.min(右边界 - 1)`, 否则文本正好填满输入框时光标会画在最后一个字符上面
 //!   而不是紧跟其后的空位。`form.rs` 没有 `tui_input::Input` 可以借, 所以 [`visual_scroll`] 是
@@ -26,10 +31,13 @@ use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::format::fit;
+use crate::format::{fit, wrap};
 use crate::i18n::Strings;
 use crate::theme::Theme;
 use crate::widgets::spinner_state;
+
+/// `Note` 行最多画几行, 超出截断收尾补 `…` —— 与订阅详情页「最近错误」同一套上限规则。
+const NOTE_MAX_ROWS: usize = 3;
 
 /// 标签列的显示宽度; 所有字段的值左对齐到同一条竖线。
 pub const LABEL_COL: usize = 12;
@@ -66,10 +74,12 @@ pub enum FormRow<'a> {
 }
 
 impl FormRow<'_> {
-    /// 这一行占几个终端行: 带错误信息的字段行额外占一行。
-    fn height(&self) -> u16 {
+    /// 这一行占几个终端行: 带错误信息的字段行额外占一行; `Note` 按 `width` 折行, 封顶
+    /// `NOTE_MAX_ROWS`——所以行高现在依赖横向宽度, 不是一个纯常量。
+    fn height(&self, width: u16) -> u16 {
         match self {
             FormRow::Field { error: Some(_), .. } => 2,
+            FormRow::Note { text } => note_lines(text, width).len() as u16,
             _ => 1,
         }
     }
@@ -108,7 +118,7 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'
 
     // 两遍: 先算总高度决定要不要给 `form_more` 留一行, 再真正画——避免"最后一行恰好卡在边界"
     // 时该不该留提示行的边界判断出错 (先量整体, 不是画一行判一次)。
-    let total_height: u16 = view.rows.iter().map(FormRow::height).sum();
+    let total_height: u16 = view.rows.iter().map(|r| r.height(inner.width)).sum();
     let reserve_more = total_height > inner.height;
     let usable = if reserve_more { inner.height.saturating_sub(1) } else { inner.height };
 
@@ -116,7 +126,7 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'
     let mut used = 0u16;
     let mut focus_rect = None;
     for (i, row) in view.rows.iter().enumerate() {
-        let needed = row.height();
+        let needed = row.height(inner.width);
         if used + needed > usable {
             break;
         }
@@ -162,8 +172,46 @@ fn draw_row(frame: &mut Frame, area: Rect, row: &FormRow, focused: bool, theme: 
             }
         }
         FormRow::Button { label, busy } => draw_button(frame, area, label, *busy, focused, tick),
-        FormRow::Note { text } => frame.render_widget(Line::raw(*text).style(theme.muted_style()), area),
+        FormRow::Note { text } => draw_note(frame, area, text, theme),
         FormRow::Spacer => {}
+    }
+}
+
+/// 按显示宽度折行, 最多 `NOTE_MAX_ROWS` 行, 超出时最后一行截断收尾补 `…`。
+fn note_lines(text: &str, width: u16) -> Vec<String> {
+    let width = width.max(1) as usize;
+    let mut lines = wrap(text, width);
+    if lines.len() > NOTE_MAX_ROWS {
+        lines.truncate(NOTE_MAX_ROWS);
+        if let Some(last) = lines.last_mut() {
+            *last = ellipsize(last, width);
+        }
+    }
+    lines
+}
+
+/// 强制截断收尾补 `…`, 不管 `text` 本身是否已经等于 `width`——跟 [`crate::format::fit`] 的
+/// "已经放得下就不截" 不同: 这里调用方已经知道"后面还有更多内容被砍掉了", 必须显式提示,
+/// 不能因为这一行凑巧正好填满 `width` 就悄悄放过不加省略号。
+fn ellipsize(text: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0usize;
+    for c in text.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > width.saturating_sub(1) {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    out.push('…');
+    out
+}
+
+fn draw_note(frame: &mut Frame, area: Rect, text: &str, theme: &Theme) {
+    for (i, line) in note_lines(text, area.width).into_iter().enumerate() {
+        let line_area = Rect { y: area.y + i as u16, height: 1, ..area };
+        frame.render_widget(Line::raw(line).style(theme.muted_style()), line_area);
     }
 }
 
@@ -250,10 +298,11 @@ fn draw_button(frame: &mut Frame, area: Rect, label: &str, busy: bool, focused: 
     } else {
         format!("[ {label} ]")
     };
-    let mut line = Line::raw(text).centered();
-    if focused {
-        line = line.style(Style::new().add_modifier(Modifier::REVERSED));
-    }
+    // M4: REVERSED 只加在这个 span 上, 不能调 `Line::style()`——`Line` 的 `style` 会在渲染时先给
+    // 整个 `area` 宽度垫一层背景 (`Buffer::set_style`), 于是聚焦时按钮两侧大片空白也会被反色,
+    // 看起来像列表选中条。`Span::styled` 的样式只覆盖它自己的字符, `Line` 本身留默认 `Style`。
+    let style = if focused { Style::new().add_modifier(Modifier::REVERSED) } else { Style::new() };
+    let line = Line::from(Span::styled(text, style)).centered();
     frame.render_widget(line, area);
 }
 
@@ -339,5 +388,42 @@ mod tests {
 
         let narrow = render(&view, 59, 10);
         assert!(!narrow.contains("STEP1"), "宽度不够时步骤条应该让位\n{narrow}");
+    }
+
+    /// M6: `Note` 太长时按宽度折行、封顶 3 行, 第 3 行截断收尾补 `…`——不能像旧版那样硬切成一行
+    /// 撞在单词中间, 也不能无限往下长占满整张表单。
+    #[test]
+    fn a_long_note_wraps_up_to_three_lines_and_the_third_ends_with_an_ellipsis() {
+        let text = "A".repeat(300);
+        let rows = vec![FormRow::Note { text: &text }];
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0 };
+        let out = render(&view, 50, 12);
+        let a_lines: Vec<&str> = out.lines().filter(|l| l.contains('A')).collect();
+        assert_eq!(a_lines.len(), NOTE_MAX_ROWS, "应该最多折 {NOTE_MAX_ROWS} 行\n{out}");
+        assert!(a_lines[NOTE_MAX_ROWS - 1].contains('…'), "最后一行应该以省略号收尾\n{out}");
+        // 前两行不该被截, 应该是纯 'A' 填满一整行 (折行本身工作正常, 不是每行都强行加省略号)。
+        assert!(!a_lines[0].contains('…'), "第一行不该有省略号\n{out}");
+    }
+
+    /// M10: 内容超过可视高度时的截断路径此前没有任何测试真的触发过。8 行内容塞进只有 5 行可用
+    /// 高度的区域, 聚焦行 (下标 7) 必然被截掉——断言最后一行是 `form_more`、返回值是 `None`。
+    #[test]
+    fn content_taller_than_the_area_is_truncated_with_a_more_hint_and_no_focus_rect() {
+        let labels = ["行0", "行1", "行2", "行3", "行4", "行5", "行6", "行7"];
+        let rows: Vec<FormRow> = labels.iter().map(|l| field(l, "值")).collect();
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: rows.len() - 1, tick: 0 };
+
+        let theme = Theme::new(ColorMode::TrueColor);
+        // area 高 9: 去掉上下边框 (2) 与 padding 上下 (2) 剩 5 行可用, 装不下 8 行。
+        let mut terminal = Terminal::new(TestBackend::new(50, 9)).unwrap();
+        let mut focus_rect = None;
+        terminal
+            .draw(|frame| {
+                focus_rect = draw(frame, frame.area(), &view, &theme, &ZH);
+            })
+            .unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains(ZH.form_more), "放不下时应该显示提示行\n{out}");
+        assert!(focus_rect.is_none(), "聚焦行被截断掉时应该返回 None");
     }
 }

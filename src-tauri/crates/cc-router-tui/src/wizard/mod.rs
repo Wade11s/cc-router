@@ -8,13 +8,16 @@
 //! `update_wizard` helper与 `update_page` 一一对应)。
 //!
 //! **表单交互的总规则** (`Basics` / Task 5 的 `Slots` / Task 6 的 `Custom` 三个阶段共用):
-//! - 表单是一列「行」, `↑` / `↓` 在**可聚焦**的行之间移动 (说明行与空行跳过), 不绕回。
-//! - **文本行**: 直接打字 (不用先进入编辑模式); `⏎` / `Tab` = 移到下一个可聚焦行。
+//! - 表单是一列「行」, `↑` / `↓` 在**可聚焦**的行之间移动 (说明行与空行跳过), 不绕回;
+//!   `Tab` 与 `↓` 同义、`BackTab` (Shift+Tab) 与 `↑` 同义, 在**所有**行类型上都有效 (评审
+//!   M8——不再只在文本行才认 `Tab`)。
+//! - **文本行**: 直接打字 (不用先进入编辑模式); `⏎` = 移到下一个可聚焦行。
 //! - **选择行**: `⏎` = 打开选择弹窗; 不能直接打字。
 //! - **按钮行**: `⏎` = 执行。所以「下一步」「保存」「获取模型列表」**都不占用任何字符键**——
 //!   这是表单吞掉全部按键之后唯一安全的做法。
-//! - `Esc` = 退出向导 (`has_input()` 为真时先弹确认)。
-//! - 有请求在飞时: 整张表单只读 (按键除 `Esc` 外全部吞掉), 按钮行显示 throbber。
+//! - `Esc` = 退出向导 (`has_input()` 为真时先弹确认)——**除非请求正在飞** (`can_cancel()` 为
+//!   假): 那种情况下连 `Esc` 也吞掉, 整张表单只读直到结果回来 (评审 M9 裁决; `Ctrl+C` 仍能强退,
+//!   它在 `App` 层, 向导拦不住), 按钮行显示 throbber。
 //!
 //! P5 Task 2 只搭了骨架 (`Stage::Loading` / `LoadFailed`, 拉厂商列表、画一个加载中/失败的空容器、
 //! `Esc` 退出)。**Task 4 起加真正的表单**: 本文件当前实现了内置厂商路径的第一步
@@ -129,11 +132,11 @@ impl Wizard {
     }
 
     /// 除 `Ctrl+C` 外的全部按键。`None` = 吞掉 (或只改了向导自己的状态)。`Esc` 的处理跟阶段
-    /// 无关, 排在最前面统一判断; 其余按键只有 `Stage::Basics` 才会真的处理——`Loading` /
-    /// `LoadFailed` 没有字段可以接收输入, `Creating` 整张表单只读 (总规则: 有请求在飞时按键除
-    /// `Esc` 外全部吞掉)。
+    /// 无关 (`can_cancel()` 为假时连 `Esc` 也不接), 排在最前面统一判断; 其余按键只有
+    /// `Stage::Basics` 才会真的处理——`Loading` / `LoadFailed` 没有字段可以接收输入, `Creating`
+    /// 整张表单只读 (总规则: 有请求在飞时按键全部吞掉, 评审 M9 起连 `Esc` 也不例外)。
     pub fn handle_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
-        if key.code == KeyCode::Esc {
+        if key.code == KeyCode::Esc && self.can_cancel() {
             return Some(if self.has_input() {
                 Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::CloseWizard) }
             } else {
@@ -147,24 +150,25 @@ impl Wizard {
         }
     }
 
-    /// `Stage::Basics` 的按键表 (总规则见文件顶部文档): `↑`/`↓` 在 5 个可聚焦字段之间移动;
-    /// `Provider`/`Endpoint` 是选择行, `⏎` 开对应的 picker; `ApiKey`/`DisplayName` 是文本行,
-    /// 直接打字、`⏎`/`Tab` 移到下一行, `ApiKey` 额外认 `Ctrl+R` 切换明文/掩码; `Submit` 是
-    /// 按钮行, `⏎` 触发校验 + 提交。
+    /// `Stage::Basics` 的按键表 (总规则见文件顶部文档): `↑`/`↓`/`Tab`/`BackTab` 在 5 个可聚焦
+    /// 字段之间移动 (评审 M8: `Tab` 与 `↓` 同义、`BackTab` 与 `↑` 同义, 在**所有**行类型上都
+    /// 有效, 不再只在文本行才认); `Provider`/`Endpoint` 是选择行, `⏎` 开对应的 picker;
+    /// `ApiKey`/`DisplayName` 是文本行, 直接打字、`⏎` 移到下一行, `ApiKey` 额外认 `Ctrl+R`
+    /// 切换明文/掩码; `Submit` 是按钮行, `⏎` 触发校验 + 提交。
     fn handle_basics_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::BackTab => {
                 self.move_focus(-1);
                 None
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Tab => {
                 self.move_focus(1);
                 None
             }
             KeyCode::Enter if self.focus == BasicsField::Provider => Some(self.open_provider_picker(s)),
             KeyCode::Enter if self.focus == BasicsField::Endpoint => Some(self.open_endpoint_picker(s)),
-            KeyCode::Enter | KeyCode::Tab if matches!(self.focus, BasicsField::ApiKey | BasicsField::DisplayName) => {
+            KeyCode::Enter if matches!(self.focus, BasicsField::ApiKey | BasicsField::DisplayName) => {
                 self.move_focus(1);
                 None
             }
@@ -194,15 +198,25 @@ impl Wizard {
         self.focus = BasicsField::ALL[next];
     }
 
+    /// 编辑成功 (值真的变了) 就清掉**这个字段自己**的校验错误 (评审 M3)——别的字段的错误不动,
+    /// 不然改一个字段会把提交时挂在另一个字段上的提示也一并抹掉, 反而让用户以为它也修好了。
+    fn clear_field_error(&mut self, field: BasicsField) {
+        if self.field_error.is_some_and(|(f, _)| f == field) {
+            self.field_error = None;
+        }
+    }
+
     fn edit_api_key(&mut self, key: KeyEvent) {
         if self.api_key_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
             self.draft.api_key = Secret::new(self.api_key_input.value());
+            self.clear_field_error(BasicsField::ApiKey);
         }
     }
 
     fn edit_display_name(&mut self, key: KeyEvent) {
         if self.display_name_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
             self.draft.display_name = self.display_name_input.value().to_string();
+            self.clear_field_error(BasicsField::DisplayName);
         }
     }
 
@@ -263,9 +277,11 @@ impl Wizard {
     }
 
     /// 选中内置厂商 → 记 `provider_id`, `endpoint_id` 置为 `provider.default_endpoint()`,
-    /// `display_name` 若为空**或**等于上一次自动生成的值则重算, 焦点移到 `ApiKey`。选中自定义
-    /// 条目 → 进 Task 6 的 `Stage::Custom` (本 Task 先弹一条 `wiz_custom_todo` 的 Info toast
-    /// 占位, Task 6 替换掉这一行并删掉这个字段)。选中 OAuth 厂商 → 不设值, 只弹
+    /// `display_name` 若为空**或**等于上一次自动生成的值则重算, 焦点移到 `ApiKey`。**重选同一个
+    /// 厂商 (评审 M2) 什么都不重算**——接入点/备注名/焦点原样保留, 否则用户手动把接入点从默认值
+    /// 改成别的、又不小心在厂商行按了 `⏎` 确认同一个厂商, 接入点会被悄悄弹回默认值, 用户毫无
+    /// 察觉。选中自定义条目 → 进 Task 6 的 `Stage::Custom` (本 Task 先弹一条 `wiz_custom_todo`
+    /// 的 Info toast 占位, Task 6 替换掉这一行并删掉这个字段)。选中 OAuth 厂商 → 不设值, 只弹
     /// `wiz_desktop_only`。
     fn apply_provider_choice(&mut self, choice: &PickerChoice, store: &Store, s: &'static Strings) {
         // `allow_custom: false`: picker 理论上不会产出 `Custom`, 防御性地忽略。
@@ -280,15 +296,29 @@ impl Wizard {
             self.notice = Some((ToastKind::Info, s.wiz_desktop_only.to_string()));
             return;
         }
-        self.draft.provider_id = provider.id.clone();
-        self.draft.endpoint_id = provider.default_endpoint().map(|e| e.id.clone()).unwrap_or_default();
+        // 把后面要用的字段先拷成拥有所有权的值——`provider` 借用着 `self.providers`, 下面几行都
+        // 要调 `&mut self` 的方法 (`clear_field_error` 等), 两者不能同时活着。
+        let provider_id = provider.id.clone();
+        let provider_display_name = provider.display_name.clone();
+        let default_endpoint_id = provider.default_endpoint().map(|e| e.id.clone()).unwrap_or_default();
+
+        // 选中了一个合法的内置厂商 (不管是不是重选同一个), 这个字段本身就算通过了, 先清错误
+        // (评审 M3)。
+        self.clear_field_error(BasicsField::Provider);
+        if provider_id == self.draft.provider_id {
+            return; // M2: 重选同一个厂商, 接入点/备注名/焦点都不动。
+        }
+        self.draft.provider_id = provider_id;
+        self.draft.endpoint_id = default_endpoint_id;
+        self.clear_field_error(BasicsField::Endpoint);
         let still_auto =
             self.draft.display_name.is_empty() || self.last_auto_display_name.as_deref() == Some(self.draft.display_name.as_str());
         if still_auto {
-            let name = default_display_name(&provider.display_name, store);
+            let name = default_display_name(&provider_display_name, store);
             self.draft.display_name = name.clone();
             self.display_name_input = Input::new(name.clone());
             self.last_auto_display_name = Some(name);
+            self.clear_field_error(BasicsField::DisplayName);
         }
         self.focus = BasicsField::ApiKey;
     }
@@ -296,6 +326,7 @@ impl Wizard {
     fn apply_endpoint_choice(&mut self, choice: &PickerChoice) {
         if let PickerChoice::Item(id) = choice {
             self.draft.endpoint_id = id.clone();
+            self.clear_field_error(BasicsField::Endpoint);
         }
     }
 
@@ -363,40 +394,52 @@ impl Wizard {
         }
     }
 
-    pub fn draw(&mut self, frame: &mut Frame, area: Rect, ctx: &mut DrawCtx) {
+    /// `popup_open`: 是否有弹窗叠在向导上面 (`self.popup.is_some()`, `App::draw` 传进来)。
+    /// 评审 M5: 有弹窗时向导不该再设终端光标——`Frame::set_cursor_position` 一帧只记一个坐标,
+    /// 最后一次调用生效; 向导先画、弹窗后画, 如果向导设了光标而弹窗 (Confirm/Help/Detail) 自己
+    /// 不设, 那个坐标就会原样留到帧尾, 光标停在被压暗的输入框里闪烁。Picker 弹窗自己会设光标,
+    /// 这次调用即便被跳过也无妨 (它的设置发生在向导之后, 天然覆盖)。
+    ///
+    /// **刻意写成对 `stage` 的单个穷尽 `match`, 不用"提前 return + 再 match 一次"**——旧版那样写
+    /// 需要在第二个 `match` 里给已经处理过的分支塞 `unreachable!()`, 是这个 crate 非测试代码
+    /// 唯一的 panic 点; 以后往 `Stage` 加变体时很容易只改第一个 `matches!()` 忘了改第二个
+    /// `match`, 那就会在画面上真的 panic (评审 M7)。现在每个变体各自一条臂, 加新变体编译期就会
+    /// 报 E0004, 没有能被漏掉的分支。
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect, ctx: &mut DrawCtx, popup_open: bool) {
         let theme = ctx.theme;
         let s = ctx.s;
-        if matches!(self.stage, Stage::Basics | Stage::Creating) {
-            self.draw_basics(frame, area, theme, s, ctx.tick);
-            return;
-        }
-
-        // P5 Task 2 的原始画法 (`Loading` / `LoadFailed`): 带边框的空容器 + 居中一行——加载中带
-        // throbber (与总览页「重连中」同一套 `spinner_state` + `to_symbol_span`), 失败时改成一行
-        // 错误文案。
-        let block = Block::bordered().border_type(BorderType::Rounded).border_style(theme.border_style()).title_top(format!(" {} ", s.wiz_title));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        let line = match &self.stage {
+        match &self.stage {
             Stage::Loading => {
                 let state = spinner_state(ctx.tick);
                 // `to_symbol_span` 自己已经在符号后面带一个空格 (throbber-widgets-tui 的实现),
-                // 这里不用再手动加一个前导空格——否则会跟总览页「重连中」那行 (`draw_tabs`) 的间距
-                // 对不上, 平白多出一格。
+                // 这里不用再手动加一个前导空格——否则会跟总览页「重连中」那行 (`draw_tabs`) 的
+                // 间距对不上, 平白多出一格。
                 let spinner = Throbber::default().throbber_set(BRAILLE_SIX).to_symbol_span(&state);
-                Line::from(vec![spinner, Span::raw(s.wiz_loading_providers)]).centered()
+                let line = Line::from(vec![spinner, Span::raw(s.wiz_loading_providers)]).centered();
+                Self::draw_placeholder(frame, area, theme, s, line);
             }
-            Stage::LoadFailed(reason) => Line::styled((s.wiz_load_failed)(reason), Style::new().fg(theme.err)).centered(),
-            Stage::Basics | Stage::Creating => unreachable!("这两个分支已经在函数顶部 return 了"),
-        };
+            Stage::LoadFailed(reason) => {
+                let line = Line::styled((s.wiz_load_failed)(reason), Style::new().fg(theme.err)).centered();
+                Self::draw_placeholder(frame, area, theme, s, line);
+            }
+            Stage::Basics => self.draw_basics(frame, area, theme, s, ctx.tick, popup_open),
+            Stage::Creating => self.draw_basics(frame, area, theme, s, ctx.tick, popup_open),
+        }
+    }
+
+    /// `Loading` / `LoadFailed` 共用的画法 (P5 Task 2 原样保留): 带边框的空容器 + 居中一行, 由
+    /// 调用方按阶段自己拼好 `line`。
+    fn draw_placeholder(frame: &mut Frame, area: Rect, theme: &Theme, s: &'static Strings, line: Line<'static>) {
+        let block = Block::bordered().border_type(BorderType::Rounded).border_style(theme.border_style()).title_top(format!(" {} ", s.wiz_title));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
         frame.render_widget(line, inner.centered_vertically(Constraint::Length(1)));
     }
 
     /// `Stage::Basics` / `Stage::Creating` 共用: 后者只是把全部字段画成 `locked`、按钮画成
     /// `busy`、标签换成 `wiz_creating`——两个阶段的行结构完全一样, 拆成两份反而要重复一遍组装
     /// 逻辑。
-    fn draw_basics(&self, frame: &mut Frame, area: Rect, theme: &Theme, s: &'static Strings, tick: u64) {
+    fn draw_basics(&self, frame: &mut Frame, area: Rect, theme: &Theme, s: &'static Strings, tick: u64, popup_open: bool) {
         let busy = matches!(self.stage, Stage::Creating);
 
         let provider_label = self.provider_label();
@@ -404,8 +447,10 @@ impl Wizard {
         let api_key_text = api_key_display(&self.draft.api_key, self.reveal_api_key);
         let pick_hint = format!("⏎ {}", s.key_pick);
         let reveal_hint = format!("Ctrl+R {}", s.key_reveal);
-        let api_key_cursor = self.api_key_input.visual_cursor();
-        let display_name_cursor = self.display_name_input.visual_cursor();
+        // M5: 弹窗盖在上面时两个文本行都不设光标 (`None`), 值本身照常显示——只是没有一个终端
+        // 光标去闪它。
+        let api_key_cursor = (!popup_open).then(|| self.api_key_input.visual_cursor());
+        let display_name_cursor = (!popup_open).then(|| self.display_name_input.visual_cursor());
         let field_error = |field: BasicsField| self.field_error.and_then(|(f, msg)| (f == field).then_some(msg));
 
         let mut rows: Vec<FormRow> = Vec::new();
@@ -436,7 +481,7 @@ impl Wizard {
             value: &api_key_text,
             placeholder: "",
             hint: Some(&reveal_hint),
-            cursor: Some(api_key_cursor),
+            cursor: api_key_cursor,
             error: field_error(BasicsField::ApiKey),
             locked: busy,
         });
@@ -445,7 +490,7 @@ impl Wizard {
             value: &self.draft.display_name,
             placeholder: "",
             hint: None,
-            cursor: Some(display_name_cursor),
+            cursor: display_name_cursor,
             error: field_error(BasicsField::DisplayName),
             locked: busy,
         });
@@ -483,13 +528,36 @@ impl Wizard {
     }
 
     /// 底栏左侧。`Loading`/`LoadFailed`/`Creating` 没有任何可操作的字段 (`Creating` 整张表单
-    /// 只读), 留空; `Basics` 给出三条通用提示——具体是哪一行、这一刻能不能打字, 由表单自己的
-    /// 画法 (聚焦标记 / hint) 说明, 底栏只需要点出"能做什么"这三类操作。
+    /// 只读), 留空; `Basics` 按**当前聚焦行的类型**给提示 (评审 I2: 旧版三条提示写死不随焦点变,
+    /// 在文本行上 `⏎` 实际是"下一项"却显示成"选择", 在按钮上 `⏎` 会真的调用后端却看不出来)——
+    /// `↑↓ 字段` 常驻; 选择行 (`Provider`/`Endpoint`) 追加 `⏎ 选择`; 文本行 (`ApiKey`/
+    /// `DisplayName`) 追加 `⏎ 下一项`, `ApiKey` 再多一条 `Ctrl+R 显示/隐藏` (只在这一行有效);
+    /// 按钮行 (`Submit`) 追加 `⏎` + **按钮自己的标签**, 而不是一个通用词, 让用户一眼知道回车
+    /// 会发生什么。行内的 hint (行右端「⏎ 选择」之类) 不受这条规则影响, 照旧固定。
     pub fn hints(&self, s: &'static Strings) -> Vec<Hint<'static>> {
         match &self.stage {
             Stage::Loading | Stage::LoadFailed(_) | Stage::Creating => Vec::new(),
-            Stage::Basics => vec![("↑↓", s.key_field), ("⏎", s.key_pick), ("Ctrl+R", s.key_reveal)],
+            Stage::Basics => {
+                let mut hints = vec![("↑↓", s.key_field)];
+                match self.focus {
+                    BasicsField::Provider | BasicsField::Endpoint => hints.push(("⏎", s.key_pick)),
+                    BasicsField::ApiKey => {
+                        hints.push(("⏎", s.key_next_field));
+                        hints.push(("Ctrl+R", s.key_reveal));
+                    }
+                    BasicsField::DisplayName => hints.push(("⏎", s.key_next_field)),
+                    BasicsField::Submit => hints.push(("⏎", s.wiz_btn_next)),
+                }
+                hints
+            }
         }
+    }
+
+    /// 请求在飞 (`Stage::Creating`) 时能不能按 `Esc` 退出——`App::draw` 据此决定要不要在底栏
+    /// 右侧显示 `Esc 取消` (评审 M9: 在飞时连 `Esc` 都被 `handle_key` 吞掉, 继续显示这条提示
+    /// 就是纯误导)。
+    pub fn can_cancel(&self) -> bool {
+        !matches!(self.stage, Stage::Creating)
     }
 
     /// 用户已经填过东西 / 已经创建过订阅 —— `Esc` 要不要先确认看这个。`Basics` 下「厂商已选」
@@ -603,5 +671,15 @@ mod tests {
         w.request_close_for_test();
         assert!(w.take_close_request());
         assert!(!w.take_close_request(), "取走之后应该清零");
+    }
+
+    /// 评审 M9: 请求在飞 (`Stage::Creating`) 时连 `Esc` 也该被吞掉, 不弹确认——直接摆 `stage`
+    /// (私有字段, 与本文件同一个 `mod`) 比走完整个选厂商流程更直接, 只验证这一条单点行为。
+    #[test]
+    fn escape_is_swallowed_while_a_request_is_in_flight() {
+        let mut w = Wizard::new();
+        w.stage = Stage::Creating;
+        assert!(!w.can_cancel(), "在飞时不该能取消");
+        assert_eq!(w.handle_key(key(KeyCode::Esc), &crate::i18n::ZH), None, "在飞时 Esc 应该被吞掉");
     }
 }
