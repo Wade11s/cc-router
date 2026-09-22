@@ -362,7 +362,9 @@ fn wizard_load_failure_shows_the_reason_and_esc_still_closes() {
 // ---------- P5 Task 4: 向导第一步 (内置厂商) ----------
 
 /// 内置厂商 (智谱 AI) 的假 `Provider`: 两个接入点, 默认选中国内版——`wizard_basics_80x24`
-/// 等用例照着 task-4-brief.md 的 80×24 布局例子选它。
+/// 等用例照着 task-4-brief.md 的 80×24 布局例子选它。`example_models` 非空 (P5 Task 5 评审起):
+/// `wizard_at_slots_with_manual_fallback` 这类"自动发现失败"场景要用它验证槽位 picker 退回
+/// 手填候选这条路径, 之前留空导致这条路径完全没有测试覆盖过。
 fn zhipu_provider() -> Provider {
     Provider {
         id: "zhipu".into(),
@@ -374,7 +376,7 @@ fn zhipu_provider() -> Provider {
         ],
         default_endpoint: Some("cn".into()),
         auth: ProviderAuth { auth_type: "api_key".into() },
-        model_discovery: ModelDiscovery { enabled: true, example_models: vec![] },
+        model_discovery: ModelDiscovery { enabled: true, example_models: vec!["glm-4-plus".into(), "glm-4.5-flash".into()] },
     }
 }
 
@@ -423,14 +425,15 @@ fn submit_basics(a: &mut App) -> Action {
     a.handle_key(key(KeyCode::Enter)).expect("填完表单提交应该产出 Action")
 }
 
-/// 打开向导, 走完 `Basics` → 提交 → `Created(Ok)` (id 固定 `"sub-1"`), 停在 `Stage::Creating`
-/// (已经拿到 id, 文案是 `wiz_loading_models`, 在等 `Models` 结果)。P5 Task 5 的状态流转测试从这里
-/// 接着喂不同的 `Models` 结果。
+/// 打开向导, 走完 `Basics` → 提交 → `Created(Ok)` (id 固定 `"sub-1"`), 停在
+/// `Stage::LoadingModels` (已经拿到 id, 文案是 `wiz_loading_models`, 在等 `Models` 结果——评审
+/// 收窄起这是独立的 stage, 不再是"停在 Creating 换文案")。P5 Task 5 的状态流转测试从这里接着
+/// 喂不同的 `Models` 结果。
 fn wizard_after_create() -> App {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     let submit_action = submit_basics(&mut a);
     a.update(submit_action); // Stage::Creating
-    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() })))));
+    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))))); // Stage::LoadingModels
     a
 }
 
@@ -668,8 +671,9 @@ fn creating_swallows_escape_and_hides_the_cancel_hint() {
 
 // ---------- P5 Task 5: 向导第二步 (绑定模型) ----------
 
-/// 状态流转表第 2 行: `Created(Ok(id))` 落地应该紧接着发一次 `LoadModels { id }` (仍然是
-/// `Stage::Creating`, 只是文案换了, 见 `wizard/mod.rs::Stage::Creating` 的文档注释)。
+/// 状态流转表第 2 行: `Created(Ok(id))` 落地应该紧接着发一次 `LoadModels { id }`, 并进
+/// `Stage::LoadingModels` (评审收窄起这是独立的 stage, 不再是"停在 Creating 换文案"——见
+/// `wizard/mod.rs::Stage::LoadingModels` 的文档注释)。
 #[test]
 fn a_successful_create_asks_for_the_model_list() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
@@ -681,6 +685,54 @@ fn a_successful_create_asks_for_the_model_list() {
 
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.wiz_loading_models), "拿到 id 之后文案应该换成「正在获取模型列表…」\n{out}");
+}
+
+/// 评审 Item 1(a): `Created(Err)` 回 `Basics` 后表单必须**真的能再操作**——不是仅仅"看起来"回到
+/// 了 `Basics` (说明行 + 字段值都在), 而是按钮真的能再按一次、再发一次 `Create`。删掉
+/// `apply_wizard_result` 里 `Created(Err)` 分支的 `self.stage = Stage::Basics` 这一行, 之前
+/// 没有任何测试会变红——表单会一直停在 `Creating`, 只能 `Ctrl+C` 强退整个 TUI。
+#[test]
+fn a_failed_create_returns_to_an_operable_basics_form() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    let submit_action = submit_basics(&mut a);
+    a.update(submit_action); // Stage::Creating
+
+    a.update(Action::WizardDone(Box::new(WizardResult::Created(Err("上游炸了".into())))));
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.wiz_create_failed)("上游炸了")), "{out}");
+
+    // `submit()` 触发请求前没有移动过焦点, 此刻焦点应该还在 Submit——真的能再按一次「下一步」,
+    // 不是被锁死的只读表单。
+    let retry = a.handle_key(key(KeyCode::Enter));
+    assert!(matches!(retry, Some(Action::WizardRequest(_))), "回到 Basics 之后应该能再次提交, 实际 {retry:?}");
+}
+
+/// 评审 Item 5: `LoadingModels` (只读请求, 不落库) 底栏应该显示 `Esc 取消`; `Creating`/`Saving`
+/// (会落库的请求) 不显示——与 `creating_swallows_escape_and_hides_the_cancel_hint` 对照, 三个
+/// 阶段一次测全, 防止只测了一半漏掉另一半的回归。
+#[test]
+fn loading_models_shows_the_cancel_hint_but_creating_and_saving_do_not() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    let submit_action = submit_basics(&mut a);
+    a.update(submit_action); // Stage::Creating
+    let out_creating = render(&mut a, 80, 24);
+    assert!(!out_creating.contains("Esc 取消"), "Creating 不该显示 Esc 取消\n{out_creating}");
+
+    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))))); // Stage::LoadingModels
+    let out_loading_models = render(&mut a, 80, 24);
+    assert!(out_loading_models.contains("Esc 取消"), "LoadingModels 应该显示 Esc 取消\n{out_loading_models}");
+
+    a.update(Action::WizardDone(Box::new(WizardResult::Models(Ok(RefreshModelsResult::Auto {
+        models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }],
+        fetched_at: 0,
+    }))))); // Stage::Slots
+    for _ in 0..5 {
+        a.handle_key(key(KeyCode::Down));
+    }
+    let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
+    a.update(save_action); // Stage::Saving
+    let out_saving = render(&mut a, 80, 24);
+    assert!(!out_saving.contains("Esc 取消"), "Saving 不该显示 Esc 取消\n{out_saving}");
 }
 
 /// 状态流转表第 4 行: `Models(Ok(Auto { models }))` 进 `Stage::Slots`, 候选非空时四个核心槽都
@@ -701,6 +753,20 @@ fn auto_discovered_models_prefill_every_core_slot() {
         a.handle_key(key(KeyCode::Down));
     }
     assert!(a.handle_key(key(KeyCode::Enter)).is_some(), "槽位已经填好, 提交应该通过校验");
+}
+
+/// `Models(Ok(Auto { models: vec![] }))` (理论上不该发生, 防御性覆盖——`if let Some(first) =
+/// models.first()` 那个保护没有专门的测试直接触发过): 没有候选可预填时四个核心槽应该留空、不
+/// panic, 照样进 `Stage::Slots`。
+#[test]
+fn an_empty_auto_list_leaves_the_core_slots_blank() {
+    let mut a = wizard_at_slots(vec![]);
+    for _ in 0..5 {
+        a.handle_key(key(KeyCode::Down));
+    }
+    assert!(a.handle_key(key(KeyCode::Enter)).is_none(), "空候选时槽位应该留空, 校验应该失败");
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(ZH.wiz_err_slot), "{out}");
 }
 
 /// 状态流转表第 5 行: `Models(Ok(ManualFallback { reason }))` 进 `Stage::Slots`, 候选为空、
@@ -757,6 +823,22 @@ fn saving_sends_only_the_model_slots_patch() {
     );
 }
 
+/// 评审 Item 1(c): `submit_slots` 校验通过后进 `Stage::Saving`——这个阶段必须真的只读, 不能在
+/// `SaveSlots` 还在飞的时候再发一个 (后端会收到两个重复的保存请求)。删掉 `submit_slots` 里的
+/// `self.stage = Stage::Saving` 这一行, 之前没有任何测试会变红。
+#[test]
+fn saving_is_read_only_until_the_result_comes_back() {
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    for _ in 0..5 {
+        a.handle_key(key(KeyCode::Down));
+    }
+    let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
+    a.update(save_action); // Stage::Saving
+
+    assert_eq!(a.handle_key(key(KeyCode::Enter)), None, "保存在飞时再按 ⏎ 不该发第二个请求");
+    assert_eq!(a.handle_key(key(KeyCode::Esc)), None, "保存在飞时 Esc 也该被吞掉");
+}
+
 /// 状态流转表第 7 行: `SlotsSaved(Ok(()))` 应该关掉向导 (补一次重拉订阅列表) 并弹一条
 /// `wiz_created(display_name)` 的 Success toast。
 #[test]
@@ -776,7 +858,10 @@ fn a_successful_save_closes_the_wizard_with_a_toast() {
 }
 
 /// `SlotsSaved(Err(e))` 应该回 `Stage::Slots` 并把 `wiz_save_failed(e)` 挂成说明行——不丢用户
-/// 已经选好的槽位值 (草稿原样保留, 只是多了一条说明)。
+/// 已经选好的槽位值 (草稿原样保留, 只是多了一条说明)。评审 Item 1(b): 光看说明行和槽位文字还
+/// 不够——`draw_slots` 在 `Slots` 和 `Saving` 下画出来这两样一样, 删掉 `apply_wizard_result`
+/// 里 `SlotsSaved(Err)` 分支的 `self.stage = Stage::Slots` 这一行不会让这条断言变红; 必须再
+/// 断言表单**真的能操作**(按钮能再按一次、真的发出第二个 `SaveSlots`)才咬得住。
 #[test]
 fn a_failed_save_returns_to_slots_and_explains_why() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
@@ -790,6 +875,10 @@ fn a_failed_save_returns_to_slots_and_explains_why() {
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_save_failed)("磁盘写满了")), "{out}");
     assert_eq!(out.matches("glm-4.6").count(), 4, "保存失败不该丢掉已经选好的槽位值\n{out}");
+
+    // 焦点还在 Save (submit_slots 失败前没有移动过它), 真的能再按一次 ⏎ 发出第二个 SaveSlots。
+    let retry = a.handle_key(key(KeyCode::Enter));
+    assert!(matches!(retry, Some(Action::WizardRequest(_))), "回到 Slots 之后应该能再次保存, 实际 {retry:?}");
 }
 
 /// 状态流转表最后一行: `Stage::Slots` 下 `Esc` 弹确认, 文案是 `wiz_confirm_exit_pending`
@@ -802,6 +891,97 @@ fn escaping_after_the_subscription_was_created_warns_about_pending() {
         Some(Action::OpenConfirm { prompt: ZH.wiz_confirm_exit_pending.to_string(), on_yes: Box::new(Action::CloseWizard) }),
         "Slots 阶段的 Esc 确认文案应该是「订阅已经创建…」, 不是通用的放弃编辑提示"
     );
+}
+
+/// 评审 Item 2: 槽位 picker 的 `allow_custom` 必须是 `true`——`example_models` 为空的厂商遇上
+/// `ManualFallback` 时, 如果不能手输, 四个核心槽永远填不上, 保存永远被校验拦住, 用户只能退出
+/// 留下一条 `(pending)`。同时锁住候选来源规则: 有真实候选 (`slots_draft.models`) 时用它
+/// (label = id, hint = display_name); 候选为空时退回当前厂商的 `example_models` (只有 id,
+/// 没有 hint)。
+#[test]
+fn the_slot_picker_prefers_real_candidates_and_falls_back_to_example_models() {
+    // 有真实候选 (Models(Ok(Auto)) 拉到的两个模型)。
+    let mut a = wizard_at_slots(vec![
+        ModelInfo { id: "glm-4.6".into(), display_name: Some("GLM 4.6 主力".into()) },
+        ModelInfo { id: "glm-4.5-air".into(), display_name: None },
+    ]);
+    let action = a.handle_key(key(KeyCode::Enter)).expect("Fable 行 ⏎ 应该打开 picker");
+    let Action::OpenPicker(spec) = action else { panic!("应该是 OpenPicker, 实际 {action:?}") };
+    assert!(spec.allow_custom, "槽位 picker 必须允许手输");
+    assert_eq!(
+        spec.items,
+        vec![
+            PickerItem { id: "glm-4.6".into(), label: "glm-4.6".into(), hint: Some("GLM 4.6 主力".into()) },
+            PickerItem { id: "glm-4.5-air".into(), label: "glm-4.5-air".into(), hint: None },
+        ],
+        "有真实候选时应该用 models, label 是 id, hint 是 display_name"
+    );
+
+    // 没有真实候选 (ManualFallback, models 空) 时退回厂商的 example_models——`zhipu_provider()`
+    // 固定给了两个 (`glm-4-plus` / `glm-4.5-flash`)。
+    let mut b = wizard_at_slots_with_manual_fallback("上游不支持自动发现");
+    let action = b.handle_key(key(KeyCode::Enter)).expect("Fable 行 ⏎ 应该打开 picker");
+    let Action::OpenPicker(spec) = action else { panic!("应该是 OpenPicker, 实际 {action:?}") };
+    assert!(spec.allow_custom, "候选为空时更要允许手输, 否则永远填不上");
+    assert_eq!(
+        spec.items,
+        vec![
+            PickerItem { id: "glm-4-plus".into(), label: "glm-4-plus".into(), hint: None },
+            PickerItem { id: "glm-4.5-flash".into(), label: "glm-4.5-flash".into(), hint: None },
+        ],
+        "候选为空时应该退回厂商的 example_models"
+    );
+}
+
+/// 评审 Item 2: 去掉兜底槽的「清空」项的话, 兜底槽一旦选过就改不回未配置——锁住它必须是第一项。
+#[test]
+fn the_fallback_slot_picker_offers_a_clear_item_first() {
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    for _ in 0..4 {
+        a.handle_key(key(KeyCode::Down)); // Fable -> Opus -> Sonnet -> Haiku -> Fallback
+    }
+    let action = a.handle_key(key(KeyCode::Enter)).expect("Fallback 行 ⏎ 应该打开 picker");
+    let Action::OpenPicker(spec) = action else { panic!("应该是 OpenPicker, 实际 {action:?}") };
+    assert_eq!(
+        spec.items.first(),
+        Some(&PickerItem { id: String::new(), label: ZH.pick_clear_fallback.to_string(), hint: None }),
+        "兜底槽 picker 的第一项应该是「清空」\n{:?}",
+        spec.items
+    );
+}
+
+/// 评审 Item 2: 之前没有任何测试让 `PickerDone { WizardSlot, .. }` 真的经过 `App` 往下走——
+/// 自定义输入 (`PickerChoice::Custom`) 应该写进对应槽位的草稿。
+#[test]
+fn picking_a_slot_model_through_the_app_writes_it_into_the_draft() {
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    a.handle_key(key(KeyCode::Down)); // Fable -> Opus
+    let open_action = a.handle_key(key(KeyCode::Enter)).expect("Opus 行 ⏎ 应该打开 picker");
+    a.update(open_action);
+    a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot: Slot::Opus }, choice: PickerChoice::Custom("custom-model".into()) });
+
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains("custom-model"), "自定义输入应该写进 Opus 槽位\n{out}");
+}
+
+/// 同上, 兜底槽的「清空」项 (`PickerChoice::Item("")`) 应该写回空串, 让画面重新显示未配置占位。
+#[test]
+fn picking_clear_on_the_fallback_slot_writes_an_empty_string() {
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    for _ in 0..4 {
+        a.handle_key(key(KeyCode::Down)); // -> Fallback
+    }
+    let open_action = a.handle_key(key(KeyCode::Enter)).expect("Fallback 行 ⏎ 应该打开 picker");
+    a.update(open_action);
+    a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot: Slot::Fallback }, choice: PickerChoice::Item("glm-4.6".into()) });
+    let out = render(&mut a, 80, 24);
+    assert!(!out.contains(ZH.sub_slot_unset), "兜底槽选过模型后不该再显示未配置\n{out}");
+
+    let open_action2 = a.handle_key(key(KeyCode::Enter)).expect("Fallback 行 ⏎ 应该再打开一次 picker");
+    a.update(open_action2);
+    a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot: Slot::Fallback }, choice: PickerChoice::Item(String::new()) });
+    let out2 = render(&mut a, 80, 24);
+    assert!(out2.contains(ZH.sub_slot_unset), "选「清空」应该把兜底槽写回空串, 重新显示未配置\n{out2}");
 }
 
 /// 简报 80×24 例子: 已创建、自动发现回来一个候选 (`glm-4.6`), 四个核心槽预填、兜底槽显示未配置,

@@ -15,17 +15,22 @@
 //! - **选择行**: `⏎` = 打开选择弹窗; 不能直接打字。
 //! - **按钮行**: `⏎` = 执行。所以「下一步」「保存」「获取模型列表」**都不占用任何字符键**——
 //!   这是表单吞掉全部按键之后唯一安全的做法。
-//! - `Esc` = 退出向导 (`has_input()` 为真时先弹确认)——**除非请求正在飞** (`can_cancel()` 为
-//!   假): 那种情况下连 `Esc` 也吞掉, 整张表单只读直到结果回来 (评审 M9 裁决; `Ctrl+C` 仍能强退,
-//!   它在 `App` 层, 向导拦不住), 按钮行显示 throbber。
+//! - `Esc` = 退出向导 (`has_input()` 为真时先弹确认); 请求在飞时整张表单只读 (按钮显示
+//!   throbber), 但 `Esc` 能不能用要看这个请求**会不会落库** (评审 M9 + Task 5 评审收窄):
+//!   `Create`/`SaveSlots` 在飞时连 `Esc` 也吞 (`can_cancel()` 为假, 撤不回后端落库); 只读的
+//!   `LoadProviders`/`LoadModels`/`Probe` 在飞时 `Esc` 可用——`Stage::LoadingModels` 就是这种
+//!   (等 `refresh_model_list`, 订阅已经建好了, 退出跟在 `Slots` 退出是一回事)。
+//! - **每个异步结果只在发起它的那个阶段被接受, 其余一律丢弃** (Task 5 评审): 向导同一时刻最多
+//!   一个请求在飞, 按 `Stage` 判就够, 不需要 `Fetch` 那套 `issued` 序号——`apply_wizard_result`
+//!   开头的守卫见那个函数的文档注释。
 //!
 //! P5 Task 2 只搭了骨架 (`Stage::Loading` / `LoadFailed`, 拉厂商列表、画一个加载中/失败的空容器、
 //! `Esc` 退出)。**Task 4 起加真正的表单**: 内置厂商路径的第一步 (`Stage::Basics` / `Creating`)——
 //! 选厂商 → 选接入点 → 填 API Key → 备注名 → 下一步。**Task 5 加第二步** (绑定模型,
-//! `Stage::Slots` / `Saving`)——创建成功后拉候选模型 → 五个槽位选模型 → 保存, 向导里**不**设置
-//! reasoning effort (与 spec §5.4 的偏离, 见 `WizardCmd::SaveSlots` 的文档注释: 四个槽全 auto,
-//! 用户创建完在订阅详情页按 `o` 就能改)。自定义厂商的单页表单 (`Stage::Custom` / `Probing`)
-//! 留给 Task 6。
+//! `Stage::LoadingModels` / `Slots` / `Saving`)——创建成功后拉候选模型 → 五个槽位选模型 → 保存,
+//! 向导里**不**设置 reasoning effort (与 spec §5.4 的偏离, 见 `WizardCmd::SaveSlots` 的文档
+//! 注释: 四个槽全 auto, 用户创建完在订阅详情页按 `o` 就能改)。自定义厂商的单页表单
+//! (`Stage::Custom` / `Probing`) 留给 Task 6。
 
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Rect};
@@ -55,7 +60,8 @@ mod fields;
 use fields::{api_key_display, default_display_name, validate_basics, validate_slots, BasicsDraft, BasicsField, SlotsDraft, SlotsField};
 
 /// 向导走到哪一步了。P5 Task 2 只有前两个, Task 4 加了 `Basics`/`Creating`, Task 5 加了
-/// `Slots`/`Saving` (穷尽 `match`, 加了不接住就编译失败), Task 6 继续往里加 `Custom`/`Probing`。
+/// `LoadingModels`/`Slots`/`Saving` (穷尽 `match`, 加了不接住就编译失败), Task 6 继续往里加
+/// `Custom`/`Probing`。
 enum Stage {
     /// 正在拉厂商列表。
     Loading,
@@ -63,13 +69,19 @@ enum Stage {
     LoadFailed(String),
     /// 内置路径第一步: 选厂商 / 选接入点 / 填 API Key / 备注名。
     Basics,
-    /// `create_subscription` 在飞: 表单只读, 按钮转圈。`Created(Ok)` 落地后不切换 stage (订阅
-    /// 已经建好了, 但还在等 `refresh_model_list` 回来), 只是按钮文案从 `wiz_creating` 换成
-    /// `wiz_loading_models`——不新增一个变体表示这个过渡态, 复用同一条"表单只读、按钮转圈"逻辑。
+    /// `create_subscription` 在飞: 表单只读, 按钮转圈, **连 `Esc` 也吞掉**——这个请求会落库,
+    /// 退出撤不回 (评审 M9)。
     Creating,
+    /// `create_subscription` 已经成功 (`created_id` 是 `Some`), 在等 `refresh_model_list`
+    /// 回来: 表单同样只读、按钮转圈 (文案 `wiz_loading_models`), 但这是一个**只读**请求, 不
+    /// 落库——评审收窄 M9: `Esc` 可用 (`can_cancel()` 为真), 走 `wiz_confirm_exit_pending`
+    /// 确认 (订阅已经建好了, 此刻退出与在 `Slots` 退出是一回事)。与旧版"停在 `Creating` 只是
+    /// 换按钮文案"的做法不同, 这里拆成独立的 `Stage` 变体, 好让 `can_cancel()` 对它单独判定。
+    LoadingModels,
     /// 第二步: 五个槽位选模型, `Save` 触发 `SaveSlots`。
     Slots,
-    /// `SaveSlots` (只带 `model_slots` 的 patch, 向导不设置 effort) 在飞: 表单只读, 按钮转圈。
+    /// `SaveSlots` (只带 `model_slots` 的 patch, 向导不设置 effort) 在飞: 表单只读, 按钮转圈,
+    /// 连 `Esc` 也吞掉 (同 `Creating`, 这个请求会落库)。
     Saving,
     // Task 6: Custom / Probing
 }
@@ -104,7 +116,7 @@ pub struct Wizard {
     /// `create_subscription` 失败时的原因, 挂成表单顶部的说明行 (`FormRow::Note`)。
     create_error: Option<String>,
     /// `Created(Ok(id))` 落地时记下的订阅 id, 供 `LoadModels`/`SaveSlots` 使用 (Task 5)。
-    /// `Stage::Slots`/`Saving` 期间恒为 `Some`——由 `apply_wizard_result` 保证。
+    /// `Stage::LoadingModels`/`Slots`/`Saving` 期间恒为 `Some`——由 `apply_wizard_result` 保证。
     created_id: Option<String>,
     /// `Stage::Slots` 的草稿: 五个槽位的值 + 拉到的候选模型 + 说明行。
     slots_draft: SlotsDraft,
@@ -151,17 +163,17 @@ impl Wizard {
 
     /// 除 `Ctrl+C` 外的全部按键。`None` = 吞掉 (或只改了向导自己的状态)。`Esc` 的处理跟阶段
     /// 无关 (`can_cancel()` 为假时连 `Esc` 也不接), 排在最前面统一判断; 其余按键只有
-    /// `Stage::Basics`/`Slots` 才会真的处理——`Loading` / `LoadFailed` 没有字段可以接收输入,
-    /// `Creating`/`Saving` 整张表单只读 (总规则: 有请求在飞时按键全部吞掉, 评审 M9 起连 `Esc`
-    /// 也不例外)。**两种文案**: 还没创建 (`Basics`) 复用既有的 `confirm_discard`; 订阅已经建好、
-    /// 停在 `Slots` 时换成 `wiz_confirm_exit_pending` (退出会留下带 (pending) 槽位的订阅, 跟
-    /// "放弃未保存的编辑" 不是同一件事)。
+    /// `Stage::Basics`/`Slots` 才会真的处理——`Loading`/`LoadFailed` 没有字段可以接收输入,
+    /// `Creating`/`LoadingModels`/`Saving` 整张表单只读 (请求在飞, 见文件顶部"表单交互的总
+    /// 规则")。**两种文案**: 还没创建 (`Basics`) 复用既有的 `confirm_discard`; 订阅已经建好
+    /// (`Slots`, 以及只读等待中的 `LoadingModels`) 时换成 `wiz_confirm_exit_pending` (退出会
+    /// 留下带 (pending) 槽位的订阅, 跟"放弃未保存的编辑"不是同一件事)。
     pub fn handle_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
         if key.code == KeyCode::Esc && self.can_cancel() {
             if !self.has_input() {
                 return Some(Action::CloseWizard);
             }
-            let prompt = if matches!(self.stage, Stage::Slots) { s.wiz_confirm_exit_pending } else { s.confirm_discard };
+            let prompt = if matches!(self.stage, Stage::Slots | Stage::LoadingModels) { s.wiz_confirm_exit_pending } else { s.confirm_discard };
             return Some(Action::OpenConfirm { prompt: prompt.to_string(), on_yes: Box::new(Action::CloseWizard) });
         }
         if matches!(self.stage, Stage::Basics) {
@@ -499,57 +511,95 @@ impl Wizard {
 
     /// **刻意写成穷尽 `match`, 不用 `_` 兜底、也不用任何 `#[allow]`**: `WizardResult` 每加一个新
     /// 变体, 这里就必须显式接一条臂——哪怕暂时只是空臂 `=> {}`——否则编译期就 `E0004` 失败。
-    /// `Providers` 成功后转进 `Stage::Basics`; `Created(Ok)` 记下 id 并发 `LoadModels` (stage 仍是
-    /// `Creating`, 只是文案换了——见 `Stage::Creating` 的文档注释); `Created(Err)` 回 `Basics` 并
-    /// 挂说明行; `Models` 的两个 `Ok` 分支 (`Auto`/`ManualFallback`) 与 `Err` 都进 `Stage::Slots`,
-    /// 区别只在有没有候选、有没有说明行; `SlotsSaved(Ok)` 关掉向导 + Success toast,
-    /// `SlotsSaved(Err)` 回 `Slots` 并挂说明行。`Probed` 留给 Task 6, 保持空臂。
+    ///
+    /// **每个结果只在发起它的那个阶段被接受, 其余一律丢弃** (Task 5 评审): 向导同一时刻最多一个
+    /// 请求在飞, 按 `self.stage` 判就够, 不需要 `Fetch` 那套 `issued` 序号。`Providers` 只认
+    /// `Stage::Loading`; `Created` 只认 `Stage::Creating`; `Models` 只认 `Stage::LoadingModels`;
+    /// `SlotsSaved` 只认 `Stage::Saving`; `Probed` 留给 Task 6 引入 `Stage::Probing` 时接上同样
+    /// 的守卫, 现在保持空臂 (`WizardCmd::Probe` 目前没有任何调用点会真的发出这个请求)。**不这样
+    /// 做的失败场景**: 按 `n` 打开向导 → 厂商列表还没回来就 `Esc` → 再按 `n` 重开; 旧的
+    /// `Providers` 结果晚到时, 如果不管阶段直接接受, 会把已经走到 `Slots` 的表单打回
+    /// `Basics`——`self.providers` 也被换成旧的那一份, 草稿里的 `provider_id` 可能已经不在这份
+    /// 新列表里。`Created`/`Models`/`SlotsSaved` 同理: 晚到的 `Created` 会覆盖已经在用的
+    /// `created_id` 并再发一次 `LoadModels`; 晚到的 `Models` 会在 `created_id` 还是 `None` 时
+    /// 把表单带进 `Slots`, 保存时变成无声的空操作; 晚到的 `SlotsSaved` 会在错误的阶段关掉向导或
+    /// 弹一条不该出现的 toast。
+    ///
+    /// `Providers` 成功后转进 `Stage::Basics`; `Created(Ok)` 记下 id, 发 `LoadModels`, 进
+    /// `Stage::LoadingModels` (不再是"停在 `Creating` 换按钮文案"); `Created(Err)` 回 `Basics`
+    /// 并挂说明行; `Models` 的两个 `Ok` 分支 (`Auto`/`ManualFallback`) 与 `Err` 都进
+    /// `Stage::Slots`, 区别只在有没有候选、有没有说明行; `SlotsSaved(Ok)` 关掉向导 + Success
+    /// toast, `SlotsSaved(Err)` 回 `Slots` 并挂说明行。
     fn apply_wizard_result(&mut self, result: &WizardResult, s: &'static Strings) -> Vec<Cmd> {
         match result {
-            WizardResult::Providers(Ok(list)) => {
-                self.providers = list.clone();
-                self.stage = Stage::Basics;
+            WizardResult::Providers(inner) => {
+                if !matches!(self.stage, Stage::Loading) {
+                    return Vec::new();
+                }
+                match inner {
+                    Ok(list) => {
+                        self.providers = list.clone();
+                        self.stage = Stage::Basics;
+                    }
+                    Err(reason) => self.stage = Stage::LoadFailed(reason.clone()),
+                }
                 Vec::new()
             }
-            WizardResult::Providers(Err(reason)) => {
-                self.stage = Stage::LoadFailed(reason.clone());
-                Vec::new()
-            }
-            WizardResult::Created(Ok(created)) => {
-                self.created_id = Some(created.id.clone());
-                vec![Cmd::Wizard(Box::new(WizardCmd::LoadModels { id: created.id.clone() }))]
-            }
-            WizardResult::Created(Err(e)) => {
-                self.stage = Stage::Basics;
-                self.create_error = Some((s.wiz_create_failed)(e));
-                Vec::new()
-            }
-            WizardResult::Models(Ok(RefreshModelsResult::Auto { models, .. })) => {
-                let mut slots = ModelSlots::default();
-                // 桌面端同规则: 有候选就预填四个核心槽为第一项, 用户不用把五次 ⏎ 都点一遍才能
-                // 保存——空候选 (理论上不该发生, `Auto` 变体本该非空, 防御性地) 就留空, 交给
-                // `validate_slots` 在保存时拦住。
-                if let Some(first) = models.first() {
-                    for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku] {
-                        slots.set(slot, first.id.clone());
+            WizardResult::Created(inner) => {
+                if !matches!(self.stage, Stage::Creating) {
+                    return Vec::new();
+                }
+                match inner {
+                    Ok(created) => {
+                        self.created_id = Some(created.id.clone());
+                        self.stage = Stage::LoadingModels;
+                        vec![Cmd::Wizard(Box::new(WizardCmd::LoadModels { id: created.id.clone() }))]
+                    }
+                    Err(e) => {
+                        self.stage = Stage::Basics;
+                        self.create_error = Some((s.wiz_create_failed)(e));
+                        Vec::new()
                     }
                 }
-                self.slots_draft = SlotsDraft { slots, models: models.clone(), note: None };
-                self.slots_focus = SlotsField::Row(Slot::Fable);
-                self.stage = Stage::Slots;
-                Vec::new()
             }
-            WizardResult::Models(Ok(RefreshModelsResult::ManualFallback { reason })) => self.enter_slots_with_note((s.wiz_models_manual)(reason)),
-            WizardResult::Models(Err(e)) => self.enter_slots_with_note((s.wiz_models_manual)(e)),
+            WizardResult::Models(inner) => {
+                if !matches!(self.stage, Stage::LoadingModels) {
+                    return Vec::new();
+                }
+                match inner {
+                    Ok(RefreshModelsResult::Auto { models, .. }) => {
+                        let mut slots = ModelSlots::default();
+                        // 桌面端同规则: 有候选就预填四个核心槽为第一项, 用户不用把五次 ⏎ 都点
+                        // 一遍才能保存——空候选就留空, 交给 `validate_slots` 在保存时拦住。
+                        if let Some(first) = models.first() {
+                            for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku] {
+                                slots.set(slot, first.id.clone());
+                            }
+                        }
+                        self.slots_draft = SlotsDraft { slots, models: models.clone(), note: None };
+                        self.slots_focus = SlotsField::Row(Slot::Fable);
+                        self.stage = Stage::Slots;
+                        Vec::new()
+                    }
+                    Ok(RefreshModelsResult::ManualFallback { reason }) => self.enter_slots_with_note((s.wiz_models_manual)(reason)),
+                    Err(e) => self.enter_slots_with_note((s.wiz_models_manual)(e)),
+                }
+            }
             WizardResult::Probed(_) => Vec::new(),
-            WizardResult::SlotsSaved(Ok(())) => {
-                self.notice = Some((ToastKind::Success, (s.wiz_created)(&self.draft.display_name)));
-                self.close_request = true;
-                Vec::new()
-            }
-            WizardResult::SlotsSaved(Err(e)) => {
-                self.stage = Stage::Slots;
-                self.slots_draft.note = Some((s.wiz_save_failed)(e));
+            WizardResult::SlotsSaved(inner) => {
+                if !matches!(self.stage, Stage::Saving) {
+                    return Vec::new();
+                }
+                match inner {
+                    Ok(()) => {
+                        self.notice = Some((ToastKind::Success, (s.wiz_created)(&self.draft.display_name)));
+                        self.close_request = true;
+                    }
+                    Err(e) => {
+                        self.stage = Stage::Slots;
+                        self.slots_draft.note = Some((s.wiz_save_failed)(e));
+                    }
+                }
                 Vec::new()
             }
         }
@@ -594,6 +644,7 @@ impl Wizard {
             }
             Stage::Basics => self.draw_basics(frame, area, theme, s, ctx.tick, popup_open),
             Stage::Creating => self.draw_basics(frame, area, theme, s, ctx.tick, popup_open),
+            Stage::LoadingModels => self.draw_basics(frame, area, theme, s, ctx.tick, popup_open),
             Stage::Slots => self.draw_slots(frame, area, theme, s, ctx.tick, popup_open),
             Stage::Saving => self.draw_slots(frame, area, theme, s, ctx.tick, popup_open),
         }
@@ -608,12 +659,11 @@ impl Wizard {
         frame.render_widget(line, inner.centered_vertically(Constraint::Length(1)));
     }
 
-    /// `Stage::Basics` / `Stage::Creating` 共用: 后者只是把全部字段画成 `locked`、按钮画成
-    /// `busy`、标签换成 `wiz_creating`/`wiz_loading_models` (`Created(Ok)` 落地前后两个子阶段,
-    /// 见 `Stage::Creating` 的文档注释)——两个阶段的行结构完全一样, 拆成两份反而要重复一遍组装
-    /// 逻辑。
+    /// `Stage::Basics` / `Stage::Creating` / `Stage::LoadingModels` 共用: 后两者只是把全部字段
+    /// 画成 `locked`、按钮画成 `busy`、标签换成 `wiz_creating`/`wiz_loading_models`——三个阶段
+    /// 的行结构完全一样, 拆成三份反而要重复一遍组装逻辑。
     fn draw_basics(&self, frame: &mut Frame, area: Rect, theme: &Theme, s: &'static Strings, tick: u64, popup_open: bool) {
-        let busy = matches!(self.stage, Stage::Creating);
+        let busy = matches!(self.stage, Stage::Creating | Stage::LoadingModels);
 
         let provider_label = self.provider_label();
         let endpoint_label = self.endpoint_label();
@@ -668,10 +718,9 @@ impl Wizard {
             locked: busy,
         });
         rows.push(FormRow::Spacer);
-        // `busy` 覆盖 `Created(Ok)` 落地前后两个子阶段 (仍然是同一个 `Stage::Creating`, 见它的
-        // 文档注释): 还没拿到 id 时文案是 `wiz_creating`, 拿到 id 之后 (在等 `refresh_model_list`)
-        // 换成 `wiz_loading_models`。
-        let creating_label = if self.created_id.is_some() { s.wiz_loading_models } else { s.wiz_creating };
+        // `Creating` 文案是 `wiz_creating`; `LoadingModels` (已经拿到 id, 在等
+        // `refresh_model_list`) 换成 `wiz_loading_models`。
+        let creating_label = if matches!(self.stage, Stage::LoadingModels) { s.wiz_loading_models } else { s.wiz_creating };
         rows.push(FormRow::Button { label: if busy { creating_label } else { s.wiz_btn_next }, busy });
 
         // 有说明行时整体后移 2 行 (Note + Spacer); Submit 前面还有一个 Spacer (下标 4), 按钮排在
@@ -764,7 +813,7 @@ impl Wizard {
     /// 照旧固定。
     pub fn hints(&self, s: &'static Strings) -> Vec<Hint<'static>> {
         match &self.stage {
-            Stage::Loading | Stage::LoadFailed(_) | Stage::Creating | Stage::Saving => Vec::new(),
+            Stage::Loading | Stage::LoadFailed(_) | Stage::Creating | Stage::LoadingModels | Stage::Saving => Vec::new(),
             Stage::Basics => {
                 let mut hints = vec![("↑↓", s.key_field)];
                 match self.focus {
@@ -789,23 +838,24 @@ impl Wizard {
         }
     }
 
-    /// 请求在飞 (`Stage::Creating`/`Saving`) 时能不能按 `Esc` 退出——`App::draw` 据此决定要不要
-    /// 在底栏右侧显示 `Esc 取消` (评审 M9: 在飞时连 `Esc` 都被 `handle_key` 吞掉, 继续显示这条
-    /// 提示就是纯误导)。
+    /// 请求在飞时能不能按 `Esc` 退出——`App::draw` 据此决定要不要在底栏右侧显示 `Esc 取消`。
+    /// 只有**会落库**的请求 (`Creating`/`Saving`) 在飞时才吞 `Esc` (评审 M9: 撤不回后端落库,
+    /// 继续显示这条提示就是纯误导); `LoadingModels` 等的是只读的 `refresh_model_list`, 不落库,
+    /// 所以能取消 (评审收窄, 见 `Stage::LoadingModels` 的文档注释)。
     pub fn can_cancel(&self) -> bool {
         !matches!(self.stage, Stage::Creating | Stage::Saving)
     }
 
     /// 用户已经填过东西 / 已经创建过订阅 —— `Esc` 要不要先确认看这个。`Basics` 下「厂商已选」
     /// 或「API Key 非空」或「备注名非空」任一成立即为真 (用户填了一半按 `Esc` 不该直接丢掉);
-    /// `Creating`/`Slots`/`Saving` 恒真 (订阅已经在飞行中创建, 或者已经建好了)。
+    /// `Creating`/`LoadingModels`/`Slots`/`Saving` 恒真 (订阅已经在飞行中创建, 或者已经建好了)。
     pub fn has_input(&self) -> bool {
         match &self.stage {
             Stage::Loading | Stage::LoadFailed(_) => false,
             Stage::Basics => {
                 !self.draft.provider_id.is_empty() || !self.draft.api_key.is_empty() || !self.draft.display_name.trim().is_empty()
             }
-            Stage::Creating | Stage::Slots | Stage::Saving => true,
+            Stage::Creating | Stage::LoadingModels | Stage::Slots | Stage::Saving => true,
         }
     }
 
@@ -838,6 +888,7 @@ impl Wizard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::dto::{CreatedSubscription, ModelInfo};
 
     fn provider(id: &str) -> Provider {
         Provider {
@@ -998,5 +1049,95 @@ mod tests {
         w.apply_slot_choice(Slot::Opus, &PickerChoice::Item("glm-4.6".into()));
 
         assert_eq!(w.slot_error, Some((Slot::Fable, s.wiz_err_slot)), "选定 Opus 的模型不该清掉 Fable 行的错误");
+    }
+
+    /// Item 3: `Stage::Basics` 下 `Esc` (有输入时) 用的是 `confirm_discard`, 不是
+    /// `Stage::Slots`/`LoadingModels` 专用的 `wiz_confirm_exit_pending`——两者语义不同 (第一步
+    /// 订阅还没建, "放弃" 只是丢草稿; 用错文案会让用户以为已经建出了一条订阅)。
+    #[test]
+    fn basics_escape_uses_the_discard_prompt_not_the_pending_one() {
+        let s = &crate::i18n::ZH;
+        let mut w = Wizard::new();
+        w.stage = Stage::Basics;
+        w.draft.provider_id = "zhipu".into(); // has_input() 为真
+        assert_eq!(
+            w.handle_key(key(KeyCode::Esc), s),
+            Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::CloseWizard) })
+        );
+    }
+
+    /// 评审收窄 M9: `LoadingModels` 等的是只读请求 (`refresh_model_list`, 不落库), `Esc` 应该
+    /// 可用, 且文案是 `wiz_confirm_exit_pending` (订阅已经建好了, 与在 `Slots` 退出是一回事)。
+    #[test]
+    fn escape_is_available_while_loading_models() {
+        let s = &crate::i18n::ZH;
+        let mut w = Wizard::new();
+        w.stage = Stage::LoadingModels;
+        w.created_id = Some("sub-1".into());
+        assert!(w.can_cancel(), "等模型列表时应该能取消");
+        assert_eq!(
+            w.handle_key(key(KeyCode::Esc), s),
+            Some(Action::OpenConfirm { prompt: s.wiz_confirm_exit_pending.to_string(), on_yes: Box::new(Action::CloseWizard) })
+        );
+    }
+
+    /// 评审: 每个异步结果只在发起它的那个阶段被接受, 其余一律丢弃——4 个变体各一条用例, 构造
+    /// 一个"晚到"的结果喂进一个不对的阶段, 断言阶段/字段/`created_id` 都不变, 也不产出 `Cmd`。
+    ///
+    /// `Providers` 晚到 (向导已经走到 `Slots`): 不该把表单打回 `Basics`, 也不该采纳这份厂商
+    /// 列表——它可能是过期的, `self.providers` 应该原样保留。
+    #[test]
+    fn a_stale_provider_list_is_discarded_outside_loading() {
+        let mut w = Wizard::new();
+        w.stage = Stage::Slots;
+        w.slots_focus = SlotsField::Save;
+        let action = Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![provider("late")]))));
+        let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
+        assert!(cmds.is_empty());
+        assert!(w.providers.is_empty(), "过期的厂商列表不该被采纳\n{:?}", w.providers);
+        assert!(matches!(w.stage, Stage::Slots), "阶段不该被晚到的厂商列表打回 Basics");
+    }
+
+    /// `Created` 晚到 (已经在 `Slots`, `created_id` 已经是真实值): 不该覆盖 `created_id`, 也
+    /// 不该再发一次 `LoadModels`。
+    #[test]
+    fn a_stale_created_result_is_discarded_outside_creating() {
+        let mut w = Wizard::new();
+        w.stage = Stage::Slots;
+        w.created_id = Some("real-id".into());
+        let action = Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "stale-id".into() }))));
+        let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
+        assert!(cmds.is_empty(), "不该再发一次 LoadModels");
+        assert_eq!(w.created_id, Some("real-id".into()), "created_id 不该被晚到的结果覆盖");
+        assert!(matches!(w.stage, Stage::Slots));
+    }
+
+    /// `Models` 晚到 (`created_id` 还是 `None`, 阶段还停在 `Creating`, 不是 `LoadingModels`):
+    /// 不该凭空进 `Slots`——那样保存时 `submit_slots` 拿不到 `created_id`, 会变成无声的空操作。
+    #[test]
+    fn a_stale_models_result_is_discarded_outside_loading_models() {
+        let mut w = Wizard::new();
+        w.stage = Stage::Creating;
+        let action = Action::WizardDone(Box::new(WizardResult::Models(Ok(RefreshModelsResult::Auto {
+            models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }],
+            fetched_at: 0,
+        }))));
+        let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
+        assert!(cmds.is_empty());
+        assert!(matches!(w.stage, Stage::Creating), "阶段不该被晚到的 Models 结果打进 Slots");
+        assert_eq!(w.slots_draft, SlotsDraft::default(), "槽位草稿不该被写入");
+    }
+
+    /// `SlotsSaved` 晚到 (阶段已经不是 `Saving`): 不该关向导、不该弹 toast。
+    #[test]
+    fn a_stale_slots_saved_result_is_discarded_outside_saving() {
+        let mut w = Wizard::new();
+        w.stage = Stage::Slots;
+        let action = Action::WizardDone(Box::new(WizardResult::SlotsSaved(Ok(()))));
+        let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
+        assert!(cmds.is_empty());
+        assert!(!w.take_close_request(), "不该关向导");
+        assert!(w.take_notice().is_none(), "不该弹 toast");
+        assert!(matches!(w.stage, Stage::Slots));
     }
 }
