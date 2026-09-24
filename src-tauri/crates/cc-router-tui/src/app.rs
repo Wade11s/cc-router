@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Tabs};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 
-use crate::action::{Action, BusyKey, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, Tab};
+use crate::action::{Action, BusyKey, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, Tab, WizardCmd};
 use crate::client::dto::{RefreshBalanceResult, RefreshModelsResult};
 use crate::format::Tz;
 use crate::fx::{self, Dir, Fx};
@@ -73,6 +73,9 @@ pub struct App {
     /// 新建订阅向导。不是标签页也不是弹窗, 是夹在弹窗与全局键之间的一层——见
     /// `wizard::Wizard` 模块顶部的文档注释。
     wizard: Option<Wizard>,
+    /// 最近一次打开的向导的代次, 每次 `OpenWizard` 加一; 只在 `wizard` 为 `Some` 时有意义。向导发出
+    /// 的每个请求都盖上它, 结果带回来时不等于它就丢弃——见 `action::WizardResult` 的文档注释。
+    wizard_epoch: u64,
     popup: Option<Popup>,
     popup_area: Option<Rect>,
     pending_popup_fx: Option<PopupFx>,
@@ -105,6 +108,7 @@ impl App {
             store: Store::default(),
             pages: Pages::default(),
             wizard: None,
+            wizard_epoch: 0,
             popup: None,
             popup_area: None,
             pending_popup_fx: None,
@@ -124,6 +128,12 @@ impl App {
     /// 有动效在播: 主循环应该按约 60fps 继续画; 否则等下一个事件再画。
     pub fn wants_fast_frames(&self) -> bool {
         self.fx.is_running()
+    }
+
+    /// 当前向导的代次; 没有向导时 `None`。只读: 投递 `Action::WizardDone` 的一方 (测试) 要知道
+    /// 该带哪个代次, 生产路径上它由 `Cmd::Wizard` 原样带回, 用不着这个。
+    pub fn wizard_epoch(&self) -> Option<u64> {
+        self.wizard.as_ref().map(|_| self.wizard_epoch)
     }
 
     fn version_mismatch(&self) -> Option<String> {
@@ -233,8 +243,9 @@ impl App {
     /// `self.update`——这两个都要重新独占借用整个 `self`, 不能跟仍然存活的 `w`
     /// (借用自 `self.wizard`) 同时成立 (借用检查器不按字段做跨方法调用的不相交分析)。
     fn update_wizard(&mut self, action: &Action) -> Vec<Cmd> {
+        let epoch = self.wizard_epoch;
         let Some(w) = &mut self.wizard else { return Vec::new() };
-        let mut cmds = w.update(action, &self.store, self.s);
+        let mut cmds = stamp(epoch, w.update(action, &self.store, self.s));
         let notice = w.take_notice();
         let should_close = w.take_close_request();
         if let Some((kind, text)) = notice {
@@ -480,8 +491,9 @@ impl App {
             }
             Action::DiscardDraft => self.discard_current(),
             Action::OpenWizard => {
+                self.wizard_epoch += 1;
                 let mut wizard = Wizard::new();
-                let cmds = wizard.on_open();
+                let cmds = stamp(self.wizard_epoch, wizard.on_open());
                 self.wizard = Some(wizard);
                 cmds
             }
@@ -495,19 +507,27 @@ impl App {
                     Vec::new()
                 }
             }
-            Action::WizardDone(_) => self.update_wizard(&action),
+            // 代次不符 = 别的 (已经关掉的) 向导实例发的请求, 这时哪怕阶段与身份字段碰巧都对得上,
+            // 结果也不属于眼前这个向导。
+            Action::WizardDone { epoch, .. } => {
+                if self.wizard.is_some() && epoch == self.wizard_epoch {
+                    self.update_wizard(&action)
+                } else {
+                    Vec::new()
+                }
+            }
             // 向导表单提交按钮触发的请求。`handle_key` 已经校验并打包好 `WizardCmd`,
             // 这里直接转成 `Cmd::Wizard`——跟上面 `OpenWizard` 直接调用 `wizard.on_open()` 是
             // 同一条思路 (触发点是按键本身, 不经过 `Wizard::update()` 那条给结果用的路径)。
             // **必须判 `self.wizard.is_some()` 才转发**——"没有向导也无害" 这个说法只
-            // 对 `WizardDone` 成立 (它落地时向导已经不在, `apply_wizard_result` 那条"没有向导就
-            // 丢弃"的路径正好接住), 对 `Create` 这类会写库的请求不成立: 如果这个 action 被塞进某个
+            // 对 `WizardDone` 成立 (它落地时向导已经不在, 上面那条"没有向导就丢弃"的分支正好
+            // 接住), 对 `Create` 这类会写库的请求不成立: 如果这个 action 被塞进某个
             // 确认弹窗的 `on_yes` (`Action::Confirmed` 会先 `discard_current()` 关掉向导再执行
             // `inner`), 订阅会在向导已经关闭、没人接收结果的情况下照常建到后端, 订阅列表里凭空
             // 多出一条 `(pending)`, 用户毫无察觉也没有 toast。
             Action::WizardRequest(cmd) => {
                 if self.wizard.is_some() {
-                    vec![Cmd::Wizard(cmd)]
+                    vec![Cmd::Wizard { epoch: self.wizard_epoch, cmd }]
                 } else {
                     Vec::new()
                 }
@@ -811,6 +831,11 @@ impl App {
 // 搬过来, 见 `logs.rs` 顶部的注释), `tests/ui.rs` 这样的集成测试够不到它, 所以这批用例必须留在
 // 这个 `mod tests` 里, 不能挪到 `tests/ui.rs`。不需要这个钩子的弹窗测试 (帮助弹窗按键、确认弹窗
 // 渲染、帮助高度守卫、快照) 仍然放在 `tests/ui.rs`, 跟其它界面测试一起维护。
+/// 给向导产出的请求盖上发出它的向导实例的代次。
+fn stamp(epoch: u64, cmds: Vec<WizardCmd>) -> Vec<Cmd> {
+    cmds.into_iter().map(|cmd| Cmd::Wizard { epoch, cmd: Box::new(cmd) }).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::backend::TestBackend;
@@ -849,6 +874,11 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// 带着当前向导代次的结果——「这个向导自己发的请求回来了」。
+    fn current_done(a: &App, result: WizardResult) -> Action {
+        Action::WizardDone { epoch: a.wizard_epoch().expect("准备: 向导应该开着"), result: Box::new(result) }
     }
 
     fn ctrl_c() -> KeyEvent {
@@ -1102,7 +1132,8 @@ mod tests {
         let mut a = app();
         assert!(a.wizard.is_none(), "准备: 没有打开过向导");
         let result = WizardResult::Providers(Ok(vec![]));
-        assert!(a.update(Action::WizardDone(Box::new(result))).is_empty(), "没有向导时应该直接丢弃, 不 panic");
+        let done = Action::WizardDone { epoch: a.wizard_epoch, result: Box::new(result) };
+        assert!(a.update(done).is_empty(), "没有向导时应该直接丢弃, 不 panic");
     }
 
     /// 没有向导时 `Action::WizardRequest` 不该被转成 `Cmd::Wizard`——不像
@@ -1121,8 +1152,14 @@ mod tests {
     #[test]
     fn opening_the_wizard_loads_providers() {
         let mut a = app();
-        assert_eq!(a.update(Action::OpenWizard), vec![Cmd::Wizard(Box::new(WizardCmd::LoadProviders))]);
+        assert_eq!(a.update(Action::OpenWizard), vec![Cmd::Wizard { epoch: 1, cmd: Box::new(WizardCmd::LoadProviders) }]);
         assert!(a.wizard.is_some());
+        a.update(Action::CloseWizard);
+        assert_eq!(
+            a.update(Action::OpenWizard),
+            vec![Cmd::Wizard { epoch: 2, cmd: Box::new(WizardCmd::LoadProviders) }],
+            "再开一个向导应该换一个新代次"
+        );
     }
 
     /// `App::update_wizard` 转发 `take_close_request()` 的那条分支: `close_request` 只在向导处理
@@ -1135,7 +1172,7 @@ mod tests {
         a.update(Action::OpenWizard);
         a.wizard.as_mut().expect("刚打开").request_close_for_test();
 
-        let cmds = a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![])))));
+        let cmds = a.update(current_done(&a, WizardResult::Providers(Ok(vec![]))));
         assert_eq!(cmds, vec![Cmd::Fetch(Fetch::Subscriptions)]);
         assert!(a.wizard.is_none(), "close_request 应该真的把向导关掉");
     }
@@ -1147,7 +1184,7 @@ mod tests {
         a.update(Action::OpenWizard);
         a.wizard.as_mut().expect("刚打开").request_notice_for_test(ToastKind::Error, "测试通知");
 
-        a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![])))));
+        a.update(current_done(&a, WizardResult::Providers(Ok(vec![]))));
         let out = render(&mut a, 80, 24);
         assert!(out.contains("测试通知"), "{out}");
     }
@@ -1165,5 +1202,26 @@ mod tests {
 
         let action = a.handle_key(key(KeyCode::Char('y')));
         assert!(matches!(action, Some(Action::Confirmed(_))), "弹窗应该排在向导前面, 按键不该被向导吞掉: {action:?}");
+    }
+
+    /// 带当前代次的结果照常交给向导; 同一个结果换成旧代次就被整个丢掉——`Providers` 在 `Loading`
+    /// 阶段本来一定会被采纳, 所以「没被采纳」只能是代次比较挡住的。
+    #[test]
+    fn only_results_carrying_the_current_wizard_epoch_reach_the_wizard() {
+        let mut a = app();
+        let opened = a.update(Action::OpenWizard);
+        let Some(Cmd::Wizard { epoch: old, .. }) = opened.first().cloned() else { panic!("应该发出拉厂商列表的请求: {opened:?}") };
+        a.update(Action::CloseWizard);
+        a.update(Action::OpenWizard);
+        assert_ne!(a.wizard_epoch(), Some(old), "准备: 重开的向导应该换了代次");
+
+        let stale = Action::WizardDone { epoch: old, result: Box::new(WizardResult::Providers(Err("旧向导的结果".into()))) };
+        assert!(a.update(stale).is_empty());
+        let out = render(&mut a, 80, 24);
+        assert!(out.contains(ZH.wiz_loading_providers), "旧代次的结果不该被采纳, 新向导应该还在加载\n{out}");
+
+        a.update(current_done(&a, WizardResult::Providers(Err("新向导的结果".into()))));
+        let out = render(&mut a, 80, 24);
+        assert!(out.contains("新向导的结果"), "当前代次的结果应该照常被采纳\n{out}");
     }
 }

@@ -351,7 +351,7 @@ fn wizard_loading_80x24() {
 fn wizard_load_failure_shows_the_reason_and_esc_still_closes() {
     let mut a = app(false);
     a.update(Action::OpenWizard);
-    a.update(Action::WizardDone(Box::new(WizardResult::Providers(Err("网络错误".into())))));
+    a.update(wizard_done(&a, WizardResult::Providers(Err("网络错误".into()))));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_load_failed)("网络错误")), "{out}");
     assert!(!out.contains(ZH.wiz_loading_providers), "失败之后不该还显示加载中的文案\n{out}");
@@ -393,11 +393,21 @@ fn chatgpt_provider() -> Provider {
     }
 }
 
+/// 向导请求的结果, 带着当前向导的代次——「这个向导自己发的请求回来了」。
+fn wizard_done(a: &App, result: WizardResult) -> Action {
+    Action::WizardDone { epoch: a.wizard_epoch().expect("准备: 向导应该开着"), result: Box::new(result) }
+}
+
+/// 当前向导发出的一个请求 (带着它的代次)。
+fn wizard_cmd(a: &App, cmd: Box<WizardCmd>) -> Cmd {
+    Cmd::Wizard { epoch: a.wizard_epoch().expect("准备: 向导应该开着"), cmd }
+}
+
 /// 打开向导并喂一份厂商列表, 停在第一步、焦点在 `Provider` 行。
 fn wizard_with_providers(providers: Vec<Provider>) -> App {
     let mut a = app(false);
     a.update(Action::OpenWizard);
-    a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(providers)))));
+    a.update(wizard_done(&a, WizardResult::Providers(Ok(providers))));
     a
 }
 
@@ -406,11 +416,29 @@ fn wizard_with_providers(providers: Vec<Provider>) -> App {
 /// 对内置路径的角色相同。厂商列表本身与自定义路径无关, 只是复用同一份 `zhipu_provider()` 夹具
 /// (不需要为这里单独造一份空列表)。
 fn wizard_custom(protocol: CustomProtocol) -> App {
-    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    let mut a = app(false);
+    open_custom_wizard(&mut a, protocol);
+    a
+}
+
+/// 在已有的 `App` 上打开一个新向导并走到自定义单页 (`wizard_custom` 的本体)——跨向导实例的用例
+/// 要在同一个 `App` 上先后开两个向导。
+fn open_custom_wizard(a: &mut App, protocol: CustomProtocol) {
+    a.update(Action::OpenWizard);
+    let providers = wizard_done(a, WizardResult::Providers(Ok(vec![zhipu_provider()])));
+    a.update(providers);
     let open_action = a.handle_key(key(KeyCode::Enter)).expect("Provider 行 ⏎ 应该产出 Action::OpenPicker");
     a.update(open_action);
     a.update(Action::PickerDone { tag: PickerTag::WizardProvider, choice: PickerChoice::Item(format!("custom:{}", protocol.as_wire())) });
-    a
+}
+
+/// 有输入的向导按 `Esc` → 确认弹窗选「是」, 向导关掉。
+fn escape_and_confirm(a: &mut App) {
+    let esc = a.handle_key(key(KeyCode::Esc)).expect("Esc 应该可用");
+    a.update(esc);
+    let yes = a.handle_key(key(KeyCode::Char('y'))).expect("确认弹窗里 y 应该产出 Action");
+    a.update(yes);
+    assert!(a.wizard_epoch().is_none(), "准备: 向导应该已经关掉");
 }
 
 /// `Provider` 行 `⏎` → 打开厂商 picker → 选中智谱 AI。选中后焦点应该已经移到 `ApiKey`
@@ -544,7 +572,7 @@ fn wizard_after_create() -> App {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     let submit_action = submit_basics(&mut a);
     a.update(submit_action); // 创建在飞
-    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))))); // 等模型列表
+    a.update(wizard_done(&a, WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() })))); // 等模型列表
     a
 }
 
@@ -552,20 +580,20 @@ fn wizard_after_create() -> App {
 /// 保存) 共用这条驱动路径, 只是候选模型列表不同。
 fn wizard_at_slots(models: Vec<ModelInfo>) -> App {
     let mut a = wizard_after_create();
-    a.update(Action::WizardDone(Box::new(WizardResult::Models {
+    a.update(wizard_done(&a, WizardResult::Models {
         id: "sub-1".into(),
         result: Ok(RefreshModelsResult::Auto { models, fetched_at: 0 }),
-    })));
+    }));
     a
 }
 
 /// 同上, 但模拟自动发现失败 (`ManualFallback`): 候选为空, 说明行是 `reason`。
 fn wizard_at_slots_with_manual_fallback(reason: &str) -> App {
     let mut a = wizard_after_create();
-    a.update(Action::WizardDone(Box::new(WizardResult::Models {
+    a.update(wizard_done(&a, WizardResult::Models {
         id: "sub-1".into(),
         result: Ok(RefreshModelsResult::ManualFallback { reason: reason.to_string() }),
-    })));
+    }));
     a
 }
 
@@ -611,7 +639,7 @@ fn the_wizard_builds_a_create_command_with_pending_slots() {
     let cmds = a.update(submit_action);
     assert_eq!(
         cmds,
-        vec![Cmd::Wizard(Box::new(WizardCmd::Create(CreateInput {
+        vec![wizard_cmd(&a, Box::new(WizardCmd::Create(CreateInput {
             display_name: "智谱 AI".into(),
             api_key: Secret::new("sk-test"),
             model_slots: ModelSlots::pending(),
@@ -828,8 +856,8 @@ fn a_successful_create_asks_for_the_model_list() {
     let submit_action = submit_basics(&mut a);
     a.update(submit_action);
 
-    let cmds = a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() })))));
-    assert_eq!(cmds, vec![Cmd::Wizard(Box::new(WizardCmd::LoadModels { id: "sub-1".into() }))]);
+    let cmds = a.update(wizard_done(&a, WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))));
+    assert_eq!(cmds, vec![wizard_cmd(&a, Box::new(WizardCmd::LoadModels { id: "sub-1".into() }))]);
 
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.wiz_loading_models), "拿到 id 之后文案应该换成「正在获取模型列表…」\n{out}");
@@ -844,7 +872,7 @@ fn a_failed_create_returns_to_an_operable_basics_form() {
     let submit_action = submit_basics(&mut a);
     a.update(submit_action); // 创建在飞
 
-    a.update(Action::WizardDone(Box::new(WizardResult::Created(Err("上游炸了".into())))));
+    a.update(wizard_done(&a, WizardResult::Created(Err("上游炸了".into()))));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_create_failed)("上游炸了")), "{out}");
 
@@ -864,14 +892,14 @@ fn loading_models_shows_the_cancel_hint_but_creating_and_saving_do_not() {
     let out_creating = render(&mut a, 80, 24);
     assert!(!out_creating.contains("Esc 取消"), "Creating 不该显示 Esc 取消\n{out_creating}");
 
-    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))))); // 等模型列表
+    a.update(wizard_done(&a, WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() })))); // 等模型列表
     let out_loading_models = render(&mut a, 80, 24);
     assert!(out_loading_models.contains("Esc 取消"), "LoadingModels 应该显示 Esc 取消\n{out_loading_models}");
 
-    a.update(Action::WizardDone(Box::new(WizardResult::Models {
+    a.update(wizard_done(&a, WizardResult::Models {
         id: "sub-1".into(),
         result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 0 }),
-    }))); // 第二步
+    })); // 第二步
     focus_row(&mut a, ZH.wiz_btn_save);
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
     a.update(save_action); // 保存在飞
@@ -929,7 +957,7 @@ fn a_manual_fallback_leaves_the_slots_empty_and_explains_why() {
 #[test]
 fn a_failed_model_list_request_behaves_like_manual_fallback() {
     let mut a = wizard_after_create();
-    a.update(Action::WizardDone(Box::new(WizardResult::Models { id: "sub-1".into(), result: Err("网络错误".into()) })));
+    a.update(wizard_done(&a, WizardResult::Models { id: "sub-1".into(), result: Err("网络错误".into()) }));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_models_manual)("网络错误")), "{out}");
 }
@@ -945,7 +973,7 @@ fn saving_sends_only_the_model_slots_patch() {
     let cmds = a.update(save_action);
     assert_eq!(
         cmds,
-        vec![Cmd::Wizard(Box::new(WizardCmd::SaveSlots {
+        vec![wizard_cmd(&a, Box::new(WizardCmd::SaveSlots {
             id: "sub-1".into(),
             model_slots: ModelSlots {
                 fable: "glm-4.6".into(),
@@ -980,7 +1008,7 @@ fn a_successful_save_closes_the_wizard_with_a_toast() {
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
     a.update(save_action); // 保存在飞
 
-    let cmds = a.update(Action::WizardDone(Box::new(WizardResult::SlotsSaved(Ok(())))));
+    let cmds = a.update(wizard_done(&a, WizardResult::SlotsSaved(Ok(()))));
     assert_eq!(cmds, vec![Cmd::Fetch(Fetch::Subscriptions)], "关掉向导应该补一次重拉订阅列表");
 
     let out = render(&mut a, 80, 24);
@@ -998,7 +1026,7 @@ fn a_failed_save_returns_to_slots_and_explains_why() {
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
     a.update(save_action);
 
-    a.update(Action::WizardDone(Box::new(WizardResult::SlotsSaved(Err("磁盘写满了".into())))));
+    a.update(wizard_done(&a, WizardResult::SlotsSaved(Err("磁盘写满了".into()))));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_save_failed)("磁盘写满了")), "{out}");
     assert_eq!(out.matches("glm-4.6").count(), 4, "保存失败不该丢掉已经选好的槽位值\n{out}");
@@ -1133,7 +1161,7 @@ fn wizard_custom_80x24() {
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // 探测在飞
 
-    a.update(Action::WizardDone(Box::new(WizardResult::Probed {
+    a.update(wizard_done(&a, WizardResult::Probed {
         base_url: "https://api.example.com".into(),
         result: Ok(ProbeModelsResult::Auto {
             models: vec![
@@ -1142,7 +1170,7 @@ fn wizard_custom_80x24() {
             ],
             models_url: "https://api.example.com/v1/models".into(),
         }),
-    })));
+    }));
 
     // 手动给四个核心槽选值 (探测成功不自动预填)。
     pick_core_slots(&mut a, |slot| PickerChoice::Item(if slot == Slot::Haiku { "claude-haiku-4" } else { "claude-sonnet-4" }.into()));
@@ -1165,7 +1193,7 @@ fn wizard_custom_120x40() {
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action);
 
-    a.update(Action::WizardDone(Box::new(WizardResult::Probed {
+    a.update(wizard_done(&a, WizardResult::Probed {
         base_url: "https://api.example.com".into(),
         result: Ok(ProbeModelsResult::Auto {
             models: vec![
@@ -1174,7 +1202,7 @@ fn wizard_custom_120x40() {
             ],
             models_url: "https://api.example.com/v1/models".into(),
         }),
-    })));
+    }));
 
     pick_core_slots(&mut a, |slot| PickerChoice::Item(if slot == Slot::Haiku { "claude-haiku-4" } else { "claude-sonnet-4" }.into()));
     focus_row(&mut a, slot_row(Slot::Fallback));
@@ -1198,10 +1226,10 @@ fn the_custom_form_fits_the_minimum_terminal() {
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // 探测在飞
     // 探测失败, 挂上一条短说明 (只占 1 行: 14+1+1=16, 恰好等于可用高度)。
-    a.update(Action::WizardDone(Box::new(WizardResult::Probed {
+    a.update(wizard_done(&a, WizardResult::Probed {
         base_url: "https://relay.example.com".into(),
         result: Ok(ProbeModelsResult::ManualFallback { reason: "上游不支持自动发现".into() }),
-    })));
+    }));
 
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_models_manual)("上游不支持自动发现")), "说明行应该真的挂上了\n{out}");
@@ -1319,7 +1347,7 @@ fn submitting_probe_clears_the_previous_failure_note() {
     focus_row(&mut a, ZH.wiz_btn_probe);
     let probe1 = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe1); // 探测在飞
-    a.update(Action::WizardDone(Box::new(WizardResult::Probed { base_url: "https://relay.example.com".into(), result: Err("网络错误".into()) })));
+    a.update(wizard_done(&a, WizardResult::Probed { base_url: "https://relay.example.com".into(), result: Err("网络错误".into()) }));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_models_manual)("网络错误")), "先确认失败说明确实挂上了\n{out}");
 
@@ -1342,7 +1370,7 @@ fn submitting_create_clears_the_previous_failure_note() {
     focus_row(&mut a, ZH.wiz_btn_create);
     let submit1 = a.handle_key(key(KeyCode::Enter)).expect("创建应该产出 Action");
     a.update(submit1); // 创建在飞
-    a.update(Action::WizardDone(Box::new(WizardResult::Created(Err("上游炸了".into())))));
+    a.update(wizard_done(&a, WizardResult::Created(Err("上游炸了".into()))));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_create_failed)("上游炸了")), "先确认失败说明确实挂上了\n{out}");
 
@@ -1392,10 +1420,10 @@ fn creating_a_custom_subscription_sends_real_slots_and_closes() {
     );
 
     let cmds = a.update(submit_action);
-    assert_eq!(cmds, vec![Cmd::Wizard(Box::new(WizardCmd::Create(expected_input)))]);
+    assert_eq!(cmds, vec![wizard_cmd(&a, Box::new(WizardCmd::Create(expected_input)))]);
 
     // Created(Ok) 之后向导应该直接关闭 (补一次重拉订阅列表), 不发 LoadModels/SaveSlots。
-    let close_cmds = a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-9".into() })))));
+    let close_cmds = a.update(wizard_done(&a, WizardResult::Created(Ok(CreatedSubscription { id: "sub-9".into() }))));
     assert_eq!(
         close_cmds,
         vec![Cmd::Fetch(Fetch::Subscriptions)],
@@ -1415,7 +1443,7 @@ fn a_failed_custom_create_returns_to_custom_and_stays_operable() {
     let submit_action = a.handle_key(key(KeyCode::Enter)).expect("创建应该产出 Action");
     a.update(submit_action); // 创建在飞
 
-    a.update(Action::WizardDone(Box::new(WizardResult::Created(Err("上游炸了".into())))));
+    a.update(wizard_done(&a, WizardResult::Created(Err("上游炸了".into()))));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_create_failed)("上游炸了")), "{out}");
 
@@ -1435,13 +1463,13 @@ fn a_successful_probe_records_models_url_for_later_create() {
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // 探测在飞
 
-    a.update(Action::WizardDone(Box::new(WizardResult::Probed {
+    a.update(wizard_done(&a, WizardResult::Probed {
         base_url: "https://relay.example.com".into(),
         result: Ok(ProbeModelsResult::Auto {
             models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }],
             models_url: "https://relay.example.com/v1/models".into(),
         }),
-    })));
+    }));
     let out = render(&mut a, 80, 24);
     assert!(!out.contains("glm-4.6"), "探测成功不该自动预填槽位, 应该留给用户手选\n{out}");
 
@@ -1463,13 +1491,13 @@ fn a_successful_probe_records_models_url_for_later_create() {
 fn a_stale_probed_result_is_discarded_outside_probing() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
     // 还没探测 (编辑中, 没有探测在飞), 喂一份晚到的 Probed 结果。
-    a.update(Action::WizardDone(Box::new(WizardResult::Probed {
+    a.update(wizard_done(&a, WizardResult::Probed {
         base_url: "https://late.example.com".into(),
         result: Ok(ProbeModelsResult::Auto {
             models: vec![ModelInfo { id: "late-model".into(), display_name: None }],
             models_url: "https://late.example.com/v1/models".into(),
         }),
-    })));
+    }));
     // 候选模型不会画进任何一行的显示文字 (槽位行显示的是**已选的值**, 不是候选列表), 所以不能靠
     // `render()` 的文字断言——必须打开槽位 picker, 检查候选里有没有混进这份晚到的模型。
     focus_row(&mut a, slot_row(Slot::Fable));
@@ -1482,10 +1510,10 @@ fn a_stale_probed_result_is_discarded_outside_probing() {
     );
 }
 
-/// `Probed` 阶段守卫之外还要核对结果自带的 `base_url`——向导 A 探测中转 X 还没回来, 用户退出
-/// 重开向导 B (同样在探测, 探测的是另一个 base_url); X 的结果这时晚到, **阶段守卫拦不住 (两边
-/// 此刻都在探测)**, 必须靠 `base_url` 不一致丢弃——与 `a_stale_probed_result_is_discarded_outside_probing`
-/// (阶段不同) 是两回事。
+/// `Probed` 阶段守卫之外还要核对结果自带的 `base_url`——代次之外的纵深防御: 就算一份不属于这次
+/// 探测的结果带着当前代次漏过来 (探测的是另一个 base_url), **阶段守卫拦不住 (此刻正在探测)**,
+/// 也要靠 `base_url` 不一致丢弃——与 `a_stale_probed_result_is_discarded_outside_probing` (阶段不同)
+/// 和 `a_probe_result_from_a_closed_wizard_is_dropped_even_for_the_same_base_url` (代次不同) 是三回事。
 #[test]
 fn a_probed_result_for_a_different_base_url_is_discarded() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
@@ -1497,27 +1525,27 @@ fn a_probed_result_for_a_different_base_url_is_discarded() {
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // 探测在飞, 草稿 base_url = "https://mine.example.com"
 
-    // 另一个向导实例当时探测的是 "https://other.example.com", 现在才晚到。
-    let cmds = a.update(Action::WizardDone(Box::new(WizardResult::Probed {
+    // 一份探测 "https://other.example.com" 的结果, 带着当前代次到达。
+    let cmds = a.update(wizard_done(&a, WizardResult::Probed {
         base_url: "https://other.example.com".into(),
         result: Ok(ProbeModelsResult::Auto {
             models: vec![ModelInfo { id: "other-model".into(), display_name: None }],
             models_url: "https://other.example.com/v1/models".into(),
         }),
-    })));
+    }));
     assert!(cmds.is_empty(), "不该产出任何 Cmd");
     // 应该仍然在探测——没被这份不属于自己的结果打回编辑 (打回去了才说明被误采纳了)。
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.wiz_probing), "应该仍然显示探测中, 没被 base_url 不一致的结果打断\n{out}");
 
     // 真正属于自己的结果 (base_url 一致) 随后到达, 应该被正常采纳, 且候选里不该混入刚才那份。
-    let cmds2 = a.update(Action::WizardDone(Box::new(WizardResult::Probed {
+    let cmds2 = a.update(wizard_done(&a, WizardResult::Probed {
         base_url: "https://mine.example.com".into(),
         result: Ok(ProbeModelsResult::Auto {
             models: vec![ModelInfo { id: "mine-model".into(), display_name: None }],
             models_url: "https://mine.example.com/v1/models".into(),
         }),
-    })));
+    }));
     assert!(cmds2.is_empty());
     // 探测成功后焦点自动落到 Slot(Fable) (`apply_wizard_result` 的 `Probed(Ok(Auto))` 分支), 不用再移动。
     assert_focus(&mut a, slot_row(Slot::Fable));
@@ -1527,20 +1555,108 @@ fn a_probed_result_for_a_different_base_url_is_discarded() {
     assert!(!spec.items.iter().any(|item| item.id == "other-model"), "别人的探测结果不该混入候选\n{:?}", spec.items);
 }
 
-/// `Models` 同样要核对结果自带的 `id`——向导 A 创建成功、在等模型列表, 用户退出重开向导 B (另一家
-/// 厂商, 同样创建成功在等模型列表); A 的模型列表这时晚到, **阶段守卫拦不住 (两边此刻都在等模型
-/// 列表)**, 必须靠 `id` 不一致丢弃——否则 B 的四个核心槽会被预填成 A 那家厂商的模型名。
+/// `Models` 同样要核对结果自带的 `id` (代次之外的纵深防御)——一份别的订阅的模型列表带着当前代次
+/// 漏过来时, **阶段守卫拦不住 (此刻正在等模型列表)**, 要靠 `id` 不一致丢弃——否则四个核心槽会被
+/// 预填成另一家厂商的模型名。
 #[test]
 fn a_models_result_for_a_different_subscription_is_discarded() {
     let mut a = wizard_after_create(); // 订阅 id = "sub-1", 等模型列表
-    let cmds = a.update(Action::WizardDone(Box::new(WizardResult::Models {
-        id: "sub-999".into(), // 另一个向导实例创建的订阅
+    let cmds = a.update(wizard_done(&a, WizardResult::Models {
+        id: "sub-999".into(), // 不是这个向导建的订阅
         result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "other-vendor-model".into(), display_name: None }], fetched_at: 0 }),
-    })));
+    }));
     assert!(cmds.is_empty(), "不该产出任何 Cmd");
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.wiz_loading_models), "应该仍然显示正在获取模型列表, 没被别的订阅的结果打断\n{out}");
     assert!(!out.contains("other-vendor-model"), "别的订阅的模型不该出现\n{out}");
+}
+
+/// 向导 A 以 OpenAI Responses 探测中转 U, 结果还没回来就退出; 向导 B 选 Chat Completions、同一个
+/// U、另一个 key, 也在探测。A 的结果先到: 阶段 (都在探测) 与 `base_url` (同一个 U) 都对得上,
+/// 只有代次能认出它不是 B 发的——采纳了的话, B 的候选模型来自别的协议 / key, A 的 `models_url`
+/// 还会被 B 落库。
+#[test]
+fn a_probe_result_from_a_closed_wizard_is_dropped_even_for_the_same_base_url() {
+    let mut a = wizard_custom(CustomProtocol::OpenaiResponses);
+    fill_custom(&mut a, CustomFill { base_url: Some("https://relay.example.com"), api_key: Some("sk-a"), ..Default::default() });
+    focus_row(&mut a, ZH.wiz_btn_probe);
+    let probe_a = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
+    let Some(Cmd::Wizard { epoch: epoch_a, .. }) = a.update(probe_a).into_iter().next() else { panic!("A 应该发出探测请求") };
+    escape_and_confirm(&mut a);
+
+    open_custom_wizard(&mut a, CustomProtocol::OpenaiChatCompletions);
+    fill_custom(&mut a, CustomFill { base_url: Some("https://relay.example.com"), api_key: Some("sk-b"), ..Default::default() });
+    focus_row(&mut a, ZH.wiz_btn_probe);
+    let probe_b = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
+    a.update(probe_b); // B 的探测在飞
+
+    let stale = Action::WizardDone {
+        epoch: epoch_a,
+        result: Box::new(WizardResult::Probed {
+            base_url: "https://relay.example.com".into(),
+            result: Ok(ProbeModelsResult::Auto {
+                models: vec![ModelInfo { id: "responses-model".into(), display_name: None }],
+                models_url: "https://relay.example.com/v1/responses/models".into(),
+            }),
+        }),
+    };
+    assert!(a.update(stale).is_empty(), "不该产出任何 Cmd");
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(ZH.wiz_probing), "A 的结果不该打断 B 的探测\n{out}");
+
+    a.update(wizard_done(
+        &a,
+        WizardResult::Probed {
+            base_url: "https://relay.example.com".into(),
+            result: Ok(ProbeModelsResult::Auto {
+                models: vec![ModelInfo { id: "chat-model".into(), display_name: None }],
+                models_url: "https://relay.example.com/v1/models".into(),
+            }),
+        },
+    ));
+    assert_focus(&mut a, slot_row(Slot::Fable));
+    let open_action = a.handle_key(key(KeyCode::Enter)).expect("Fable 行 ⏎ 应该产出 Action::OpenPicker");
+    let Action::OpenPicker(spec) = open_action else { panic!("应该是 OpenPicker, 实际 {open_action:?}") };
+    assert!(spec.items.iter().any(|item| item.id == "chat-model"), "B 自己的探测结果应该被采纳\n{:?}", spec.items);
+    assert!(!spec.items.iter().any(|item| item.id == "responses-model"), "A 的探测结果不该混入候选\n{:?}", spec.items);
+}
+
+/// 同一场景换成 `Models`: A 建好订阅、在等模型列表时退出, B 同样建好订阅在等模型列表。这里让
+/// 两边的订阅 id 相同, 把 `id` 核对排除在外——挡住 A 的结果的只能是代次。
+#[test]
+fn a_models_result_from_a_closed_wizard_is_dropped_even_for_the_same_id() {
+    let mut a = wizard_after_create(); // 订阅 id = "sub-1", LoadModels 在飞
+    let epoch_a = a.wizard_epoch().expect("准备: 向导 A 开着");
+    escape_and_confirm(&mut a);
+
+    a.update(Action::OpenWizard);
+    let providers = wizard_done(&a, WizardResult::Providers(Ok(vec![zhipu_provider()])));
+    a.update(providers);
+    let submit = submit_basics(&mut a);
+    a.update(submit);
+    a.update(wizard_done(&a, WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))));
+
+    let stale = Action::WizardDone {
+        epoch: epoch_a,
+        result: Box::new(WizardResult::Models {
+            id: "sub-1".into(),
+            result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "stale-model".into(), display_name: None }], fetched_at: 0 }),
+        }),
+    };
+    assert!(a.update(stale).is_empty(), "不该产出任何 Cmd");
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(ZH.wiz_loading_models), "A 的结果不该把 B 推进到第二步\n{out}");
+    assert!(!out.contains("stale-model"), "A 的模型不该出现\n{out}");
+
+    a.update(wizard_done(
+        &a,
+        WizardResult::Models {
+            id: "sub-1".into(),
+            result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 0 }),
+        },
+    ));
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains("glm-4.6"), "B 自己的模型列表应该被采纳并预填槽位\n{out}");
 }
 
 /// 自定义路径创建之前什么都没落库, `Esc` 的确认文案应该是 `confirm_discard`, 不是
@@ -2585,7 +2701,7 @@ fn a_rejected_submit_plays_the_field_err_effect() {
     let mut a = app(true);
     settle(&mut a); // 先把启动动效播完, 不干扰下面对 field_err 的断言
     a.update(Action::OpenWizard);
-    a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![zhipu_provider()])))));
+    a.update(wizard_done(&a, WizardResult::Providers(Ok(vec![zhipu_provider()]))));
     select_zhipu(&mut a);
     focus_row(&mut a, ZH.wiz_btn_next); // API Key 仍是空的
 
@@ -2605,17 +2721,17 @@ fn advancing_from_basics_to_slots_plays_the_wizard_step_effect_but_loading_provi
     settle(&mut a); // 先把启动动效播完
 
     a.update(Action::OpenWizard);
-    a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![zhipu_provider()])))));
+    a.update(wizard_done(&a, WizardResult::Providers(Ok(vec![zhipu_provider()]))));
     render(&mut a, 80, 24);
     assert!(!a.wants_fast_frames(), "Loading → Basics 不是换步, 不该播 wizard_step");
 
     let submit_action = submit_basics(&mut a);
     a.update(submit_action); // 创建在飞
-    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() })))));
-    a.update(Action::WizardDone(Box::new(WizardResult::Models {
+    a.update(wizard_done(&a, WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))));
+    a.update(wizard_done(&a, WizardResult::Models {
         id: "sub-1".into(),
         result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 0 }),
-    })));
+    }));
 
     render(&mut a, 80, 24);
     assert!(a.wants_fast_frames(), "Basics → Slots 应该播一次 wizard_step");

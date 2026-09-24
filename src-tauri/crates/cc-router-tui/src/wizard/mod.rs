@@ -4,7 +4,8 @@
 //!
 //! 它刻意不实现 `Component` (`crate::pages::Component`): 那个 trait 的一半方法
 //! (`on_subscriptions_changed` / `on_mutation_*` / `on_event`) 对向导没有意义, 而向导需要的
-//! `on_open` 又不在里面。方法签名仍然照着 `Component` 写, 调用约定一致。
+//! `on_open` 又不在里面。方法签名照着 `Component` 写, 只有一处不同: 产出的是 `WizardCmd` 而不是
+//! `Cmd`——向导不知道自己的代次, 由 `App` 统一盖上再发出去 (见 `action::WizardResult`)。
 //!
 //! 两条路径: 内置厂商是两步 (`basics` 建订阅 → `slots` 绑模型), 自定义厂商是单页 (`custom`,
 //! 探测模型不落库, 创建时槽位已经是真值)。每条路径的数据都挂在自己的 [`Stage`] 变体上, 阶段之外
@@ -21,7 +22,8 @@
 //!   要看这个请求**会不会落库**: 创建 / 保存在飞时连 `Esc` 也吞 (撤不回后端落库); 只读的
 //!   拉厂商 / 拉模型 / 探测在飞时 `Esc` 可用。
 //! - **每个异步结果只在发起它的那个阶段被接受, 其余一律丢弃**: 向导同一时刻最多一个请求在飞,
-//!   按阶段判就够, 不需要 `Fetch` 那套 `issued` 序号 (见 `apply_wizard_result`)。
+//!   同一实例内按阶段判就够, 不需要 `Fetch` 那套 `issued` 序号 (见 `apply_wizard_result`);
+//!   别的实例的晚到结果在到达这里之前已经被 `App` 按代次丢掉了。
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Rect};
@@ -31,7 +33,7 @@ use ratatui::widgets::{Block, BorderType};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 
-use crate::action::{Action, Cmd, WizardCmd, WizardResult};
+use crate::action::{Action, WizardCmd, WizardResult};
 use crate::client::dto::{CustomProtocol, ModelSlots, ProbeModelsResult, Provider, RefreshModelsResult, Slot};
 use crate::fx::Dir;
 use crate::i18n::Strings;
@@ -127,8 +129,8 @@ impl Wizard {
     }
 
     /// 刚打开: 要发的请求 (拉厂商列表)。`App` 在创建它之后立刻调一次。
-    pub fn on_open(&mut self) -> Vec<Cmd> {
-        vec![Cmd::Wizard(Box::new(WizardCmd::LoadProviders))]
+    pub fn on_open(&mut self) -> Vec<WizardCmd> {
+        vec![WizardCmd::LoadProviders]
     }
 
     /// 除 `Ctrl+C` 外的全部按键。`None` = 吞掉 (或只改了向导自己的状态)。`Esc` 跟阶段无关,
@@ -154,9 +156,9 @@ impl Wizard {
 
     /// 消费 `Action::WizardDone` (异步结果) 与 `Action::PickerDone` (选择弹窗的结果)。按键触发的
     /// 请求走 `Action::WizardRequest`, 不经过这里。`Created(Ok)` 会紧接着产出一次 `LoadModels`。
-    pub fn update(&mut self, action: &Action, store: &Store, s: &'static Strings) -> Vec<Cmd> {
+    pub fn update(&mut self, action: &Action, store: &Store, s: &'static Strings) -> Vec<WizardCmd> {
         match action {
-            Action::WizardDone(result) => self.apply_wizard_result(result, s),
+            Action::WizardDone { result, .. } => self.apply_wizard_result(result, s),
             Action::PickerDone { tag, choice } => {
                 self.apply_picker_choice(tag, choice, store, s);
                 Vec::new()
@@ -213,12 +215,12 @@ impl Wizard {
     /// 就 `Esc` → 再按 `n` 重开; 旧的结果晚到时如果不看阶段, 会把已经往前走的表单打回去, 或者
     /// 在错误的阶段关掉向导。
     ///
-    /// **`Models` / `Probed` 还要核对结果自带的身份**: 这两个是只读请求, 在飞时 `Esc` 可用、关闭
-    /// 向导也不会取消请求, 所以用户能退出向导 A、马上开向导 B、B 也走到同一个阶段, 这时 A 的结果
-    /// 晚到, 单靠阶段拦不住。等待期间表单只读, 阶段里记下的 id / 草稿里的 Base URL 就是这次请求
-    /// 发出时的值, 不一致必然是别的向导实例的结果。不这样做: 另一家厂商的模型名会被预填进槽位,
+    /// **`Models` / `Probed` 还要核对结果自带的身份**, 作为代次之外的纵深防御: 这两个是只读请求,
+    /// 在飞时 `Esc` 可用、关闭向导也不会取消请求, 别的向导实例的结果本该已经被 `App` 按代次丢掉;
+    /// 万一漏过来, 单靠阶段拦不住。等待期间表单只读, 阶段里记下的 id / 草稿里的 Base URL 就是这次
+    /// 请求发出时的值, 不一致必然不是这次请求的结果。漏过来的后果: 另一家厂商的模型名被预填进槽位,
     /// 或者把中转 X 的 `models_url` 与中转 Y 的 Base URL 一起落库。
-    fn apply_wizard_result(&mut self, result: &WizardResult, s: &'static Strings) -> Vec<Cmd> {
+    fn apply_wizard_result(&mut self, result: &WizardResult, s: &'static Strings) -> Vec<WizardCmd> {
         match result {
             WizardResult::Providers(inner) => {
                 if !matches!(self.stage, Stage::Loading) {
@@ -237,7 +239,7 @@ impl Wizard {
                 Stage::Basics { form, phase } if *phase == BasicsPhase::Creating => match inner {
                     Ok(created) => {
                         *phase = BasicsPhase::LoadingModels { id: created.id.clone() };
-                        vec![Cmd::Wizard(Box::new(WizardCmd::LoadModels { id: created.id.clone() }))]
+                        vec![WizardCmd::LoadModels { id: created.id.clone() }]
                     }
                     Err(e) => {
                         *phase = BasicsPhase::Editing;
@@ -438,8 +440,8 @@ impl Wizard {
         self.notice.take()
     }
 
-    /// 向导在处理**结果**时想关掉自己 (保存成功 / 创建成功)。`update()` 只能返回 `Vec<Cmd>`, 塞不进
-    /// `Action::CloseWizard`——与 `take_notice` 同一条出路。取走即清零。
+    /// 向导在处理**结果**时想关掉自己 (保存成功 / 创建成功)。`update()` 只能返回
+    /// `Vec<WizardCmd>`, 塞不进 `Action::CloseWizard`——与 `take_notice` 同一条出路。取走即清零。
     pub fn take_close_request(&mut self) -> bool {
         std::mem::take(&mut self.close_request)
     }
@@ -493,6 +495,11 @@ mod tests {
         KeyEvent::new(code, ratatui::crossterm::event::KeyModifiers::NONE)
     }
 
+    /// 向导自己不看代次 (`App` 已经按代次筛过), 这里随便给一个。
+    fn done(result: WizardResult) -> Action {
+        Action::WizardDone { epoch: 0, result: Box::new(result) }
+    }
+
     fn at(stage: Stage) -> Wizard {
         Wizard { stage, ..Wizard::new() }
     }
@@ -533,7 +540,7 @@ mod tests {
     #[test]
     fn on_open_requests_the_provider_list() {
         let mut w = Wizard::new();
-        assert_eq!(w.on_open(), vec![Cmd::Wizard(Box::new(WizardCmd::LoadProviders))]);
+        assert_eq!(w.on_open(), vec![WizardCmd::LoadProviders]);
     }
 
     #[test]
@@ -555,7 +562,7 @@ mod tests {
     #[test]
     fn a_successful_provider_list_is_recorded_quietly() {
         let mut w = Wizard::new();
-        let action = Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![provider("zhipu")]))));
+        let action = done(WizardResult::Providers(Ok(vec![provider("zhipu")])));
         let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
         assert!(cmds.is_empty());
         assert!(w.take_notice().is_none());
@@ -567,7 +574,7 @@ mod tests {
     #[test]
     fn a_failed_provider_list_does_not_produce_a_command_notice_or_close_request() {
         let mut w = Wizard::new();
-        let action = Action::WizardDone(Box::new(WizardResult::Providers(Err("network".into()))));
+        let action = done(WizardResult::Providers(Err("network".into())));
         let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
         assert!(cmds.is_empty());
         assert!(w.take_notice().is_none());
@@ -757,14 +764,14 @@ mod tests {
     }
 
     /// 每个异步结果只在发起它的那个阶段被接受——构造一个「晚到」的结果喂进不对的阶段, 断言阶段与
-    /// 数据都不变, 也不产出 `Cmd`。
+    /// 数据都不变, 也不产出请求。
     ///
     /// `Providers` 晚到 (向导已经走到 `Slots`): 不该把表单打回 `Basics`, 也不该采纳这份厂商列表。
     #[test]
     fn a_stale_provider_list_is_discarded_outside_loading() {
         let mut w = slots_at("sub-1", false);
         slots(&mut w).state.focus_on(SlotsField::Save);
-        let action = Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![provider("late")]))));
+        let action = done(WizardResult::Providers(Ok(vec![provider("late")])));
         let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
         assert!(cmds.is_empty());
         assert!(w.providers.is_empty(), "过期的厂商列表不该被采纳\n{:?}", w.providers);
@@ -776,7 +783,7 @@ mod tests {
     /// 也不该再发一次 `LoadModels`; 编辑中的两张表单同样不该被它推进或关掉。
     #[test]
     fn a_stale_created_result_is_discarded_outside_creating() {
-        let stale = Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "stale-id".into() }))));
+        let stale = done(WizardResult::Created(Ok(CreatedSubscription { id: "stale-id".into() })));
 
         let mut w = slots_at("real-id", false);
         let cmds = w.update(&stale, &Store::default(), &crate::i18n::ZH);
@@ -808,10 +815,10 @@ mod tests {
     #[test]
     fn a_stale_models_result_is_discarded_outside_loading_models() {
         let mut w = basics_at(BasicsPhase::Creating);
-        let action = Action::WizardDone(Box::new(WizardResult::Models {
+        let action = done(WizardResult::Models {
             id: "sub-1".into(),
             result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 0 }),
-        }));
+        });
         let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
         assert!(cmds.is_empty());
         assert!(matches!(w.stage, Stage::Basics { phase: BasicsPhase::Creating, .. }), "阶段不该被晚到的 Models 结果打进 Slots");
@@ -821,7 +828,7 @@ mod tests {
     #[test]
     fn a_stale_slots_saved_result_is_discarded_outside_saving() {
         let mut w = slots_at("sub-1", false);
-        let action = Action::WizardDone(Box::new(WizardResult::SlotsSaved(Ok(()))));
+        let action = done(WizardResult::SlotsSaved(Ok(())));
         let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
         assert!(cmds.is_empty());
         assert!(!w.take_close_request(), "不该关向导");

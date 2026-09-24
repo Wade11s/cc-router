@@ -163,7 +163,7 @@ async fn call_wizard(client: &Client, cmd: &WizardCmd) -> WizardResult {
         WizardCmd::LoadModels { id } => {
             let result =
                 client.call_with_timeout::<RefreshModelsResult>(commands::REFRESH_MODEL_LIST, json!({ "id": id }), REFRESH_TIMEOUT).await;
-            // `id` 原样带回去: 只读请求靠结果自证身份防跨向导实例 (见 `WizardResult` 文档注释)。
+            // `id` 原样带回去: 代次之外的纵深防御, 向导据此核对结果是不是这次请求的 (见 `WizardResult`)。
             WizardResult::Models { id: id.clone(), result: result.map_err(|e: ClientError| e.to_string()) }
         }
         WizardCmd::Probe(input) => {
@@ -184,11 +184,11 @@ async fn call_wizard(client: &Client, cmd: &WizardCmd) -> WizardResult {
 }
 
 /// 向导的请求。与 `spawn_mutation` 一样**不去重、不补跑**: 向导同一时刻最多一个请求在飞, 由它
-/// 自己的阶段保证。
-fn spawn_wizard(client: Arc<Client>, tx: UnboundedSender<Action>, cmd: WizardCmd) {
+/// 自己的阶段保证。`epoch` 原样带回, `App` 据此丢弃已经关掉的向导实例的结果。
+fn spawn_wizard(client: Arc<Client>, tx: UnboundedSender<Action>, epoch: u64, cmd: WizardCmd) {
     tokio::spawn(async move {
         let result = call_wizard(&client, &cmd).await;
-        let _ = tx.send(Action::WizardDone(Box::new(result)));
+        let _ = tx.send(Action::WizardDone { epoch, result: Box::new(result) });
     });
 }
 
@@ -356,7 +356,7 @@ fn process_action(
             Cmd::Mutate(mutation) => spawn_mutation(client.clone(), tx.clone(), *mutation),
             // 同上, `Cmd::Wizard` 的负载也是 `Box`, 同样只是为了避免 `Vec<Cmd>` 的
             // 每个元素都按最大变体分配, 不需要 `spawn_wizard` 跟着收 `Box`。
-            Cmd::Wizard(cmd) => spawn_wizard(client.clone(), tx.clone(), *cmd),
+            Cmd::Wizard { epoch, cmd } => spawn_wizard(client.clone(), tx.clone(), epoch, *cmd),
         }
     }
     false
@@ -1135,10 +1135,11 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_wizard(client, tx, WizardCmd::LoadProviders);
+        spawn_wizard(client, tx, 7, WizardCmd::LoadProviders);
 
         let done = rx.recv().await.expect("channel 关闭了");
-        let Action::WizardDone(result) = done else { panic!("{done:?}") };
+        let Action::WizardDone { epoch, result } = done else { panic!("{done:?}") };
+        assert_eq!(epoch, 7, "代次应该原样带回");
         let WizardResult::Providers(providers) = *result else { panic!("{result:?}") };
         let providers = providers.expect("应该成功");
         assert_eq!(providers.len(), 1);
@@ -1160,10 +1161,11 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_wizard(client, tx, WizardCmd::LoadProviders);
+        spawn_wizard(client, tx, 7, WizardCmd::LoadProviders);
 
         let done = rx.recv().await.expect("channel 关闭了");
-        let Action::WizardDone(result) = done else { panic!("{done:?}") };
+        let Action::WizardDone { epoch, result } = done else { panic!("{done:?}") };
+        assert_eq!(epoch, 7, "代次应该原样带回");
         let WizardResult::Providers(providers) = *result else { panic!("{result:?}") };
         assert!(providers.is_err(), "{providers:?}");
     }
@@ -1201,10 +1203,11 @@ mod tests {
             haiku: "glm-4.6".into(),
             fallback: String::new(),
         };
-        spawn_wizard(client, tx, WizardCmd::SaveSlots { id: "1".into(), model_slots });
+        spawn_wizard(client, tx, 7, WizardCmd::SaveSlots { id: "1".into(), model_slots });
 
         let done = rx.recv().await.expect("channel 关闭了");
-        let Action::WizardDone(result) = done else { panic!("{done:?}") };
+        let Action::WizardDone { epoch, result } = done else { panic!("{done:?}") };
+        assert_eq!(epoch, 7, "代次应该原样带回");
         assert!(matches!(*result, WizardResult::SlotsSaved(Ok(()))), "{result:?}");
     }
 
@@ -1226,10 +1229,11 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_wizard(client, tx, WizardCmd::LoadModels { id: "1".into() });
+        spawn_wizard(client, tx, 7, WizardCmd::LoadModels { id: "1".into() });
 
         let done = rx.recv().await.expect("channel 关闭了");
-        let Action::WizardDone(result) = done else { panic!("{done:?}") };
+        let Action::WizardDone { epoch, result } = done else { panic!("{done:?}") };
+        assert_eq!(epoch, 7, "代次应该原样带回");
         let WizardResult::Models { id, result: models } = *result else { panic!("{result:?}") };
         assert_eq!(id, "1", "带回去的 id 应该与发起请求时的 id 一致");
         assert_eq!(

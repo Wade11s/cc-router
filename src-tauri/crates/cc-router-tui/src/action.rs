@@ -186,13 +186,15 @@ pub enum WizardCmd {
 /// 向导请求的结果。**绝不带 `Secret`**——去程带 key, 回程一律不带, 这样 key 只在单向的一段消息里
 /// 存在过。
 ///
-/// **落库请求靠「吞 `Esc`」防跨实例, 只读请求靠「结果自证身份」防跨实例。** 会落库的请求
-/// (`Create`/`SaveSlots`) 在飞时 `Esc` 被吞掉, 用户没法在它返回之前退出向导再开一个新的, 所以它的
-/// 结果不可能跨向导实例, 阶段守卫就够了。只读请求 (`Probe`/`LoadModels`) 在飞时 `Esc` 可用、关闭
-/// 向导也不会取消请求 (最长等到 30 秒超时)——用户可以退出向导 A、马上开向导 B、B 也走到同一个阶段,
-/// 阶段守卫拦不住 A 的晚到结果。**所以只读请求的结果带上发起那一刻的身份 (`Probed` 带 `base_url`、
-/// `Models` 带 `id`), 落地时与向导当前记着的同一份值比对, 不一致就整个丢弃** (见
-/// `wizard::Wizard::apply_wizard_result`)。以后加新的只读请求照这个模式办, 不能只靠阶段守卫。
+/// **跨向导实例的晚到结果靠代次挡住。** 关闭向导不会取消在飞的请求 (只读请求最长等到 30 秒超时),
+/// 用户可以退出向导 A、马上开向导 B、B 也走到同一个阶段, 这时 A 的结果晚到。`App` 每次打开向导
+/// 都换一个新代次, 经 `Cmd::Wizard` 带出、`Action::WizardDone` 带回, 与当前向导的代次不符就在
+/// `App::update` 里整个丢弃 (没有向导也丢弃)——结果里的任何字段都不足以证明「是这个实例发的」:
+/// 同一个中转、另一种协议 / 另一个 key 的探测结果, `base_url` 完全一样。
+///
+/// 代次之外还有两层纵深防御, 都不能拿掉: 每个结果只在发起它的阶段被接受 (挡同一实例内的晚到),
+/// `Probed` 带 `base_url`、`Models` 带 `id`, 落地时与向导当前记着的同一份值比对 (见
+/// `wizard::Wizard::apply_wizard_result`)。以后加新的请求, 代次自动覆盖, 阶段守卫照旧要写。
 #[derive(Debug, Clone, PartialEq)]
 pub enum WizardResult {
     Providers(Result<Vec<Provider>, String>),
@@ -216,10 +218,10 @@ pub enum Cmd {
     /// `OpenConfirm { prompt: String, .. }`) 不算「小」, 那边的 `Mutate` / `MutationDone` 不触发这条
     /// lint。
     Mutate(Box<Mutation>),
-    /// 向导的一次请求。`Box` 同上一条注释的理由: `WizardCmd::Create` 带整块
-    /// `CreateInput` (含 `Secret` + `ModelSlots`), 提前用 `Box` 避免每个 `Vec<Cmd>` 元素都按最大
-    /// 变体分配。
-    Wizard(Box<WizardCmd>),
+    /// 向导的一次请求。`epoch`: 发出它的向导实例的代次, 结果原样带回 (见 [`WizardResult`])。
+    /// `Box` 同上一条注释的理由: `WizardCmd::Create` 带整块 `CreateInput` (含 `Secret` +
+    /// `ModelSlots`), 提前用 `Box` 避免每个 `Vec<Cmd>` 元素都按最大变体分配。
+    Wizard { epoch: u64, cmd: Box<WizardCmd> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -256,8 +258,9 @@ pub enum Action {
     /// 的路; 向导已经不存在时 (比如 `Action::Confirmed` 先经 `discard_current()` 关过一次, 又把
     /// 这个 action 当 `inner` 执行了一遍) 不重复发, 与 `discard_current()` 幂等。
     CloseWizard,
-    /// 一次向导请求的结果。没有向导时 (用户在结果回来之前就退出了) 直接丢弃。
-    WizardDone(Box<WizardResult>),
+    /// 一次向导请求的结果。`epoch` 是发出请求的那个 `Cmd::Wizard` 带的代次; 与当前向导的代次
+    /// 不符、或者没有向导时 (用户在结果回来之前就退出了) 直接丢弃。
+    WizardDone { epoch: u64, result: Box<WizardResult> },
     /// 向导表单的提交类按钮 (「下一步」「保存」「获取模型列表」「创建」) 校验通过时触发。
     /// **`handle_key` 阶段就已经把 `WizardCmd` 打包好了**,
     /// `App::update` 原样转成 `Cmd::Wizard`——跟 `Action::OpenWizard` 直接调用
