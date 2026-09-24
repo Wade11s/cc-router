@@ -216,10 +216,11 @@ EXPECT = [
     "共 3 条",
     "请求详情",
     "工具调用",
-    # 「请在桌面端添加」(OAuth 厂商选中提示) 不放在这里: 厂商 picker 里 OAuth 厂商那一行的
-    # label 本身就带这串字 (`"{显示名} · {desktop_only}"`), 过滤出这一行就已经让它出现在整段
-    # 累计输出里, 放进这个"只要出现过就算过"的列表会让断言测不出「选中之后有没有真的弹提示」——
-    # 按出现次数的增量判断 (见下方 `oauth_notice_count_before`/`_after` 与对应的按键序列)。
+    # 「请在桌面端添加」(OAuth 厂商选中提示) 故意不放在这个"只要出现过就算过"的列表里, 也不用
+    # 它的出现次数当判据——厂商 picker 里 OAuth 厂商那一行的 label 本身就带这串字, 而且这一格
+    # 跟 toast 的坐标在 80×24 下有真实重叠, `BufferDiff` 可能不会重新发送它 (fix round 1/2 的
+    # 报告有详细坐标推导)。改用「选中之后 picker 还能不能再打开一次」这个状态信号, 见下方按键
+    # 序列与断言。
     # 创建 + 保存槽位成功的 toast (`wiz_created`); 备注名跟着厂商显示名 "智谱" 自动生成, 与已有的
     # 三条假订阅都不重名, 不会被追加序号。
     "已创建「智谱」",
@@ -369,6 +370,19 @@ def main():
         raw = bytes(out) if limit is None else bytes(out[:limit])
         return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw.decode("utf-8", "replace"))
 
+    def wait_until_count_increases(needle, baseline, timeout=3.0):
+        # fix round 2: 换 `pump(固定时长)` + 单次采样为轮询——固定时长本身可能不够 (机器负载 /
+        # 调度延迟), 用短切片反复采样直到计数真的变多, 或者等够 `timeout` 还没变多就放弃。
+        # 返回 (是否等到, 超时时最后一次采到的计数) 供调用方拼失败信息。
+        deadline = time.time() + timeout
+        while True:
+            count = visible_text(len(out)).count(needle)
+            if count > baseline:
+                return True, count
+            if time.time() >= deadline:
+                return False, count
+            pump(0.1)
+
     pump(3.0)  # 启动动效 + 首次加载 + 1.5s 时的状态变更事件
     # 2 = 订阅页 (真页面, 期待「订阅 (3)」「备注名」); j = 选中第二条 "Kimi 备用";
     # t = 测试连接 (等够 0.8s 让假后端的响应 + toast + 重拉列表都跑完), e = 就地启停 (同样等 0.8s);
@@ -442,24 +456,37 @@ def main():
         (b"chatgpt", 0.3),  # 按 id/label 过滤到 OAuth 厂商——过滤出的这一行本身就带着
         # `wiz_desktop_only` 的文案 (`basics.rs::provider_picker`: label 是
         # `"{显示名} · {desktop_only}"`), 所以光是走到这一步, 屏幕上已经出现过
-        # "请在桌面端添加" 这串字——不能拿它证明"选中之后弹了提示"。真正的断言按出现次数的增量
-        # 判断 (fix round 1: 这里之前直接查整段累计输出, 光筛出这一行就已经让断言通过, 选不选它
-        # 结果一样, 是个测不出行为的假断言)。
+        # "请在桌面端添加" 这串字——不能拿它证明"选中之后弹了提示"。
     ):
         os.write(fd, keys)
         pump(wait)
 
-    # 选中 OAuth 厂商: 记下选中前 (还停在过滤出的这一行, 期间的重绘可能已经让这串字出现不止一次)
-    # 与选中后各自出现过几次「请在桌面端添加」——真的弹了提示的话选中后应该比选中前**更多**
-    # (toast 又画了一遍同一串字); 次数没变就说明选中没有真的触发提示。不能只看绝对次数是不是
-    # 某个固定值 (比如 1), 因为选中前这一刻已经重绘过几遍无法预先精确知道。
-    oauth_notice_count_before = visible_text(len(out)).count("请在桌面端添加")
-    os.write(fd, b"\r")
+    # 选中 OAuth 厂商: **不**拿 toast 文案 "请在桌面端添加" 当判据 (fix round 1 里按出现次数的
+    # 增量判断过, 但 fix round 2 复测发现这个判据本身不稳定, 约 40% 概率误报失败)。改用状态信号:
+    # `apply_provider_choice` 的 OAuth 分支只弹一次提示就直接 `return`, **不**调
+    # `BasicsForm::choose_provider`, 焦点仍停在 `Provider` 行 (`FieldKind::Pick`); 所以「picker
+    # 关掉之后再按一次 ⏎, 应该还能再打开一次 picker (标题「选择厂商」再出现一次)」这件事本身就
+    # 证明了焦点没有被挪走、`choose_provider` 没有被调用——如果 mutation 让 OAuth 走了
+    # `choose_provider` 那条路, 焦点会直接跳到 `ApiKey` (Secret 行), 这里的 ⏎ 就变成"移到下一行"
+    # 而不是"打开 picker", 标题不会再出现, 断言照样能抓到 (mutation 证明见 fix round 2 报告)。
+    #
+    # 不用 toast 的原因是真的量过坐标, 不是猜的: 80×24 下厂商 picker 居中 box 是
+    # y∈[4,20) x∈[10,70) (`picker::area`), toast 贴右上角是 y∈[content.y, content.y+3)
+    # x∈[61,79) (`toast::area`, `content.y` 是标签栏底下那一行, 也在 [4,20) 范围内)——两者的
+    # y∈[4, content.y+3) x∈[61,70) 有真实重叠。选中厂商那一刻是「filtered picker 正显示这一行」
+    # 直接过渡到「picker 关掉 + toast 出现」, 中间没有一帧先清空这块区域——如果 toast 恰好把
+    # "请在桌面端添加" 画在跟 picker 过滤出的这一行完全相同的格子、完全相同的字符上,
+    # ratatui 的 `BufferDiff` 只发送变化的格子, 这几格因为内容没变就不会被重新发送, 断言即使代码
+    # 完全正确也会在这种坐标巧合下偶发失败, 加大超时或轮询都救不了 (量过的重叠区域, 不是猜测)。
+    # 上面「重开 picker」的信号在选中前后隔着一次真正的关闭 (内容先换成向导表单再换回标题),
+    # 不存在同一批格子内容从头到尾没变过这回事, 不受这个问题影响。
+    picker_title_count_before = visible_text(len(out)).count("选择厂商")
+    os.write(fd, b"\r")  # 选中 OAuth 厂商
     pump(0.4)
-    oauth_notice_count_after = visible_text(len(out)).count("请在桌面端添加")
+    os.write(fd, b"\r")  # 再开一次 picker (未过滤, initial 不匹配任何项时默认选中第一项 = 智谱)
+    picker_reopened, picker_title_count_after = wait_until_count_increases("选择厂商", picker_title_count_before)
 
     for keys, wait in (
-        (b"\r", 0.4),  # 再开一次 picker (未过滤, initial 不匹配任何项时默认选中第一项 = 智谱)
         (b"\r", 0.4),  # 选中智谱: `choose_provider` 自动把焦点跳到 API Key
         (b"sk-test", 0.2),
         # 只需要两次 Tab 到「下一步」按钮 (ApiKey -> DisplayName -> Submit), 多按的会在
@@ -582,13 +609,13 @@ def main():
         if input_.get("api_key") != "sk-test":
             failures.append(f"create_subscription 的 api_key 应该是 \"sk-test\", 实际 {input_.get('api_key')!r}")
 
-    # fix round 1: 厂商 picker 里 OAuth 厂商那一行的 label 本身就带着 `wiz_desktop_only` 的文案
-    # (筛出这一行就已经出现在屏幕上), 光查整段累计输出里有没有出现这串字测不出「选中它真的弹了
-    # 提示」——按出现次数的增量判断 (见上面 `oauth_notice_count_before`/`_after`)。
-    if oauth_notice_count_after <= oauth_notice_count_before:
+    # fix round 2: 改用「picker 关掉之后还能不能再打开一次」这个状态信号判断选中 OAuth 厂商有没有
+    # 落值/挪焦点 (见上面按键序列那段大注释解释为什么不用 toast 文案)。
+    if not picker_reopened:
         failures.append(
-            f"选中 OAuth 厂商 (ChatGPT) 应该再弹一次「请在桌面端添加」的提示, 出现次数应该从 "
-            f"{oauth_notice_count_before} 变多, 实际还是 {oauth_notice_count_after}"
+            f"选中 OAuth 厂商 (ChatGPT) 之后, ⏎ 应该还能再打开一次厂商 picker (标题「选择厂商」应该"
+            f"再出现一次, 说明焦点还停在 Provider 行、没有调 choose_provider), 3 秒内出现次数没有从 "
+            f"{picker_title_count_before} 变多, 最后采到 {picker_title_count_after}"
         )
 
     # 向导第二步保存槽位打的是同一个 `update_subscription` command, 这里是历史记录里最后一条
