@@ -60,7 +60,7 @@ pub struct OverviewData {
     pub subscriptions: Vec<Subscription>,
 }
 
-/// [`Fetch`] 去重用的键 (Task 4)。`Fetch::Requests` 带查询参数、不再 `Copy`, 去重按种类而不是按
+/// [`Fetch`] 去重用的键。`Fetch::Requests` 带查询参数, 去重按种类而不是按
 /// 整个值——两个页码不同的 `Requests` 仍然是「同一种」加载, 只应该让最新那次真的发出去。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FetchKind {
@@ -70,7 +70,7 @@ pub enum FetchKind {
     Requests,
 }
 
-/// 可去重、可补跑的加载。**不再 `Copy`**: `Requests` 带着查询参数。去重按 [`FetchKind`], 不按参数。
+/// 可去重、可补跑的加载。不是 `Copy`: `Requests` 带着查询参数。去重按 [`FetchKind`], 不按参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fetch {
     Overview,
@@ -106,18 +106,18 @@ pub enum Mutation {
     TestConnection { id: String },
     RefreshModels { id: String },
     RefreshBalance { id: String },
-    /// 保存一条订阅的模型槽位 + 槽位 effort (Task 5)。两块都整块替换。
+    /// 保存一条订阅的模型槽位 + 槽位 effort。两块都整块替换。
     UpdateSlots { id: String, model_slots: ModelSlots, slot_efforts: SlotEfforts },
-    /// 保存一个虚拟模型的调度模式 + 订阅列表 (Task 6)。
+    /// 保存一个虚拟模型的调度模式 + 订阅列表。
     UpdateVirtualModel { name: String, mode: RoutingMode, subscription_ids: Vec<String> },
-    /// 删除一条订阅 (P5 Task 7)。`delete_subscription` 不拒绝被虚拟模型引用的订阅, 静默把它从
+    /// 删除一条订阅。`delete_subscription` 不拒绝被虚拟模型引用的订阅, 静默把它从
     /// 每个虚拟模型的 `subscription_ids` 里摘掉——「列出引用方」只能由 TUI 在删之前从
     /// `Subscription.referenced_by` 读, 见 `pages/subscriptions.rs` 的确认文案拼接。
     Delete { id: String },
 }
 
 /// 忙碌表 (`App::busy`) 判重用的键。订阅相关的就地操作 (含 `UpdateSlots`) 产生 `Subscription`
-/// 变体; 虚拟模型页的编辑操作 (`UpdateVirtualModel`, Task 6 起消费) 产生 `VirtualModel` 变体。
+/// 变体; 虚拟模型页的编辑操作 (`UpdateVirtualModel`) 产生 `VirtualModel` 变体。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BusyKey {
     Subscription(String),
@@ -142,9 +142,9 @@ impl Mutation {
     /// 这次变更完成后该重新拉取哪些加载。`UpdateVirtualModel` 额外影响虚拟模型列表本身 (顺序:
     /// 先虚拟模型后订阅, 与 `runtime.rs`/`tests/ui.rs` 断言的顺序一致); 其余都只影响订阅列表。
     ///
-    /// `Fetch` 不再 `Copy` (Task 4: `Requests` 带查询参数带 `String`), 但数组字面量 `&[...]` 只出现
-    /// 不带参数的变体, 编译器仍然把它按常量提升成 `'static` 临时值——验证过若编译器将来不接受这个
-    /// 提升, 换成命名 `const`/`static` 项再借用即可, 语义不变。
+    /// `Fetch` 不是 `Copy` (`Requests` 带 `String` 参数), 但数组字面量 `&[...]` 里只出现不带参数的
+    /// 变体, 编译器仍然把它按常量提升成 `'static` 临时值; 将来若不再接受这个提升, 换成命名
+    /// `const`/`static` 项再借用即可, 语义不变。
     pub fn refetch(&self) -> &'static [Fetch] {
         match self {
             Mutation::UpdateVirtualModel { .. } => &[Fetch::VirtualModels, Fetch::Subscriptions],
@@ -166,7 +166,8 @@ pub enum MutationOutcome {
 }
 
 /// 向导要发的请求。**与 [`Mutation`] 刻意分开**: 它们没有订阅 id (创建的那一刻还没有), 不进忙碌表,
-/// 不进「上次操作」存档, 完成后也不自动重拉——结果只回给向导自己。判重由向导的 `pending` 状态负责。
+/// 不进「上次操作」存档, 完成后也不自动重拉——结果只回给向导自己。向导同一时刻最多一个请求在飞,
+/// 由它自己的阶段保证。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WizardCmd {
     /// `list_providers`。向导打开时发一次。
@@ -177,25 +178,21 @@ pub enum WizardCmd {
     LoadModels { id: String },
     /// `probe_custom_models`。自定义厂商在保存前先探测一次模型列表。
     Probe(ProbeInput),
-    /// `update_subscription`, 只带 `model_slots` 这一块 patch (向导不设置 effort, 见 Task 5 的裁决:
-    /// 少发一个字段就不会把已有值清掉)。
+    /// `update_subscription`, 只带 `model_slots` 这一块 patch: 向导不设置 effort, 少发一个字段就不会
+    /// 把已有值清掉 (用户建完在订阅详情页按 `o` 就能改)。
     SaveSlots { id: String, model_slots: ModelSlots },
 }
 
 /// 向导请求的结果。**绝不带 `Secret`**——去程带 key, 回程一律不带, 这样 key 只在单向的一段消息里
 /// 存在过。
 ///
-/// **结构性规律 (评审 4): 落库请求靠"吞 `Esc`"防跨实例, 只读请求靠"结果自证身份"防跨实例。**
-/// 会落库的请求 (`Create`/`SaveSlots`) 在飞时 `can_cancel()` 为假, `Esc` 直接被吞掉——用户没有
-/// 办法在它还没返回之前退出向导再开一个新的, 所以它们的结果不可能跨向导实例, `apply_wizard_result`
-/// 开头"按 `self.stage` 判"那道阶段守卫就够了。但只读请求 (`Probe`/`LoadModels`, 还有理论上的
-/// 任何将来的只读请求) 在飞时 `Esc` 可用 (`can_cancel()` 为真)、关闭向导也不会取消这个请求 (最长
-/// 等到 30 秒超时才会真的死掉)——用户可以退出向导 A、马上开向导 B、B 也走到同一个 `Stage`(比如
-/// 都在 `Probing`), 这时阶段守卫完全拦不住 A 的晚到结果被 B 接受。**只读请求的结果必须带上发起
-/// 请求那一刻的身份 (`Probed` 带 `base_url`、`Models` 带 `id`), 落地时与当前草稿里的同一份身份
-/// 值比对, 不一致就整个丢弃**(见 `wizard::mod::apply_wizard_result` 里这两条分支的比对逻辑)——
-/// `Probing`/`LoadingModels` 期间表单只读, 草稿里的值就是这次请求发出时的值, 不一致必然是另一个
-/// 向导实例的结果。以后加新的只读请求, 照这个模式办, 不能只靠阶段守卫。
+/// **落库请求靠「吞 `Esc`」防跨实例, 只读请求靠「结果自证身份」防跨实例。** 会落库的请求
+/// (`Create`/`SaveSlots`) 在飞时 `Esc` 被吞掉, 用户没法在它返回之前退出向导再开一个新的, 所以它的
+/// 结果不可能跨向导实例, 阶段守卫就够了。只读请求 (`Probe`/`LoadModels`) 在飞时 `Esc` 可用、关闭
+/// 向导也不会取消请求 (最长等到 30 秒超时)——用户可以退出向导 A、马上开向导 B、B 也走到同一个阶段,
+/// 阶段守卫拦不住 A 的晚到结果。**所以只读请求的结果带上发起那一刻的身份 (`Probed` 带 `base_url`、
+/// `Models` 带 `id`), 落地时与向导当前记着的同一份值比对, 不一致就整个丢弃** (见
+/// `wizard::Wizard::apply_wizard_result`)。以后加新的只读请求照这个模式办, 不能只靠阶段守卫。
 #[derive(Debug, Clone, PartialEq)]
 pub enum WizardResult {
     Providers(Result<Vec<Provider>, String>),
@@ -212,15 +209,14 @@ pub enum WizardResult {
 pub enum Cmd {
     Quit,
     Fetch(Fetch),
-    /// `Box`: `Mutation::UpdateSlots`/`UpdateVirtualModel` (Task 4) 带 `ModelSlots` + `SlotEfforts`
+    /// `Box`: `Mutation::UpdateSlots`/`UpdateVirtualModel` 带 `ModelSlots` + `SlotEfforts`
     /// 这类整块负载, 让 `Cmd` 最大变体比其它变体 (`Quit` 零字节、`Fetch` 几字节) 大出一大截,
     /// clippy 的 `large_enum_variant` 会警告——`Vec<Cmd>` 到处传递 (`App::update` 的返回值), 每个
-    /// 元素都按最大变体的尺寸分配。只在这一层加一层间接, 不改 `Mutation` / `Action::Mutate` /
-    /// `Action::MutationDone` 里任何字段的名字或形状——那两处没有触发这条 lint (`Action` 本来就
-    /// 因为别的变体, 比如 `OpenConfirm { prompt: String, .. }`, 已经不算"小"), 挑最小的改动消掉
-    /// 警告就够了 (Fix round I)。
+    /// 元素都按最大变体的尺寸分配。只在这一层加间接: `Action` 本来就因为别的变体 (比如
+    /// `OpenConfirm { prompt: String, .. }`) 不算「小」, 那边的 `Mutate` / `MutationDone` 不触发这条
+    /// lint。
     Mutate(Box<Mutation>),
-    /// 向导的一次请求。`Box` 同上一条注释的理由: `WizardCmd::Create` (Task 3) 会带整块
+    /// 向导的一次请求。`Box` 同上一条注释的理由: `WizardCmd::Create` 带整块
     /// `CreateInput` (含 `Secret` + `ModelSlots`), 提前用 `Box` 避免每个 `Vec<Cmd>` 元素都按最大
     /// 变体分配。
     Wizard(Box<WizardCmd>),
@@ -241,29 +237,29 @@ pub enum Action {
     /// 打开一个「是 / 否」确认弹窗; `on_yes` 是选「是」后真正要执行的 `Action`。页面自己想
     /// 请求确认 (比如「放弃修改」) 时也可以从 `handle_key` 直接返回这个。**如果已经有另一个弹窗
     /// 打开着 (哪怕是另一个 `Confirm` 或 `Picker`), 会直接替换它**——不播放旧弹窗的关闭动效,
-    /// 也不留旧弹窗的几何 (Fix round C)。
+    /// 也不留旧弹窗的几何。
     OpenConfirm { prompt: String, on_yes: Box<Action> },
     /// 用户在确认弹窗里选了「是」: 先让当前页面丢弃草稿 (`Component::discard_changes`), 再执行
     /// `inner`——`inner` 走一次普通 `App::update`, 但此时 dirty 已经被清空, 不会被再次拦截确认。
     /// **这个丢弃草稿是无条件的、不看 `inner` 是什么**: `Confirmed` 只应该用来包「放弃当前页面的
     /// 修改」这一类确认 (`App::guard_dirty` 自动包出来的那种就是), 不要拿它包一个跟"要不要丢弃
     /// 当前页面草稿"无关的确认——哪怕 `inner` 本身跟草稿毫无关系, `discard_changes()` 依然会先被
-    /// 调用一次 (Fix round E)。
+    /// 调用一次。
     Confirmed(Box<Action>),
     /// 页面主动清空自己的草稿 (比如按 Esc 放弃编辑) 时用; `App` 收到后调用当前页面的
     /// `discard_changes()`, 不产出任何 `Cmd`。
     DiscardDraft,
-    /// 订阅页按 `n` (P5 Task 7 起真正接上这个键): 打开新建向导。
+    /// 订阅页按 `n`: 打开新建向导。
     OpenWizard,
     /// 关掉向导 (完成 / 取消 / 确认放弃都走这一个)。`App` **真的关掉了向导** (调用时向导确实存在)
     /// 才补一次 `Fetch::Subscriptions`——向导可能已经创建了订阅, 而它不走 `Mutation` 那条自动重拉
     /// 的路; 向导已经不存在时 (比如 `Action::Confirmed` 先经 `discard_current()` 关过一次, 又把
-    /// 这个 action 当 `inner` 执行了一遍) 不重复发, 与 `discard_current()` 幂等 (Review round 1)。
+    /// 这个 action 当 `inner` 执行了一遍) 不重复发, 与 `discard_current()` 幂等。
     CloseWizard,
     /// 一次向导请求的结果。没有向导时 (用户在结果回来之前就退出了) 直接丢弃。
     WizardDone(Box<WizardResult>),
-    /// 向导表单的提交类按钮 (Basics 的「下一步」、Task 5 的「保存」、Task 6 的「创建」/「探测」)
-    /// 校验通过时触发 (P5 Task 4 新增)。**`handle_key` 阶段就已经把 `WizardCmd` 打包好了**,
+    /// 向导表单的提交类按钮 (「下一步」「保存」「获取模型列表」「创建」) 校验通过时触发。
+    /// **`handle_key` 阶段就已经把 `WizardCmd` 打包好了**,
     /// `App::update` 原样转成 `Cmd::Wizard`——跟 `Action::OpenWizard` 直接调用
     /// `wizard.on_open()` 拿 `Cmd` 是同一条思路: 触发点是一次按键而不是收到的某个异步结果, 不需要
     /// 也不该走 `Wizard::update()` 那条专给"结果"设计的路径 (那条路径靠 `WizardDone` 触发, 且
@@ -281,8 +277,8 @@ pub enum Action {
     /// 后端推来的事件; `data` 是原始 JSON 文本。`at_ms`: TUI 收到它的时刻 (Unix 毫秒), 由 runtime.rs 盖——
     /// 实时路由页据此计时 (App 自己的 now_ms 只按 250ms tick 前进, 精度不够)。
     Sse { name: String, data: String, at_ms: i64 },
-    /// 可见页面每 5 秒一次的自动刷新 (以前复用 `Refresh`)。与 `Refresh` 分开, 是因为日志页翻到第 2 页以后
-    /// 只认用户按的 `r` (Task 8)。
+    /// 可见页面每 5 秒一次的自动刷新。与 `Refresh` 分开, 是因为日志页翻到第 2 页以后
+    /// 只认用户按的 `r`。
     Poll,
     /// `issued`: 主循环发起这次加载时盖的单调递增序号。
     FetchDone { fetch: Fetch, issued: u64, result: Result<FetchData, String> },
@@ -293,19 +289,19 @@ pub enum Action {
     /// `0`); `App` 据此对 `mutation.refetch()` 里每个目标调用对应的 `set_*_barrier`, 挡住那些在
     /// 变更完成前就已经发起、内容还是变更前旧值的加载晚到时把乐观更新冲回去。
     MutationDone { mutation: Mutation, barrier: u64, result: Result<MutationOutcome, String> },
-    /// 打开一个过滤选择弹窗 (Task 5/6 起从页面发起: 选模型 / 选 effort / 给虚拟模型加订阅)。
-    /// **如果已经有另一个弹窗打开着, 会直接替换它**——语义与 `OpenConfirm` 相同 (Fix round C)。
+    /// 打开一个过滤选择弹窗 (选模型 / 选 effort / 给虚拟模型加订阅 / 向导里的各种选择)。
+    /// **如果已经有另一个弹窗打开着, 会直接替换它**——语义与 `OpenConfirm` 相同。
     OpenPicker(PickerSpec),
     /// 用户在选择弹窗里选定了一行 (或输入了自定义值)。`App` 收到后先关弹窗 (带关闭动效), 再原样
-    /// 转给当前页面的 `update`——页面据 `tag` 知道该把 `choice` 填到哪。Task 5 之前没有真正的消费者,
-    /// 页面的 `update` 会直接忽略它。
+    /// 转给向导 (存在时) 或当前页面的 `update`——据 `tag` 知道该把 `choice` 填到哪; 不认识的
+    /// `tag` 直接忽略。
     PickerDone { tag: PickerTag, choice: PickerChoice },
-    /// 打开一个只读可滚动的详情弹窗 (Task 1 新增; Task 8 起从日志页发起)。**如果已经有另一个弹窗
-    /// 打开着, 会直接替换它**——语义与 `OpenConfirm` / `OpenPicker` 相同 (Fix round C)。
+    /// 打开一个只读可滚动的详情弹窗 (日志页发起)。**如果已经有另一个弹窗打开着, 会直接替换它**——
+    /// 语义与 `OpenConfirm` / `OpenPicker` 相同。
     OpenDetail(DetailSpec),
     /// 实时路由页 ⏎: 切到日志页并只看这条订阅。
     OpenLogsFor { subscription_id: String },
-    /// 页面想弹一条 toast, 但自己不能直接碰 `App` 的 toast 队列 (Task 5)。只从
+    /// 页面想弹一条 toast, 但自己不能直接碰 `App` 的 toast 队列。只从
     /// `Component::handle_key` 的返回值这条路走——`update()` 内部想弹通知 (比如处理
     /// `PickerDone` 时发现输入为空) 用的是另一条路 (`Component::take_notice`, 见 `pages/mod.rs`),
     /// 不产出这个 `Action` (那个签名返回 `Vec<Cmd>`, 塞不进一个 `Action`)。
@@ -341,7 +337,7 @@ mod tests {
         assert_eq!(vm.refetch(), &[Fetch::VirtualModels, Fetch::Subscriptions], "完成后应该先重拉虚拟模型再重拉订阅");
     }
 
-    /// Task 4: 两个页码不同的 `Requests` 仍然是「同一种」加载——`Fetches` 按 `kind()` 去重, 不按
+    /// 两个页码不同的 `Requests` 仍然是「同一种」加载——`Fetches` 按 `kind()` 去重, 不按
     /// 整个 `Fetch` 值, 否则「第 1 页还没回来时又翻到第 2 页」会被当成两种不同的加载各自去重,
     /// 而不是「同一种, 最新为准」。
     #[test]

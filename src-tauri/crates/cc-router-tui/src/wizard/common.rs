@@ -2,7 +2,7 @@
 //!
 //! 每张表单只回答三个问题——焦点顺序是什么、每个字段是哪一种 ([`FieldKind`])、文本字段在哪
 //! ([`FormFields`])——方向键 / `Tab` / 文本行 `⏎` / `Ctrl+R` / 打字、底栏提示、行内提示与
-//! 锁定态都由种类决定, 不再每张表单各写一遍。
+//! 锁定态都由种类决定, 三张表单的行为因此不会各自走样。
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

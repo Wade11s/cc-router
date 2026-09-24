@@ -70,7 +70,7 @@ pub struct App {
     tab: Tab,
     store: Store,
     pages: Pages,
-    /// P5 Task 2: 新建订阅向导。不是标签页也不是弹窗, 是夹在弹窗与全局键之间的一层——见
+    /// 新建订阅向导。不是标签页也不是弹窗, 是夹在弹窗与全局键之间的一层——见
     /// `wizard::Wizard` 模块顶部的文档注释。
     wizard: Option<Wizard>,
     popup: Option<Popup>,
@@ -88,7 +88,7 @@ pub struct App {
     /// `Mutation::busy_key()` 判重, 不按 `Mutation` 整体** —— 同一条订阅同时只能有一个操作在跑,
     /// 但不同操作 (比如先 `t` 再 `e`) 仍然互斥, 不是各自独立排队。
     busy: HashMap<BusyKey, Mutation>,
-    /// 每条订阅最近一次就地操作的结果, 与对应 toast 用的是**同一份文本** (I1 fix): toast 只能显示
+    /// 每条订阅最近一次就地操作的结果, 与对应 toast 用的是**同一份文本**: toast 只能显示
     /// 一行 (≤72 列, 3 秒就消失), 详情面板的「上次操作」行拿这份存档展示完整文案。发起新操作时
     /// (`start_mutation` 真的派发出去那一刻) 移除对应条目, 不是等结果回来才清。
     last_outcome: HashMap<String, (ToastKind, String)>,
@@ -142,7 +142,7 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Some(Action::ForceQuit);
         }
-        // 弹窗打开时按变体各自决定按键含义 (Task 1 起收进 `impl Popup::handle_key`); 键盘完全归
+        // 弹窗打开时按变体各自决定按键含义 (`impl Popup::handle_key`); 键盘完全归
         // 弹窗, 到不了下面的全局键 / 页面。`&mut self.popup`: `Popup::Picker`/`Popup::Detail` 的
         // 按键 (打字 / 移动选中 / 滚动) 直接改自身状态, 不像 Help / Confirm 那样只读。
         if let Some(popup) = &mut self.popup {
@@ -185,10 +185,9 @@ impl App {
     }
 
     /// 打开一个新弹窗, 替换掉已经打开的那个 (如果有)。`Action::OpenConfirm` / `Action::OpenPicker` /
-    /// `Action::OpenDetail` / `Action::ToggleHelp` 四个来源共用 (Task 1 合并; 原来 Confirm/Picker
-    /// 各有一份手写的 `open_confirm`/`open_picker`)。
+    /// `Action::OpenDetail` / `Action::ToggleHelp` 四个来源共用。
     ///
-    /// Fix round C: 先走正常的关闭路径——如果已经有另一个弹窗开着, 这样才会清掉它的 `popup_area`
+    /// 先走正常的关闭路径——如果已经有另一个弹窗开着, 这样才会清掉它的 `popup_area`
     /// (不清的话, 如果新弹窗在第一次 draw() 之前就被关掉, 关闭动效会拿旧弹窗的几何去播), 而不是
     /// 直接覆盖 `self.popup` 留下不一致的状态。
     fn open_popup(&mut self, popup: Popup) {
@@ -197,13 +196,13 @@ impl App {
         self.pending_popup_fx = Some(PopupFx::Open);
     }
 
-    /// 当前的「编辑上下文」是不是有未保存的东西。向导只要存在就算——它一定在收集输入 (P5 Task 2)。
+    /// 当前的「编辑上下文」是不是有未保存的东西。向导只要存在就算——它一定在收集输入。
     fn current_dirty(&self) -> bool {
         self.wizard.is_some() || self.pages.get(self.tab).is_dirty()
     }
 
     /// 丢弃当前的编辑上下文: **有向导时关掉向导** (并补一次订阅列表重拉, 因为向导可能已经创建了
-    /// 订阅), 否则丢弃当前页草稿 (P5 Task 2)。
+    /// 订阅), 否则丢弃当前页草稿。
     fn discard_current(&mut self) -> Vec<Cmd> {
         if self.wizard.take().is_some() {
             vec![Cmd::Fetch(Fetch::Subscriptions)]
@@ -228,7 +227,7 @@ impl App {
     }
 
     /// 调用向导的 `update`, 再轮询它的两个待办 —— 与 `App::update_page` 对页面做的事一一对应。
-    /// 顺序要紧: 先取 notice (关闭之后向导就没了), 再看 close 请求 (P5 Task 2)。
+    /// 顺序要紧: 先取 notice (关闭之后向导就没了), 再看 close 请求。
     ///
     /// `notice`/`should_close` 先落进局部变量、`w` 借用到此为止, 再调 `self.push_toast`/
     /// `self.update`——这两个都要重新独占借用整个 `self`, 不能跟仍然存活的 `w`
@@ -249,18 +248,15 @@ impl App {
 
     /// `Store` 刚接受了一份订阅列表 (`FetchDone` 两个分支共用): 广播给所有页面。**唯一**列出
     /// 全部页面字段的地方 —— 以后加新页面只改这一处, 不会出现"某个 FetchDone 分支忘了通知新
-    /// 页面"这种只有部分刷新路径才触发、没有测试能咬住的漏更 (fix round 1, I1)。
+    /// 页面"这种只有部分刷新路径才触发、没有测试能咬住的漏更。
     ///
-    /// S1(c) (fix round P3b): `on_subscriptions_changed` 现在可能顺带产出一条通知 (订阅详情页的
+    /// `on_subscriptions_changed` 可能顺带产出一条通知 (订阅详情页的
     /// 草稿对应的订阅这一刻从 `Store` 里消失了) —— 这条通知不是从 `Component::update()` 触发的,
     /// 不会被 `update_page` 那条轮询路径捡到, 所以这里也照 `update_page` 的规矩轮询一次取走,
     /// 不然要等下一次真正的 `update()` 调用才会显示, 违背"立刻生效"的本意。
     ///
-    /// Task 5: 以前这里还顺带按文案 (`text == s.sub_gone`) 特判着关掉当前弹窗——那条特判依赖
-    /// 页面凑巧发出了一条同名通知, 而这条通知只在**已经有草稿**时才会产出, 弹窗打开之后、用户
-    /// 还没在里面选过任何值 (没有草稿) 就轮到这条订阅消失时压根不会触发, 弹窗会一直挂着一条已经
-    /// 不存在的订阅。这部分职责现在挪到了 [`App::close_picker_if_subscription_vanished`], 由调用方
-    /// 在 `Store` 接受新列表之后单独调用, 不再依赖这里的通知内容。
+    /// 「订阅消失时关掉指着它的选择器」**不**靠这里的通知内容判断 (那条通知只在已经有草稿时才会
+    /// 产出), 而是由 [`App::close_picker_if_subscription_vanished`] 直接查弹窗的 `tag`。
     fn notify_subscriptions_changed(&mut self, changed: &[String]) {
         let store = &self.store;
         let s = self.s;
@@ -276,12 +272,11 @@ impl App {
         }
     }
 
-    /// Task 5: `Store` 刚**接受**了一份订阅列表之后调用 (`FetchDone` 两个分支共用, 紧跟在
+    /// `Store` 刚**接受**了一份订阅列表之后调用 (`FetchDone` 两个分支共用, 紧跟在
     /// `notify_subscriptions_changed` / `notify_store_changed` 之后) —— 如果当前弹窗是选择器
     /// (模型 / 思考档位), 且它是为某条订阅开的 (`PickerTag::subscription_id()`), 而这条订阅这一刻
-    /// 已经不在 `Store` 里了 (被别处删除), 就关掉它并提示。取代了原来 `notify_subscriptions_changed`
-    /// 里按文案判断的特判——直接查弹窗自己的 `tag()`, 不依赖任何页面主动发出通知, 弹窗打开之后、
-    /// 用户还没选过任何值 (没有草稿) 的场景也能正确关闭。
+    /// 已经不在 `Store` 里了 (被别处删除), 就关掉它并提示。直接查弹窗自己的 `tag()`, 不依赖任何
+    /// 页面主动发出通知, 弹窗打开之后、用户还没选过任何值 (没有草稿) 的场景也能正确关闭。
     fn close_picker_if_subscription_vanished(&mut self) {
         let Some(Popup::Picker(state)) = &self.popup else { return };
         let Some(sub_id) = state.tag().subscription_id() else { return };
@@ -294,7 +289,7 @@ impl App {
         self.push_toast(Toast::new(ToastKind::Info, self.s.sub_gone));
     }
 
-    /// M1 (fix round final): `Store` 刚**接受**了一份订阅列表或虚拟模型列表 (不管内容变没变)——
+    /// `Store` 刚**接受**了一份订阅列表或虚拟模型列表 (不管内容变没变)——
     /// 广播给全部页面, 让编辑类页面借这个时机核对一遍 `is_dirty()` 缓存, 不用等下一次真正的
     /// `Component::update()` 调用 (轮询最多要等 5 秒)。与 `notify_subscriptions_changed` 分开:
     /// 后者只在订阅列表**变化**时触发、带着"哪些 id 变了"的 diff (给闪烁用); 这个方法订阅列表和
@@ -319,8 +314,8 @@ impl App {
 
     /// 调用某个页面的 `update`, 并顺带处理它可能产出的通知——`Component::update` 签名只能返回
     /// `Vec<Cmd>`, 塞不进一个 `Action` (那是给 `handle_key` 用的 `Action::Notify`), 页面想在
-    /// `update()` 内部弹一条 toast (比如「输入的模型名不能为空」「草稿对应的订阅已经不存在了」,
-    /// Task 5) 就存进 `pending_notice`, 这里在 `update` 返回后轮询一次取走。所有会调
+    /// `update()` 内部弹一条 toast (比如「输入的模型名不能为空」「草稿对应的订阅已经不存在了」)
+    /// 就存进 `pending_notice`, 这里在 `update` 返回后轮询一次取走。所有会调
     /// `Component::update` 的地方都该走这个 helper, 不要再各自裸调 `pages.get_mut(tab).update(..)`
     /// ——否则新页面用上 `take_notice` 时会有调用点漏接的风险。
     fn update_page(&mut self, tab: Tab, action: &Action) -> Vec<Cmd> {
@@ -362,12 +357,12 @@ impl App {
             }
         }
         self.busy.insert(key.clone(), m.clone());
-        // I1 fix: 这条订阅上一次操作的结果 (如果还挂在详情面板上) 已经过时了, 新操作一发起就该
+        // 这条订阅上一次操作的结果 (如果还挂在详情面板上) 已经过时了, 新操作一发起就该
         // 隐去它, 不能让用户以为「上次操作」显示的是这次刚发出去的操作的结果。
         if let BusyKey::Subscription(id) = &key {
             self.last_outcome.remove(id);
         }
-        // I1 (fix round final): 紧跟在忙碌表真的插入之后广播给全部页面——`on_mutation_started` 与
+        // 紧跟在忙碌表真的插入之后广播给全部页面——`on_mutation_started` 与
         // `on_mutation_done` 成对, 让编辑类页面在这段窗口里拒绝任何会继续修改同一份草稿的按键。
         self.pages.for_each_mut(|page| page.on_mutation_started(&m));
         vec![Cmd::Mutate(Box::new(m))]
@@ -376,14 +371,14 @@ impl App {
     /// `Action::MutationDone`: 从忙碌表移除, 先对 `mutation.refetch()` 里每个目标调对应的
     /// `set_*_barrier(barrier)` (挡住晚到的、内容还是变更前旧值的加载), 再按结果弹一条 toast,
     /// **无论成败都追加一次 `mutation.refetch()` 声明的重拉** —— 状态 / 缓存 / 错误信息可能都变了。
-    /// toast 与 `last_outcome`（I1 fix）**共用同一份文本**: toast 只能显示一行 (≤72 列, 3 秒就
+    /// toast 与 `last_outcome` **共用同一份文本**: toast 只能显示一行 (≤72 列, 3 秒就
     /// 消失), 详情面板的「上次操作」行拿 `last_outcome` 展示完整文案, 不受 toast 单行截断的限制。
     /// `last_outcome` 只对 `BusyKey::Subscription` 的变更写 (虚拟模型页没有这块面板);
-    /// `BusyKey::VirtualModel` 的变更 (Task 4 起) 仍然照常弹 toast、照常重拉, 只是不进这份存档。
+    /// `BusyKey::VirtualModel` 的变更仍然照常弹 toast、照常重拉, 只是不进这份存档。
     fn finish_mutation(&mut self, mutation: Mutation, barrier: u64, result: Result<MutationOutcome, String>) -> Vec<Cmd> {
         let key = mutation.busy_key();
         self.busy.remove(&key);
-        // Task 5: 每个页面各恰好一次的机会去响应「这次变更是不是我关心的那条草稿」(订阅页在
+        // 每个页面各恰好一次的机会去响应「这次变更是不是我关心的那条草稿」(订阅页在
         // `ok && UpdateSlots && id 匹配当前草稿` 时清草稿); 对全部页面调, 不只当前可见的那个——
         // 用户切走之后保存结果才回来时, 原页面的草稿也该被正确清掉/保留。
         self.pages.for_each_mut(|page| page.on_mutation_done(&mutation, result.is_ok()));
@@ -395,14 +390,13 @@ impl App {
                 // 但空着这个分支是一个等真用上才会炸的洞, 先堵上。
                 Fetch::Subscriptions | Fetch::Overview => self.store.set_subscriptions_barrier(barrier),
                 Fetch::VirtualModels => self.store.set_virtual_models_barrier(barrier),
-                // 日志页 (Task 8) 自己管理分页状态, 不进 `Store`, 没有屏障可设——目前也没有任何
+                // 日志页自己管理分页状态, 不进 `Store`, 没有屏障可设——目前也没有任何
                 // `Mutation` 会把 `Fetch::Requests` 放进 `refetch()`, 空着这个分支同样是先堵上。
                 Fetch::Requests(_) => {}
             }
         }
-        // `Fetch` 不再 `Copy` (Task 4: `Requests` 带查询参数), `refetch()` 返回的是 `&'static [Fetch]`
-        // 的只读切片, 这里需要各自拥有的所有权才能塞进 `Cmd::Fetch`——`.copied()` 不再适用, 换成
-        // `.cloned()`。
+        // `Fetch` 不是 `Copy` (`Requests` 带查询参数), `refetch()` 返回的是 `&'static [Fetch]`
+        // 的只读切片, 塞进 `Cmd::Fetch` 需要各自拥有的所有权, 所以 `.cloned()`。
         let refetch_cmds: Vec<Cmd> = mutation.refetch().iter().cloned().map(Cmd::Fetch).collect();
 
         let name = match &key {
@@ -493,7 +487,7 @@ impl App {
             }
             // `self.wizard.take().is_some()`: 只有真的关掉了 (调用时向导确实存在) 才补一次重拉——
             // `Confirmed(CloseWizard)` 这条路径上 `discard_current()` 已经关过一次向导了, 这里再
-            // 无条件发一次会产出两条一模一样的 `Cmd::Fetch(Subscriptions)` (Review round 1, Minor)。
+            // 无条件发一次会产出两条一模一样的 `Cmd::Fetch(Subscriptions)`。
             Action::CloseWizard => {
                 if self.wizard.take().is_some() {
                     vec![Cmd::Fetch(Fetch::Subscriptions)]
@@ -502,10 +496,10 @@ impl App {
                 }
             }
             Action::WizardDone(_) => self.update_wizard(&action),
-            // P5 Task 4: 向导表单提交按钮触发的请求。`handle_key` 已经校验并打包好 `WizardCmd`,
+            // 向导表单提交按钮触发的请求。`handle_key` 已经校验并打包好 `WizardCmd`,
             // 这里直接转成 `Cmd::Wizard`——跟上面 `OpenWizard` 直接调用 `wizard.on_open()` 是
             // 同一条思路 (触发点是按键本身, 不经过 `Wizard::update()` 那条给结果用的路径)。
-            // **必须判 `self.wizard.is_some()` 才转发**(评审 M1)——"没有向导也无害" 这个说法只
+            // **必须判 `self.wizard.is_some()` 才转发**——"没有向导也无害" 这个说法只
             // 对 `WizardDone` 成立 (它落地时向导已经不在, `apply_wizard_result` 那条"没有向导就
             // 丢弃"的路径正好接住), 对 `Create` 这类会写库的请求不成立: 如果这个 action 被塞进某个
             // 确认弹窗的 `on_yes` (`Action::Confirmed` 会先 `discard_current()` 关掉向导再执行
@@ -541,7 +535,7 @@ impl App {
             Action::ConnectionLost => {
                 self.conn = Conn::Reconnecting;
                 // 每次都广播, 不判断是不是刚发生状态切换——重连期间这条 action 会反复到来, 页面
-                // 处理它必须幂等 (Task 2)。
+                // 处理它必须幂等。
                 let at_ms = self.now_ms;
                 self.pages.for_each_mut(|page| page.on_event(StreamEvent::Lost { at_ms }));
                 Vec::new()
@@ -552,7 +546,7 @@ impl App {
                     if self.conn == Conn::Connected {
                         self.push_toast(Toast::new(ToastKind::Error, (self.s.toast_load_failed)(&message)));
                     }
-                    // 加载结果永远交给发起它的页面, 哪怕是失败——日志页 (Task 8) 据此停掉「加载中」
+                    // 加载结果永远交给发起它的页面, 哪怕是失败——日志页据此停掉「加载中」
                     // 状态 (toast 已经在上面弹过, 页面自己不用再弹一次)。其它三种加载没有任何页面
                     // 需要在失败时收到通知 (Overview/Subscriptions/VirtualModels 都只在 Ok 时才有事
                     // 要做), 维持原样不转发。
@@ -573,9 +567,9 @@ impl App {
                     let changed = self.store.apply_subscriptions(issued, subs);
                     if let Some(changed) = &changed {
                         self.notify_subscriptions_changed(changed);
-                        // M1: `Store` 接受了这份订阅列表, 广播给全部页面核对草稿。
+                        // `Store` 接受了这份订阅列表, 广播给全部页面核对草稿。
                         self.notify_store_changed();
-                        // Task 5: 再核对一遍当前打开的选择器弹窗 (如果有) 是否还指着一条存在的订阅。
+                        // 再核对一遍当前打开的选择器弹窗 (如果有) 是否还指着一条存在的订阅。
                         self.close_picker_if_subscription_vanished();
                     }
                     let action = Action::FetchDone { fetch, issued, result: Ok(FetchData::Overview(data)) };
@@ -592,18 +586,18 @@ impl App {
                     if let Some(changed) = &changed {
                         self.notify_subscriptions_changed(changed);
                         self.notify_store_changed();
-                        // Task 5: 同上——SSE 触发的单独订阅列表刷新同样要核对选择器弹窗。
+                        // 同上——SSE 触发的单独订阅列表刷新同样要核对选择器弹窗。
                         self.close_picker_if_subscription_vanished();
                     }
                     Vec::new()
                 }
-                // 虚拟模型列表刷新: 只进 Store, 不需要转给任何页面的 update ——虚拟模型页 (Task 6 起)
+                // 虚拟模型列表刷新: 只进 Store, 不需要转给任何页面的 update ——虚拟模型页
                 // 画的时候直接读 ctx.store, 与订阅列表同一套约定。
                 Ok(FetchData::VirtualModels(vms)) => {
                     debug_assert_eq!(fetch, Fetch::VirtualModels, "spawn_fetch 应该保证 FetchData::VirtualModels 只配 Fetch::VirtualModels");
                     let accepted = self.store.apply_virtual_models(issued, vms);
                     if accepted {
-                        // M1: 虚拟模型页没有 `on_subscriptions_changed` 那条早通知路径 (那是给订阅
+                        // 虚拟模型页没有 `on_subscriptions_changed` 那条早通知路径 (那是给订阅
                         // 列表用的), 这份广播是它唯一能立刻核对草稿的机会——不然要等下一次真正的
                         // `Component::update()` 调用 (最多 5 秒轮询) 才会发现"新列表其实已经和
                         // 草稿相等了"。
@@ -611,7 +605,7 @@ impl App {
                     }
                     Vec::new()
                 }
-                // 日志页 (Task 8) 自己的分页 / 过滤状态——不进 `Store`, 加载结果原样转给发起它的
+                // 日志页自己的分页 / 过滤状态——不进 `Store`, 加载结果原样转给发起它的
                 // 页面 (哪怕它此刻不可见: 用户翻页/改过滤之后立刻切走是常见操作)。
                 Ok(FetchData::Requests(page)) => {
                     debug_assert_eq!(fetch.kind(), FetchKind::Requests, "spawn_fetch 应该保证 FetchData::Requests 只配 Fetch::Requests");
@@ -622,7 +616,7 @@ impl App {
             Action::Refresh | Action::Poll => self.update_page(self.tab, &action),
             Action::Sse { ref name, ref data, at_ms } => {
                 // 先广播给所有页面 (含不可见的), 再照旧转给可见页的 update——广播只能改页面自己的
-                // 状态, 能产出 Cmd 的反应仍然只走后面这一步 (Task 2)。
+                // 状态, 能产出 Cmd 的反应仍然只走后面这一步。
                 self.pages.for_each_mut(|page| page.on_event(StreamEvent::Message { name, data, at_ms }));
                 self.update_page(self.tab, &action)
             }
@@ -635,8 +629,8 @@ impl App {
             Action::PickerDone { tag, choice } => {
                 self.close_popup();
                 let action = Action::PickerDone { tag, choice };
-                // 有向导时交给向导 (P5 Task 4 起从选厂商/选模型弹窗触发); 没有向导时维持原样,
-                // 交给当前页面 (P3b 起的改槽位/改虚拟模型成员用的就是这条老路)。
+                // 有向导时交给向导 (选厂商 / 选模型等弹窗是它开的); 没有向导时交给当前页面
+                // (改槽位 / 改虚拟模型成员)。
                 if self.wizard.is_some() {
                     self.update_wizard(&action)
                 } else {
@@ -760,10 +754,10 @@ impl App {
             tz: self.tz,
         };
         // 有向导时内容区整个归它 (先 `Clear` 再画, 不叠在页面上面); 底栏左侧换成向导自己的键位,
-        // 右侧固定只剩 `Esc` (`?` 帮助 / `q` 退出在向导里按不出来, 继续提示会误导, P5 Task 2)——
-        // **除非请求正在飞** (`can_cancel()` 为假, 评审 M9): 那种情况下 `Esc` 也按不出反应,
+        // 右侧固定只剩 `Esc` (`?` 帮助 / `q` 退出在向导里按不出来, 继续提示会误导)——
+        // **除非落库请求正在飞** (`can_cancel()` 为假): 那种情况下 `Esc` 也按不出反应,
         // 继续显示这条提示就是纯误导, 右侧整个留空。`self.popup.is_some()` 在调 `wizard.draw`
-        // 之前先取出来: 向导 (评审 M5) 据此决定要不要设终端光标——有弹窗叠在上面时它自己的输入框
+        // 之前先取出来: 向导据此决定要不要设终端光标——有弹窗叠在上面时它自己的输入框
         // 不该再显示光标, 交给弹窗决定 (picker 会设、confirm/help 不设即隐藏)。
         let popup_open = self.popup.is_some();
         let (left, right): (Vec<Hint>, Vec<Hint>) = if let Some(wizard) = &mut self.wizard {
@@ -783,8 +777,8 @@ impl App {
         self.draw_toast(frame, screen, content.y);
 
         // 弹窗打开时才用得到, 但取值本身不依赖弹窗状态 (纯查表), 先取出来免得在下面的可变借用里
-        // 再跟 `self.pages` 打交道 (Task 1: 按 / 画 / 尺寸计算收进 `impl Popup` 之后, `App` 这里
-        // 只负责备好 `PopupCtx` 需要的环境)。
+        // 再跟 `self.pages` 打交道 (按键 / 画 / 尺寸计算都在 `impl Popup` 里, `App` 这里只负责备好
+        // `PopupCtx` 需要的环境)。
         let page_help = self.pages.get(self.tab).help(s);
         if let Some(popup) = &mut self.popup {
             // 压暗背景用静态的 DIM 修饰符而不是动效: 16 色 / 无色终端下同样成立。
@@ -913,8 +907,7 @@ mod tests {
         assert!(!a.pages.logs.is_dirty(), "y 之后原页面的草稿应该被丢弃");
     }
 
-    /// Fix round E: `guard_dirty` 之前只有 `Quit` / `SwitchTab` 两条路径被测过, `NextTab` /
-    /// `PrevTab` 走的是同一个 `guard_dirty` helper, 但从没被单独断言过。
+    /// `NextTab` / `PrevTab` 与 `Quit` / `SwitchTab` 走同一个 `guard_dirty`, 各自单独断言一遍。
     #[test]
     fn next_tab_and_prev_tab_on_a_dirty_page_ask_first_and_yes_discards() {
         let mut a = dirty_app(); // tab = Logs (index 4)
@@ -930,8 +923,8 @@ mod tests {
         assert_eq!(b.tab, Tab::Live, "y 之后应该真的切到上一页");
     }
 
-    /// Fix round E: `Action::DiscardDraft` (页面自己按 Esc 放弃编辑时用) 应该直接调用当前页面的
-    /// `discard_changes()`, 不产出任何 `Cmd`, 也不需要经过确认弹窗——这条路径以前没有专门测过。
+    /// `Action::DiscardDraft` (页面自己按 Esc 放弃编辑时用) 应该直接调用当前页面的
+    /// `discard_changes()`, 不产出任何 `Cmd`, 也不需要经过确认弹窗。
     #[test]
     fn discard_draft_clears_the_current_pages_dirty_flag_without_a_cmd() {
         let mut a = dirty_app();
@@ -940,7 +933,7 @@ mod tests {
         assert!(!a.pages.logs.is_dirty(), "草稿应该被丢弃");
     }
 
-    /// Fix round C: 打开一个新弹窗 (确认 / picker) 时, 如果已经有另一个弹窗开着, 应该直接替换它,
+    /// 打开一个新弹窗 (确认 / picker) 时, 如果已经有另一个弹窗开着, 应该直接替换它,
     /// 并且清掉旧弹窗的 `popup_area`——不清的话, 如果新弹窗在第一次 `draw()` 之前就被关掉, 关闭
     /// 动效会拿旧弹窗的几何去播。
     #[test]
@@ -967,7 +960,7 @@ mod tests {
         assert!(matches!(a.popup, Some(Popup::Picker(_))), "应该直接替换成 picker 弹窗");
         assert!(a.popup_area.is_none(), "同样应该清掉 Confirm 弹窗的 popup_area");
 
-        // Task 1: `Action::OpenDetail` 应该遵守同一条「替换掉已经打开的弹窗」规则。
+        // `Action::OpenDetail` 应该遵守同一条「替换掉已经打开的弹窗」规则。
         render(&mut a, 80, 24); // 记一次 picker 弹窗的 popup_area。
         assert!(a.popup_area.is_some());
         a.update(Action::OpenDetail(DetailSpec {
@@ -978,11 +971,10 @@ mod tests {
         assert!(a.popup_area.is_none(), "同样应该清掉 picker 弹窗的 popup_area");
     }
 
-    /// Task 2: 事件流上的消息与断线要广播给**所有**页面 (含不可见的), 但只有可见页才产出 `Cmd`。
+    /// 事件流上的消息与断线要广播给**所有**页面 (含不可见的), 但只有可见页才产出 `Cmd`。
     ///
-    /// Task 8 改写: 占位页 (`pages::placeholder::Placeholder::seen`) 已经随 `Tab::Logs` 换成真正
-    /// 的日志页一起删除——「广播到不可见页」现在靠实时路由页的 `Live::entry_count` (Task 8 新增的
-    /// `#[cfg(test)]` 钩子) 验证: 总览页可见时发一条 `route_attempt_started`, 总览页不消费它 (不
+    /// 「广播到不可见页」靠实时路由页的 `Live::entry_count` (`#[cfg(test)]` 钩子) 验证: 总览页可见时
+    /// 发一条 `route_attempt_started`, 总览页不消费它 (不
     /// 产出 `Cmd`), 但不可见的实时路由页应该已经把这次尝试记进了自己的缓冲。
     #[test]
     fn stream_events_reach_hidden_pages_but_only_the_visible_page_returns_cmds() {
@@ -1020,7 +1012,7 @@ mod tests {
         assert_eq!(a.pages.live.entry_count(), 2, "断线广播应该到达实时路由页, 插入一条分隔行");
     }
 
-    /// Task 8 review fix round 1: `data` 为 `None` 时日志页一律显示加载中 (不看 `loading`, 见
+    /// `data` 为 `None` 时日志页一律显示加载中 (不看 `loading`, 见
     /// `logs.rs::draw_table` 的注释——断线/重连期间 `loading` 本来就一直是 false, 不能因此误报
     /// 「没有记录」), 所以「一次失败的加载真的停掉了 loading 标记」这件事在渲染文本层面已经看不出
     /// 来了, 只能靠 `Logs::is_loading()` 这个测试专用钩子直接读 (与 `set_force_dirty` 同一套「只在
@@ -1039,7 +1031,7 @@ mod tests {
         assert!(!a.pages.logs.is_loading(), "失败的加载应该停掉「加载中」标记");
     }
 
-    // ---------- P5 Task 2: 向导这一层的四条路由 ----------
+    // ---------- 向导这一层的路由 ----------
 
     /// 向导打开后, `q` / `r` / `1` / `Tab` 这些平时会被当成全局键的按键应该被向导吞掉, 到不了
     /// `match key.code` 那一段——所以它们绝不会产出 `Quit`/`Refresh`/`SwitchTab`/`NextTab`。
@@ -1113,7 +1105,7 @@ mod tests {
         assert!(a.update(Action::WizardDone(Box::new(result))).is_empty(), "没有向导时应该直接丢弃, 不 panic");
     }
 
-    /// 评审 M1: 没有向导时 `Action::WizardRequest` 不该被转成 `Cmd::Wizard`——不像
+    /// 没有向导时 `Action::WizardRequest` 不该被转成 `Cmd::Wizard`——不像
     /// `WizardDone`(落地时向导已经不在也无害, "没有向导就丢弃" 这条路径正好接住), `WizardRequest`
     /// 背后是 `create_subscription` 这类会写库的请求, 真发出去就会在没人接收结果的情况下把订阅
     /// 建到后端。`WizardCmd::LoadProviders` 不带负载, 用它当占位验证"没有向导就不转发"这条纯粹的
@@ -1133,10 +1125,9 @@ mod tests {
         assert!(a.wizard.is_some());
     }
 
-    /// Review round 1: `App::update_wizard` 转发 `take_close_request()` 那条分支之前完全没有
-    /// App 级测试盯着——`close_request` 在生产代码里看着像个没人写的死字段, 容易被当成死分支删掉
-    /// (`wizard/mod.rs` 自己「取走即清零」的单测只测了 `Wizard` 自身, 从没驱动过 `App::update`
-    /// 真的去看这个标记)。用 `request_close_for_test` 从外面戳一下, 确认 `WizardDone` 落地时
+    /// `App::update_wizard` 转发 `take_close_request()` 的那条分支: `close_request` 只在向导处理
+    /// 结果时被置位, 看着像没人写的死字段, 容易被当成死分支删掉 (`wizard/mod.rs` 自己的单测只测了
+    /// `Wizard` 本身)。用 `request_close_for_test` 从外面戳一下, 确认 `WizardDone` 落地时
     /// `App` 真的会关掉向导、补一次订阅列表重拉。
     #[test]
     fn a_wizards_close_request_is_forwarded_and_refetches_subscriptions() {
@@ -1161,9 +1152,8 @@ mod tests {
         assert!(out.contains("测试通知"), "{out}");
     }
 
-    /// Review round 1: 「弹窗排在向导前面」这条按键优先级之前只经 `Action::Confirmed` 间接测过
-    /// (直接喂 action, 没走 `handle_key`)——如果有人把 `App::handle_key` 里弹窗判断和向导判断的
-    /// 顺序调换, 之前的测试全绿也不会发现。这里真的走一遍 `handle_key`: 向导打开时触发一次确认
+    /// 「弹窗排在向导前面」这条按键优先级: 直接喂 `Action::Confirmed` 测不到 `App::handle_key` 里
+    /// 弹窗判断与向导判断的先后, 所以这里真的走一遍 `handle_key`: 向导打开时触发一次确认
     /// 弹窗 (切页), 确认「y」这个按键仍然落在弹窗上而不是被向导吞掉。
     #[test]
     fn a_confirm_popup_still_wins_over_the_wizard() {

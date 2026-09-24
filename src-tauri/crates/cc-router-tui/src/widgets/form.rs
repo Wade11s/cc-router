@@ -10,19 +10,18 @@
 //!   (有光标行)。
 //! - `error` 另起一行, 缩进到值那一列, `⚠ ` 前缀 + warn 色。
 //! - `Note` 按显示宽度折行 (`crate::format::wrap`), 最多 3 行, 超出时第 3 行截断收尾补 `…`——
-//!   与订阅详情页「最近错误」超长截断同一套先例 (评审 M6, `Created(Err)` 的后端报错原文可能很长)。
+//!   与订阅详情页「最近错误」超长截断同一套先例 (创建失败时后端的报错原文可能很长)。
 //! - `Button` 居中画 `"[ 标签 ]"`, 聚焦时**只给这一段 span** 加 `REVERSED`——`Line` 自己的
-//!   `style()` 会把整个 `area` 宽度都铺上反色 (`Buffer::set_style` 先垫一层背景再画 span), 之前
-//!   踩过这个坑 (评审 M4): 焦点移到按钮上时一整行 (含左右大片空白) 都被反色, 看起来像列表选中条,
-//!   方括号失去意义。改成只在 `Span::styled` 上加修饰符, `Line` 本身不设 `style`。`busy` 时标签
+//!   `style()` 会把整个 `area` 宽度都铺上反色 (`Buffer::set_style` 先垫一层背景再画 span), 焦点
+//!   移到按钮上时一整行 (含左右大片空白) 都被反色, 看起来像列表选中条, 方括号失去意义。所以只在
+//!   `Span::styled` 上加修饰符, `Line` 本身不设 `style`。`busy` 时标签
 //!   前面插一个 throbber 符号 (`to_symbol_span` 自带的尾随空格正好当分隔)。
-//! - 光标: **照抄 `widgets::picker::draw` 的算法** (Fix round F 同款坑)——可视宽度先减 1 再算
+//! - 光标: **照抄 `widgets::picker::draw` 的算法**——可视宽度先减 1 再算
 //!   滚动量, 光标 x 再 `.min(右边界 - 1)`, 否则文本正好填满输入框时光标会画在最后一个字符上面
 //!   而不是紧跟其后的空位。`form.rs` 没有 `tui_input::Input` 可以借, 所以 [`visual_scroll`] 是
 //!   照同一份 `char` 宽度对齐规则重写的一份, 输入换成 `FormRow::Field::cursor` 那个已经算好的
 //!   显示列偏移。`FormView::show_cursor` 为假时 (有弹窗叠在表单上面) 整个关口统一跳过
-//!   `set_cursor_position`——调用方不用再对每个文本行各自算一遍"弹窗开着就不设光标" (P5 Task 5 起
-//!   收在这里, 见该字段文档注释)。
+//!   `set_cursor_position`——调用方不用对每个文本行各自算一遍"弹窗开着就不设光标"。
 //! - 步骤条 `area.width < 60` 时不画 (与总览页 logo 同一条让位原则)。
 
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -87,9 +86,9 @@ impl FormRow<'_> {
     }
 }
 
-/// 一边 push 行、一边声明「这一行是不是焦点」, 焦点下标由它记下——调用方不再维护「字段 → 行下标」
-/// 映射表, 也不用为前置的说明行 / 空行手算偏移 (以前三张表单各有一张映射表加一个偏移常量, 增删
-/// 一行漏改映射, 焦点标记就画错行而编译器不报错)。
+/// 一边 push 行、一边声明「这一行是不是焦点」, 焦点下标由它记下——调用方不维护「字段 → 行下标」
+/// 映射表, 也不用为前置的说明行 / 空行手算偏移 (手写映射的话, 增删一行漏改映射, 焦点标记就画错行
+/// 而编译器不报错)。
 #[derive(Default)]
 pub struct FormBuilder<'a> {
     rows: Vec<FormRow<'a>>,
@@ -99,7 +98,7 @@ pub struct FormBuilder<'a> {
 /// [`FormBuilder::finish`] 的产物: 交给 [`FormView`] 的 `rows` / `focus`。
 pub struct FormRows<'a> {
     pub rows: Vec<FormRow<'a>>,
-    /// 聚焦行的下标; 没有任何一行声明为焦点时是 0 (与旧映射表「总有一个下标」的行为一致)。
+    /// 聚焦行的下标; 没有任何一行声明为焦点时是 0。
     pub focus: usize,
 }
 
@@ -132,28 +131,26 @@ pub struct FormView<'a> {
     /// 画 throbber 用 (与「重连中」同一套 `widgets::spinner_state`)。
     pub tick: u64,
     /// 有弹窗叠在表单上面时调用方传 `false`——统一在这里忽略所有行的 `cursor`(不调
-    /// `set_cursor_position`), 不用再让每个文本行各自算一遍 `(!popup_open).then(...)`(Task 4
-    /// 遗留: 每加一个文本行就得记得抄一遍这个条件, 漏一个就是"弹窗下面光标在闪"; Task 5 起收在
-    /// 这一个关口)。
+    /// `set_cursor_position`), 不用让每个文本行各自算一遍 `(!popup_open).then(...)`——每加一个文本行
+    /// 就得记得抄一遍这个条件, 漏一个就是「弹窗下面光标在闪」。
     pub show_cursor: bool,
 }
 
 /// 画在 `area` 里: `Block::bordered()` + `BorderType::Rounded`, `title_top` 左边是 `title`、
-/// 右边是步骤条, `Padding::new(2, 2, 1, 1)`。**内容超过可视高度时按焦点行滚动**(评审 2, P5
-/// Task 6 收尾修的——旧版永远从头画到满就截断, 焦点行(含它下面的错误行)完全可能被截在看不见的
-/// 地方, 自定义表单 14 行内容在 80×24 下实测就会撞到: 内容区可用高度只有 16 行, 带一条会折成
-/// 2 行的说明时总高度 17 行, `Created(Err)` 落地时焦点常常停在最后一行的「创建」按钮上——旧算法
-/// 会把这一行连同它上面几行一起截没, 用户完全看不到自己正在操作哪一行)。算法: 焦点行底边 (含它
+/// 右边是步骤条, `Padding::new(2, 2, 1, 1)`。**内容超过可视高度时按焦点行滚动**: 从头画到满就
+/// 截断的话, 焦点行 (含它下面的错误行) 完全可能被截在看不见的地方——自定义表单 14 行内容在 80×24
+/// 下内容区可用高度只有 16 行, 带一条会折成 2 行的说明时总高度 17 行, 创建失败时焦点常常停在最后
+/// 一行的「创建」按钮上。算法: 焦点行底边 (含它
 /// 自己的高度, 用 `FormRow::height` 按真实高度算, 不是按行数) ≤ 可用高度就从第 0 行画起; 否则
 /// 起点 = 焦点行底边 − 可用高度, 再向上取整到最近的行边界 (只能整行跳过, 不能把一行从中间切开)。
 /// 需要滚动时保守地给顶部/底部提示行各留一行 (哪怕最终只有一侧真的截断)——换一次能一步算清楚的
 /// 起点, 不用先画一遍猜、猜错了再回头重算。
 ///
 /// **返回聚焦行的矩形**, 聚焦行没画出来时是 `None`: 需要滚动、而内容区连「上下两条提示行 + 一
-/// 整行」都放不下 (`inner.height < 3`, 这时整块内容一行都不画——以前会把可用高度硬抬到 1, 连同
-/// 提示行一起画出内容区之外), 或者焦点行自己比可用高度还高 (表单里最高的可聚焦行是"字段 + 错误"
+/// 整行」都放不下 (`inner.height < 3`, 这时整块内容一行都不画, 免得连同提示行一起画出内容区
+/// 之外), 或者焦点行自己比可用高度还高 (表单里最高的可聚焦行是"字段 + 错误"
 /// 两行)。80×24 起两种情况都不会发生 (内容区可用高度至少 16 行)。调用方 (向导) 拿它播
-/// `fx::field_err` (Task 8) ——几何只有 `draw` 知道, 而校验失败时焦点一定就在出错的那一行, 所以
+/// `fx::field_err`——几何只有 `draw` 知道, 而校验失败时焦点一定就在出错的那一行, 所以
 /// 一个矩形就够。
 pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'static Strings) -> Option<Rect> {
     let mut block = Block::bordered()
@@ -343,7 +340,7 @@ fn draw_field_line(
     let value_style = if show_placeholder || locked { theme.muted_style() } else { Style::new() };
 
     if let Some(pos) = cursor {
-        // Fix round F 同款坑: 可视宽度先减 1 再算滚动量, 否则文本正好填满时光标会画在最后一个
+        // 可视宽度先减 1 再算滚动量, 否则文本正好填满时光标会画在最后一个
         // 字符上面而不是紧跟其后的空位。
         let visual_width = value_area.width.max(1).saturating_sub(1) as usize;
         let scroll = visual_scroll(text, pos, visual_width);
@@ -394,7 +391,7 @@ fn draw_button(frame: &mut Frame, area: Rect, label: &str, busy: bool, focused: 
     } else {
         format!("[ {label} ]")
     };
-    // M4: REVERSED 只加在这个 span 上, 不能调 `Line::style()`——`Line` 的 `style` 会在渲染时先给
+    // REVERSED 只加在这个 span 上, 不能调 `Line::style()`——`Line` 的 `style` 会在渲染时先给
     // 整个 `area` 宽度垫一层背景 (`Buffer::set_style`), 于是聚焦时按钮两侧大片空白也会被反色,
     // 看起来像列表选中条。`Span::styled` 的样式只覆盖它自己的字符, `Line` 本身留默认 `Style`。
     let style = if focused { Style::new().add_modifier(Modifier::REVERSED) } else { Style::new() };
@@ -486,8 +483,8 @@ mod tests {
         assert!(!narrow.contains("STEP1"), "宽度不够时步骤条应该让位\n{narrow}");
     }
 
-    /// M6: `Note` 太长时按宽度折行、封顶 3 行, 第 3 行截断收尾补 `…`——不能像旧版那样硬切成一行
-    /// 撞在单词中间, 也不能无限往下长占满整张表单。
+    /// `Note` 太长时按宽度折行、封顶 3 行, 第 3 行截断收尾补 `…`——不能硬切成一行撞在单词中间,
+    /// 也不能无限往下长占满整张表单。
     #[test]
     fn a_long_note_wraps_up_to_three_lines_and_the_third_ends_with_an_ellipsis() {
         let text = "A".repeat(300);
@@ -501,10 +498,9 @@ mod tests {
         assert!(!a_lines[0].contains('…'), "第一行不该有省略号\n{out}");
     }
 
-    /// M10 → 评审 2 改写: 内容超过可视高度时**不再简单截断**, 而是按焦点行滚动。8 行内容塞进
-    /// 只有 5 行可用高度的区域, 焦点在最后一行 (下标 7)——旧语义断言"截掉、返回 None", **新语义
-    /// 反过来**: 应该滚到能看见焦点行, 顶部因此被截 (前几行不可见、顶部出现 `form_more`), 返回值
-    /// 是 `Some`。
+    /// 内容超过可视高度时按焦点行滚动, 而不是简单截断。8 行内容塞进只有 5 行可用高度的区域, 焦点
+    /// 在最后一行 (下标 7): 应该滚到能看见焦点行, 顶部因此被截 (前几行不可见、顶部出现
+    /// `form_more`), 返回值是 `Some`。
     #[test]
     fn content_taller_than_the_area_scrolls_so_the_focus_row_stays_visible() {
         let labels = ["行0", "行1", "行2", "行3", "行4", "行5", "行6", "行7"];
@@ -527,7 +523,7 @@ mod tests {
         assert!(focus_rect.is_some(), "聚焦行现在应该可见, 应该返回它的矩形\n{out}");
     }
 
-    /// 评审 2 (b): 聚焦第一行时应该从顶部开始画 (不该无谓地把它也滚出视野), 下方装不下的内容
+    /// 聚焦第一行时应该从顶部开始画 (不该无谓地把它也滚出视野), 下方装不下的内容
     /// 用 `form_more` 提示, 不该同时出现顶部提示 (那意味着起点算错、平白多滚了一段)。
     #[test]
     fn content_taller_than_the_area_starts_from_the_top_when_focus_is_near_the_top() {
@@ -551,11 +547,10 @@ mod tests {
         assert_eq!(rect.y, 2, "第一行应该紧贴内容区顶部 (border 1 + padding-top 1), 不该被顶部提示占位\n{out}");
     }
 
-    /// 评审 2 (a): 复现评审给的最糟场景——一条真实的长错误 (经 `wiz_create_failed` 格式化) 在
+    /// 最糟场景: 一条真实的长错误 (经 `wiz_create_failed` 格式化) 在
     /// 表单宽度下会折成 2 行, 加上自定义表单固定的 14 行内容, 总高度 (2 说明 + 1 空行 + 14) = 17
     /// 超过 80×24 下自定义表单实际可用的 16 行 (24 − 3 标签栏 − 1 底栏 − 2 边框 − 2 内距); 焦点
-    /// 停在最后一行的「创建」按钮——旧算法会把这一行连同它上面几行一起截没, 新算法必须让它连同
-    /// 它前面的说明行一起可判定地滚出/滚入, 返回它的矩形。
+    /// 停在最后一行的「创建」按钮——它必须被滚进可视区域, 并返回它的矩形。
     #[test]
     fn scrolling_keeps_a_focused_button_visible_behind_a_long_wrapped_note() {
         let note = (ZH.wiz_create_failed)("network: error sending request for url (https://relay.example.com/v1beta/models)");
@@ -584,8 +579,8 @@ mod tests {
         assert!(focus_rect.is_some(), "聚焦行现在应该可见, 应该返回它的矩形\n{out}");
     }
 
-    /// 7R-a: 前置说明行 + 空行之后, `FormBuilder` 记下的焦点下标仍然指向声明为焦点的那一行
-    /// (以前靠调用方手加「有说明行就 +2」的偏移), 画出来 `▌` 也落在那一行上。
+    /// 前置说明行 + 空行之后, `FormBuilder` 记下的焦点下标仍然指向声明为焦点的那一行 (调用方不用
+    /// 手加「有说明行就 +2」的偏移), 画出来 `▌` 也落在那一行上。
     #[test]
     fn the_builder_tracks_the_focus_index_past_leading_note_rows() {
         let mut b = FormBuilder::new();
@@ -622,7 +617,7 @@ mod tests {
     }
 
     /// 需要滚动、而内容区连「两条提示行 + 一整行」都放不下时 (`inner.height` = 2), 一行内容都不画、
-    /// 返回 `None`——以前会把可用高度硬抬到 1, 连同提示行画出内容区之外, 还返回 `Some`。
+    /// 返回 `None`——不能把可用高度硬抬到 1、连同提示行画出内容区之外。
     #[test]
     fn a_content_area_too_short_to_scroll_draws_nothing_and_returns_none() {
         let labels = ["行0", "行1", "行2", "行3"];
@@ -642,7 +637,7 @@ mod tests {
         assert!(!out.contains("行0") && !out.contains(ZH.form_more), "内容区放不下时不该画任何行\n{out}");
     }
 
-    /// P5 Task 5 前置项 1: `show_cursor: false` 时哪怕聚焦行带着 `cursor`, 画完之后终端光标也
+    /// `show_cursor: false` 时哪怕聚焦行带着 `cursor`, 画完之后终端光标也
     /// 不该可见——`Terminal::draw` 按这一帧有没有被调过 `Frame::set_cursor_position` 决定要不要
     /// 显示/隐藏光标, 一行没设不代表别的行也没设, 必须统一在 `draw()` 这一个关口拦住。
     #[test]
@@ -656,7 +651,7 @@ mod tests {
         assert!(!terminal.backend().cursor_visible(), "show_cursor: false 时终端光标不该可见");
     }
 
-    /// M4 的回归锁: 焦点在按钮行时, `[ 标签 ]` 之外的格子 (左右大片空白) **不该**带 `REVERSED`,
+    /// 焦点在按钮行时, `[ 标签 ]` 之外的格子 (左右大片空白) **不该**带 `REVERSED`,
     /// 只有标签本身那几格带——用 `TestBackend` 的 buffer 逐格查 `modifier`, 比只看渲染出来的字符
     /// 更能咬住"整行被反色"这类样式回归 (文字断言看不出颜色/修饰符)。用短 ASCII 标签 (不是真实
     /// i18n 文案), 避开宽字符的"第二格是延续格, `Buffer::set_stringn` 对它调 `reset()` 不保留

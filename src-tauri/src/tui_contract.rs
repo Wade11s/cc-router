@@ -34,8 +34,8 @@ fn through_json<T: Serialize, V: DeserializeOwned>(value: &T) -> V {
 }
 
 /// TUI `CustomProtocol` → 后端 `CustomProtocol` 的期望映射, 写成对 TUI 枚举的穷尽 `match`——
-/// TUI 加协议变体时这里会 `E0004`, 逼着当场决定后端对应哪个变体, 而不是遗漏在某个手写列表里
-/// (Task 3 评审 #5)。`create_subscription_input_matches` 与 `custom_protocol_wire_names_round_trip`
+/// TUI 加协议变体时这里会 `E0004`, 逼着当场决定后端对应哪个变体, 而不是遗漏在某个手写列表里。
+/// `create_subscription_input_matches` 与 `custom_protocol_wire_names_round_trip`
 /// 共用这一份映射。
 fn expected_backend_protocol(p: dto::CustomProtocol) -> CustomProtocol {
     match p {
@@ -49,7 +49,7 @@ fn expected_backend_protocol(p: dto::CustomProtocol) -> CustomProtocol {
 
 /// 后端 `AuthType` → 是否属于「TUI 该置灰」的 OAuth 类, 写成对后端枚举的穷尽 `match`——后端加
 /// 新变体时这里会 `E0004`, 逼着当场决定它算不算 OAuth, 而不是悄悄漏在 `OAUTH_AUTH_TYPES` 之外
-/// 让 TUI 把它当普通 api_key 厂商展示 (Task 3 评审 #6)。
+/// 让 TUI 把它当普通 api_key 厂商展示。
 fn is_oauth_auth_type(auth: AuthType) -> bool {
     match auth {
         AuthType::ChatgptOauth | AuthType::KiroOauth => true,
@@ -480,7 +480,7 @@ fn commands_are_registered() {
     }
 }
 
-/// TUI 关心的每个事件名都必须还在后端 `BRIDGED_EVENTS` 里 (Task 2) —— 否则事件发生了但永远推不到
+/// TUI 关心的每个事件名都必须还在后端 `BRIDGED_EVENTS` 里 —— 否则事件发生了但永远推不到
 /// TUI, `/ui/api/events` 那条 SSE 连接上什么都不会来。
 #[test]
 fn tui_event_names_are_bridged() {
@@ -492,7 +492,7 @@ fn tui_event_names_are_bridged() {
     }
 }
 
-/// `route_attempt_payload` 的线上形状 (Task 7): started 的键恰好是 `subscription_id` /
+/// `route_attempt_payload` 的线上形状: started 的键恰好是 `subscription_id` /
 /// `virtual_model` (没有 `success`), finished 多一个 `success`; 两者都能解析成 `dto::RouteAttempt`。
 #[test]
 fn route_attempt_payloads_match() {
@@ -520,7 +520,7 @@ fn route_attempt_payloads_match() {
     assert_eq!(finished_view.success, Some(true));
 }
 
-/// `RequestLogDto` 全部字段为 `Some` 时, `dto::RequestLog` 逐字段接住 (Task 4)。
+/// `RequestLogDto` 全部字段为 `Some` 时, `dto::RequestLog` 逐字段接住。
 #[test]
 fn request_log_matches() {
     let real = RequestLogDto {
@@ -765,7 +765,7 @@ fn request_query_args_deserialize_into_the_backend_filters() {
 
 /// `list_providers` 的一项: 两个 endpoint、`auth.type = "api_key"` (键名是 `type` 不是 `auth_type`,
 /// 见 `provider::model::Auth` 的 `#[serde(rename)]`)、`model_discovery` 带 `example_models`。同时
-/// 覆盖 `Provider::is_oauth()` / `default_endpoint()` 两个取值方法 (P5 Task 3)。
+/// 覆盖 `Provider::is_oauth()` / `default_endpoint()` 两个取值方法。
 #[test]
 fn provider_info_matches() {
     let real = ProviderInfo {
@@ -868,8 +868,8 @@ fn create_subscription_input_matches() {
         other => panic!("应该是 FromTemplate: {other:?}"),
     }
 
-    // custom 分支: 5 个协议全过一遍, 逐个断言后端反序列化出来的 `protocol` 就是对应的后端变体
-    // (Task 3 评审 #1)——只测缺省值 (Anthropic) 测不出「字段被改名, 后端 `#[serde(default)]`
+    // custom 分支: 5 个协议全过一遍, 逐个断言后端反序列化出来的 `protocol` 就是对应的后端变体——
+    // 只测缺省值 (Anthropic) 测不出「字段被改名, 后端 `#[serde(default)]`
     // 悄悄把它吞成 Anthropic」这类回归: `CreateSource::Custom.protocol` 恰好默认就是 Anthropic,
     // `CreateSource` 也没有 `deny_unknown_fields`, 单测一个缺省值毫无区分力。
     for tui_protocol in dto::CustomProtocol::ALL {
@@ -977,7 +977,7 @@ fn probe_custom_models_input_and_result_match() {
 }
 
 /// `CustomProtocol::ALL` 的 `as_wire()` 逐个能被后端 `CustomProtocol` 反序列化, 解析回同一个变体。
-/// 遍历 `dto::CustomProtocol::ALL` 本身 (而不是手写 5 对) 是 Task 3 评审 #5 要求的: TUI 将来往
+/// 遍历 `dto::CustomProtocol::ALL` 本身 (而不是手写 5 对): TUI 将来往
 /// `ALL` 里加第 6 个协议时, `expected_backend_protocol` 的穷尽 `match` 会 `E0004`, 逼着这条测试
 /// 也跟着覆盖新协议——手写列表不会自动长出新的一对。
 #[test]
@@ -1004,8 +1004,8 @@ fn auth_header_format_wire_names_round_trip() {
 }
 
 /// TUI 拿来判断「该在厂商选择器里置灰」的 `OAUTH_AUTH_TYPES` 集合, 必须与后端「OAuth 类」
-/// `AuthType` 变体集合**完全相等**——不只是「TUI 的两个字符串后端认得」这种单向锁 (Task 3 评审
-/// #6)。`is_oauth_auth_type` 是对后端 `AuthType` 的穷尽 `match`, 后端加新变体 (CLAUDE.md 写了
+/// `AuthType` 变体集合**完全相等**——不只是「TUI 的两个字符串后端认得」这种单向锁。
+/// `is_oauth_auth_type` 是对后端 `AuthType` 的穷尽 `match`, 后端加新变体 (CLAUDE.md 写了
 /// Gemini OAuth / GitHub Copilot 之类的扩展点) 时这里会编译失败, 逼着当场决定它算不算 OAuth,
 /// 而不是让 TUI 把它当 api_key 厂商展示、用户粘个 key 建出一条永远鉴权失败的订阅却没有任何测试炸。
 #[test]
@@ -1030,8 +1030,7 @@ fn the_auth_types_the_tui_greys_out_exist_in_the_backend() {
 
 /// `PENDING_MODEL` 与桌面端 `src/routes/SubscriptionNew.tsx` 的字面量约定 (`uniformSlots("(pending)")`)
 /// 逐字相同——不是自证: `include_str!` 真的把桌面端源码编译进来, 拿 **由 `PENDING_MODEL` 现算出来**
-/// 的 `uniformSlots("<PENDING_MODEL>")` 去源码里找 (Task 3 评审 #4)。之前的写法只是拿 TUI 常量和
-/// 同一条测试里再写一遍的字面量比, 从没碰过桌面端源码; 现在无论哪一边把这个占位值改掉 (桌面端改写法,
+/// 的 `uniformSlots("<PENDING_MODEL>")` 去源码里找。无论哪一边把这个占位值改掉 (桌面端改写法,
 /// 或 TUI 改 `PENDING_MODEL`), 这条测试都会跟着炸——注意桌面端同一个文件里还有一处
 /// `uniformSlots("")` (`Step`1 初始化用的空值), 所以不能只找「第一处 `uniformSlots("` 出现的位置」,
 /// 必须把 `PENDING_MODEL` 拼进 needle 里精确匹配。

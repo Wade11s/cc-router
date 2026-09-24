@@ -103,8 +103,8 @@ pub struct Subscription {
 /// 与后端 `SubscriptionPatch::model_slots` 整块替换: `fallback` 空串 = 未配置, 与其它槽位一样
 /// **总是**序列化 (后端字段是普通 `String` + `#[serde(default)]`, 不是 `Option`)。
 ///
-/// `Default` (五个槽位全空串) 是 P5 Task 5 加的: 向导 `SlotsDraft` 是"从零填"的草稿 (没有真实
-/// 订阅可以打底), `#[derive(Default)]` 需要这个字段本身实现 `Default` 才能派生。
+/// `Default` (五个槽位全空串) 给向导的 `SlotsDraft` 用: 它是「从零填」的草稿, 没有真实订阅可以
+/// 打底。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ModelSlots {
     pub fable: String,
@@ -116,7 +116,7 @@ pub struct ModelSlots {
 }
 
 /// 五个模型槽位, 与 [`ModelSlots`] 的字段一一对应。`widgets::picker::PickerTag` 用它区分「给哪个
-/// 槽位选值」(Task 5 起)。放在 dto.rs 而不是 action.rs, 因为它描述的是后端数据形状 (槽位这个
+/// 槽位选值」。放在 dto.rs 而不是 action.rs, 因为它描述的是后端数据形状 (槽位这个
 /// 概念), 不是某一次 UI 交互。`Fallback` 不参与 `SlotEfforts` (后端 `SlotEfforts::get` 同样不含
 /// fallback), `get`/`set` 对它分别恒返回 `None` / 忽略写入。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -129,8 +129,7 @@ pub enum Slot {
 }
 
 /// 新建订阅时四个核心槽位的占位值。与桌面端 `uniformSlots("(pending)")` 逐字相同;
-/// **兜底槽不填占位, 留空串** (桌面端的 `uniformSlots` 压根不设这个键)。订阅页原来在自己文件里
-/// 有一份同名常量 (`pages/subscriptions.rs`), 现在改为引用这里, 不留两份 (Task 3)。
+/// **兜底槽不填占位, 留空串** (桌面端的 `uniformSlots` 压根不设这个键)。订阅页与向导都引用这一份。
 pub const PENDING_MODEL: &str = "(pending)";
 
 impl ModelSlots {
@@ -256,8 +255,8 @@ pub struct VirtualModel {
     pub subscription_ids: Vec<String>,
 }
 
-/// `route_attempt_started` / `route_attempt_finished` 的 payload; started 没有 `success`
-/// (Task 7, 实时路由页)。
+/// `route_attempt_started` / `route_attempt_finished` 的 payload (实时路由页用); started 没有
+/// `success`。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RouteAttempt {
     pub subscription_id: String,
@@ -551,9 +550,7 @@ impl RequestQuery {
 }
 
 /// `list_providers` 的一项。只声明 TUI 用得到的字段, 后端 `ProviderInfo` 其余字段 (homepage /
-/// docs_url / compatibility 等) 由 serde 忽略。P5 Task 2 只加这四个字段供 `WizardResult::Providers`
-/// 使用; `is_oauth()` / `default_endpoint()` 等取值方法与 `CustomProtocol` 等厂商选择器专用类型留给
-/// Task 3 (那边还要给这个类型加契约测试)。
+/// docs_url / compatibility 等) 由 serde 忽略。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Provider {
     pub id: String,
@@ -644,8 +641,8 @@ impl CustomProtocol {
 
     /// 这个协议的预填值, 与桌面端 `LOCKED_CUSTOM_PRESETS` 同值——**除了 `Anthropic`**: 桌面端那张表
     /// 压根没有 `Anthropic` 这一项 (它走的是另一条 `AUTH_PRESETS` 下拉, base_url 表单一开始就是空的),
-    /// 这里把它的 `base_url` 也定成空串 `""` 是执行前已经拍板的裁决——会走这一项的人基本都在接
-    /// 中转站, 预填官方地址只会让人先删掉 (表单为空时显示 [`CUSTOM_BASE_URL_PLACEHOLDER`] 当灰字提示)。
+    /// 这里把它的 `base_url` 也定成空串 `""`: 会走这一项的人基本都在接中转站, 预填官方地址只会
+    /// 让人先删掉 (表单为空时显示 [`CUSTOM_BASE_URL_PLACEHOLDER`] 当灰字提示)。
     pub fn preset(self) -> ProtocolPreset {
         match self {
             CustomProtocol::Anthropic => ProtocolPreset {
@@ -750,7 +747,7 @@ pub struct CustomSource {
     pub auth_header_name: String,
     pub auth_header_format: AuthHeaderFormat,
     pub protocol: CustomProtocol,
-    /// 探测成功、且此后 `base_url` 一个字都没改过时才是 `Some` (规则由向导表单维护, Task 6 起消费)。
+    /// 探测成功、且此后 `base_url` 一个字都没改过时才是 `Some` (规则由向导表单维护)。
     pub models_url: Option<String>,
 }
 
@@ -787,7 +784,7 @@ impl CreateSource {
 
 impl CreateInput {
     /// `{"input": {…}}`。**内层字段全是 snake_case**——`web_commands!` 只把最外层的参数名转成
-    /// camelCase, `CreateSubscriptionInput` 自己没有 `rename_all` (与 P4 的 `RequestQuery::to_args`
+    /// camelCase, `CreateSubscriptionInput` 自己没有 `rename_all` (与 `RequestQuery::to_args`
     /// 里 `pageSize` 与 `filters.subscription_id` 并存同一条规律)。`api_key` 在这里 `.expose()`
     /// 是它唯一允许出现明文的位置 (`secret.rs` 的白名单扫描测试盯着 `client/dto.rs` 这一处)。
     pub fn to_args(&self) -> serde_json::Value {
@@ -1073,7 +1070,7 @@ mod tests {
 
             let preset = p.preset();
             if p == CustomProtocol::Anthropic {
-                assert_eq!(preset.base_url, "", "Anthropic 的预设 base_url 应该留空 (见裁决)");
+                assert_eq!(preset.base_url, "", "Anthropic 的预设 base_url 应该留空 (见 preset() 的文档)");
             } else {
                 assert!(preset.base_url.starts_with("https://"), "{p:?}: {}", preset.base_url);
             }

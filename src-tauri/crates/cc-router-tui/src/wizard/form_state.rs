@@ -1,6 +1,5 @@
-//! 一张表单的焦点与校验错误。三张表单 (`Basics` / `Slots` / `Custom`) 各持一份, 取代以前
-//! `focus`/`slots_focus`/`custom_focus` 与 `field_error`/`slot_error`/`custom_field_error` 三对
-//! 字段和三套 `move_*`/`clear_*` 方法。
+//! 一张表单的焦点与校验错误。三张表单 (`Basics` / `Slots` / `Custom`) 各持一份; 字段私有, 焦点
+//! 只能按导航顺序移动、被校验失败拉过去, 或者经 `focus_on` 程序化地放到某一行。
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FormState<F> {
@@ -40,7 +39,7 @@ impl<F: Copy + Eq> FormState<F> {
         self.focus = fields[next];
     }
 
-    /// 清掉**这个字段自己**的错误 (评审 M3)——别的字段的错误不动, 不然改一个字段会把提交时挂在
+    /// 清掉**这个字段自己**的错误——别的字段的错误不动, 不然改一个字段会把提交时挂在
     /// 另一个字段上的提示也一并抹掉, 反而让用户以为它也修好了。
     pub fn clear(&mut self, field: F) {
         if self.error.is_some_and(|(f, _)| f == field) {

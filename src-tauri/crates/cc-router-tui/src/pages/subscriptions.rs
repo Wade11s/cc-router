@@ -1,7 +1,7 @@
 //! 订阅页: 列表 + 详情 (宽屏 ≥120 列双栏 / 窄屏进出详情), 加四个就地操作——启停 `e` / 测试连接
 //! `t` / 刷新模型 `m` / 刷新余额 `b`, 列表态与详情态都生效, 作用于当前选中的订阅。
 //!
-//! Task 5 起详情态自己也是个小状态机 ([`Focus::Detail`] 带着当前槽位光标): `⏎` 改模型、`o` 改
+//! 详情态自己也是个小状态机 ([`Focus::Detail`] 带着当前槽位光标): `⏎` 改模型、`o` 改
 //! 思考档位, 改动先落进页面自己的草稿 ([`SlotDraft`], 不进 `Store`), `s` 才真的发 `UpdateSlots`。
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -34,7 +34,7 @@ use crate::widgets::{pane_border_style, spinner_state};
 /// 达到才用左表右详情双栏; 以下只画一栏, 靠 [`Focus`] 在列表/详情之间切换 (两种宽度下 `⏎` 都能
 /// 切换焦点, 区别只在窄屏一次只画一栏、宽屏两栏都画但边框颜色跟着焦点走)。
 const WIDE_THRESHOLD: u16 = 120;
-/// I3: 达到这个宽度, 左栏从 58 列放宽到 [`LIST_WIDTH_140`] 并显示状态列 (120–139 仍是 58 列
+/// 达到这个宽度, 左栏从 58 列放宽到 [`LIST_WIDTH_140`] 并显示状态列 (120–139 仍是 58 列
 /// 无状态列, 与 [`WIDE_THRESHOLD`] 那档保持不变)。
 const WIDE_140_THRESHOLD: u16 = 140;
 const LIST_WIDTH: u16 = 58;
@@ -44,23 +44,23 @@ const HIGHLIGHT_COL: u16 = 2;
 const SYMBOL_COL: u16 = 2;
 const NAME_COL: usize = 20;
 const PROVIDER_COL: usize = 12;
-/// M6: 状态列 (badge 文案 + 冷却倒计时), 紧跟在备注名后面; 只在宽度够 (仍能留给 sonnet 列至少
+/// 状态列 (badge 文案 + 冷却倒计时), 紧跟在备注名后面; 只在宽度够 (仍能留给 sonnet 列至少
 /// 12 列) 才显示, 放不下就整列省略, 不挤压 name / provider / sonnet 的下限。
 const STATUS_COL: usize = 14;
 /// 列表左右各留一列空白, 不让内容贴着边框 (block 用 `Padding::horizontal`)。
 const LIST_PADDING: u16 = 1;
 const FIELD_LABEL_COL: usize = 10;
 const SLOT_NAME_COL: usize = 8;
-/// I2: 槽位 effort 那一列的定宽 (最长的档位文案是 "medium"/"xhigh", 5~6 列, 8 留了余量)。
-/// 模型名列不再是常量, 改成按可用宽度算 (见 [`slot_model_col`])。
+/// 槽位 effort 那一列的定宽 (最长的档位文案是 "medium"/"xhigh", 5~6 列, 8 留了余量)。
+/// 模型名列不是常量, 按可用宽度算 (见 [`slot_model_col`])。
 const EFFORT_COL: usize = 8;
 /// 「最近错误」最多占的行数, 是上限不是固定分配 (`row_height` 按实际折行数留空间)。
 const LAST_ERROR_ROWS: u16 = 4;
-/// I1: 「上次操作」最多占的行数, 比「最近错误」少一行——它是补充信息, 不该比主字段还显眼。
+/// 「上次操作」最多占的行数, 比「最近错误」少一行——它是补充信息, 不该比主字段还显眼。
 const LAST_ACTION_ROWS: u16 = 3;
 /// `PageUp` / `PageDown` 在第一帧画出来之前没有真实的可视行数可用, 先给个不至于原地不动的默认值。
 const DEFAULT_PAGE_ROWS: usize = 10;
-/// P5 Task 7: 删除确认弹窗里最多直接列出的引用方 (虚拟模型) 个数, 超出的部分折成
+/// 删除确认弹窗里最多直接列出的引用方 (虚拟模型) 个数, 超出的部分折成
 /// `s.sub_delete_refs_more`——确认弹窗最宽只有 `screen - 4`, 不控制长度会被硬切。
 const MAX_REFS_SHOWN: usize = 4;
 
@@ -74,9 +74,8 @@ enum DetailRow {
     Wrapped { label: &'static str, text: String, height: u16, style: Style },
 }
 
-/// 列表 / 详情的键盘焦点 (Task 5)。两种宽度都有效: 宽屏两栏一直都画, 焦点只影响哪一栏的边框是
-/// `theme.accent`; 窄屏一次只画一栏, 焦点直接决定画哪栏 (与旧的 `detail_open: bool` 同一件事,
-/// 只是现在宽屏下也有意义)。`Detail` 带着当前槽位光标, 因为「进详情」与「选中第一个槽位」是
+/// 列表 / 详情的键盘焦点。两种宽度都有效: 宽屏两栏一直都画, 焦点只影响哪一栏的边框是
+/// `theme.accent`; 窄屏一次只画一栏, 焦点直接决定画哪栏。`Detail` 带着当前槽位光标, 因为「进详情」与「选中第一个槽位」是
 /// 同一个动作 (`⏎`/`→`/`l` 从 `List` 过来恒落在 [`Slot::Fable`])。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
@@ -119,14 +118,12 @@ pub struct Subscriptions {
     /// 下一帧要闪一下的订阅 id; `draw` 取走。
     flash_rows: Vec<String>,
     /// 当前正在编辑的槽位草稿; `None` = 没有未保存的修改。首次编辑时从 `Store` 里对应订阅克隆,
-    /// 与 `Store` 当前值相等 (改回原值 / 从没真的改过) 就立刻丢弃——D2/D3 (fix round P3b) 起这条
-    /// 规则收进 [`Draft`] 内部, 不再是页面自己要记得维护的约定 (`draft.is_some()` ⇔ `is_dirty()`
-    /// 恒成立)。
+    /// 与 `Store` 当前值相等 (改回原值 / 从没真的改过) 就立刻丢弃——这条规则收在 [`Draft`] 内部,
+    /// 不是页面自己要记得维护的约定 (`draft.is_some()` ⇔ `is_dirty()` 恒成立)。
     draft: Draft<SlotDraft>,
-    /// I1 (fix round final): 正在保存中的订阅 id (`Mutation::UpdateSlots` 从 `on_mutation_started`
-    /// 到对应 `on_mutation_done` 之间); `Some` 时拒绝任何会继续修改草稿的按键 (含再按一次 `s`),
-    /// 避免飞行中的编辑被落地的保存结果悄悄冲掉 (D1 只保证了草稿本身不丢, 但没有在编辑发生的那
-    /// 一刻提示用户"现在编辑不安全")。
+    /// 正在保存中的订阅 id (`Mutation::UpdateSlots` 从 `on_mutation_started` 到对应
+    /// `on_mutation_done` 之间); `Some` 时拒绝任何会继续修改草稿的按键 (含再按一次 `s`), 避免飞行
+    /// 中的编辑被落地的保存结果悄悄冲掉, 并在编辑发生的那一刻就提示用户。
     saving: Option<String>,
     /// 页面在 `update()` 内部想弹的一条 toast, `App::update_page` 在调用 `update()` 之后轮询取走
     /// (`update()` 签名只能返回 `Vec<Cmd>`, 塞不进一个 `Action::Notify`)。
@@ -155,7 +152,7 @@ impl Subscriptions {
         self.last_width >= WIDE_THRESHOLD
     }
 
-    /// I3: 宽屏左栏的列宽——140 列起放宽到 72 (放得下状态列), 120–139 仍是 58 (与之前一致)。
+    /// 宽屏左栏的列宽——140 列起放宽到 72 (放得下状态列), 120–139 是 58。
     fn list_width(&self) -> u16 {
         if self.last_width >= WIDE_140_THRESHOLD {
             LIST_WIDTH_140
@@ -165,8 +162,8 @@ impl Subscriptions {
     }
 
     /// 宽屏下有焦点的那一栏边框用 `theme.accent`, 另一栏用 `theme.border`; 窄屏一次只画一栏,
-    /// 边框颜色的区分没有意义, 恒用 `theme.border` (与改动前一致)。「focused → accent, 否则
-    /// border」这条颜色规则本身挪进了 `widgets::pane_border_style` (D3, 与虚拟模型页共用)。
+    /// 边框颜色的区分没有意义, 恒用 `theme.border`。「focused → accent, 否则 border」这条颜色规则
+    /// 本身在 `widgets::pane_border_style` (与虚拟模型页共用)。
     fn pane_border_style(&self, theme: &Theme, is_list_pane: bool) -> Style {
         if !self.is_wide() {
             return theme.border_style();
@@ -177,14 +174,14 @@ impl Subscriptions {
 
     /// `draw()` 专用: 只重算 `is_dirty()` 的缓存 (不碰 `draft`/`focus`, 不产出通知)——「同一状态
     /// 画两次得到同一帧」不受影响, 覆盖「草稿仍指向一条存在的订阅, 但它在 `Store` 里的值变了」
-    /// 这种只有靠重新画才会经过的路径。真正的丢弃 (D2) 只在 `sync_draft_with_store` (`update()`
+    /// 这种只有靠重新画才会经过的路径。真正的丢弃只在 `sync_draft_with_store` (`update()`
     /// 时机) 里发生, 见 [`Draft::refresh_dirty`] 与 [`Draft::sync`] 的分工说明。
     fn refresh_dirty_flag(&mut self, store: &Store) {
         let base = self.draft.get().and_then(|d| store.subscription(&d.sub_id)).map(slot_draft_base);
         self.draft.refresh_dirty(base.as_ref());
     }
 
-    /// `update()` 专用: 核对一遍草稿是否已经与 `Store` 当前值相等 (D2, 改回原值 / 别的客户端把
+    /// `update()` 专用: 核对一遍草稿是否已经与 `Store` 当前值相等 (改回原值 / 别的客户端把
     /// `Store` 改成了跟草稿一样都算) 就真的丢弃; 草稿对应的订阅从 `Store` 消失 (被别处删除) 时
     /// 也丢弃, 并顺带处理「消失」这件业务逻辑本身 (清草稿、焦点退回 `List`、排一条 `s.sub_gone`
     /// 通知)——这两件事都是业务状态变更, 只能在 `update()`/`handle_key()` 里做, 不能在 `draw()`
@@ -220,7 +217,7 @@ impl Subscriptions {
         self.focus = Focus::Detail { slot: ALL_SLOTS[next] };
     }
 
-    /// I1: 当前选中的订阅是否正有一次 `UpdateSlots` 保存在飞行中。
+    /// 当前选中的订阅是否正有一次 `UpdateSlots` 保存在飞行中。
     fn is_saving(&self) -> bool {
         self.saving.is_some()
     }
@@ -241,7 +238,7 @@ impl Subscriptions {
             items.extend(cache.models.iter().map(|m| PickerItem { id: m.id.clone(), label: m.id.clone(), hint: m.display_name.clone() }));
         }
         Action::OpenPicker(PickerSpec {
-            // I5: 带上这次弹窗是为哪条订阅开的, `PickerDone` 落地时据此核对是否还该应用。
+            // 带上这次弹窗是为哪条订阅开的, `PickerDone` 落地时据此核对是否还该应用。
             tag: PickerTag::SlotModel { sub_id: sub.id.clone(), slot },
             title: (s.pick_model_title)(slot_label(slot, s)),
             items,
@@ -271,7 +268,7 @@ impl Subscriptions {
         }))
     }
 
-    /// I5: 这个 `sub_id` 是否还该被当前页面接住——焦点必须在 `Detail`, 且等于**当前选中项**
+    /// 这个 `sub_id` 是否还该被当前页面接住——焦点必须在 `Detail`, 且等于**当前选中项**
     /// (不是"草稿属于哪条订阅", 草稿本来就该跟着选中项走)。弹窗打开之后订阅可能已经被删除、
     /// 焦点已经退回列表、或者 (理论上不该发生, 但防御性地) 选中项变成了另一条——都应该让调用方
     /// 静默忽略这次 picker 结果, 不弹通知 (弹窗本身已经在这种情况下被 `App` 关掉了, 见
@@ -281,10 +278,10 @@ impl Subscriptions {
     }
 
     /// `PickerDone` 落地: 按 `tag` 通过 [`Draft::edit`] 写进草稿 (首次编辑时惰性克隆, 结果等于
-    /// `Store` 当前值就立刻丢弃, D2/D3 起这条规则收在 `Draft` 内部, 这里不用再手动核对一遍);
+    /// `Store` 当前值就立刻丢弃, 这条规则收在 `Draft` 内部, 这里不用再手动核对一遍);
     /// 主槽的空白自定义值被拒绝 (拒绝时不碰草稿), 兜底槽的空白等于清空。跟自己无关的 tag
-    /// (虚拟模型页的 `VmAddSubscription`) 直接忽略; I5: `sub_id` 对不上当前选中项 (或者焦点已经
-    /// 不在 `Detail`) 也直接忽略, 不弹通知; I1: 这条订阅正有保存在飞行中时拒绝, 弹
+    /// (虚拟模型页的 `VmAddSubscription`) 直接忽略; `sub_id` 对不上当前选中项 (或者焦点已经
+    /// 不在 `Detail`) 也直接忽略, 不弹通知; 这条订阅正有保存在飞行中时拒绝, 弹
     /// `saving_in_progress`。
     fn apply_picker_choice(&mut self, tag: &PickerTag, choice: &PickerChoice, store: &Store, s: &'static Strings) {
         match tag {
@@ -335,7 +332,7 @@ impl Subscriptions {
                 self.draft.edit(&base, |d| d.slot_efforts.set(*slot, value));
             }
             // 跟订阅页无关的 tag (虚拟模型页的 `VmAddSubscription`、实时路由/日志页的过滤弹窗、
-            // P5 Task 4/5/6 起向导自己的选厂商/选接入点/选槽位模型/选协议/选鉴权方式) 直接忽略——
+            // 向导自己的选厂商/选接入点/选槽位模型/选协议/选鉴权方式) 直接忽略——
             // 订阅页压根不会打开这些弹窗。
             PickerTag::VmAddSubscription { .. }
             | PickerTag::LiveFilter
@@ -349,7 +346,7 @@ impl Subscriptions {
     }
 
     /// `s`: 不脏时无动作; 脏时产出 `Action::Mutate(UpdateSlots)`——断线由 `App::start_mutation`
-    /// 统一处理 (弹 `toast_offline`, 不真的发), 这里不用重复判断连接状态。I5: 额外要求草稿的
+    /// 统一处理 (弹 `toast_offline`, 不真的发), 这里不用重复判断连接状态。额外要求草稿的
     /// `sub_id` 等于当前选中项, 否则拒绝、绝不发送——草稿理论上只可能属于当前选中项 (`focus ==
     /// Detail` 期间选中项不会变), 但这是发往后端的最后一道关卡, 宁可防御性地多判一次。
     fn save_action(&self) -> Option<Action> {
@@ -440,7 +437,7 @@ impl Subscriptions {
         // 手算每列的显示宽度, 好让 `format::fit` 与 Table 实际分配的列宽严格一致:
         // 边框(2) + 左右留白(2×LIST_PADDING) + 选中前缀(HIGHLIGHT_COL) +
         // [符号 + 备注名 + (状态?) + 厂商 + sonnet] (每个列间距各 1)。
-        // M6: 状态列只在还能给 sonnet 留够 ≥12 列时才加进来 (name 20 / provider 12 / sonnet ≥12
+        // 状态列只在还能给 sonnet 留够 ≥12 列时才加进来 (name 20 / provider 12 / sonnet ≥12
         // 是硬下限, 放不下就整列省略, 不挤压这三个)。
         let inner_width = area.width.saturating_sub(2 + 2 * LIST_PADDING);
         let columns_width = inner_width.saturating_sub(HIGHLIGHT_COL);
@@ -599,12 +596,11 @@ impl Component for Subscriptions {
         let idx = self.resolve_selection(subs);
 
         // 有草稿时 e/t/m/b/d/n 一律拒绝 (不管当前 focus——草稿只可能在 `Detail` 焦点下存在, 但这条
-        // 判断不依赖那个不变式), 避免重拉覆盖编辑基线的困惑。D2/D3 (fix round P3b) 起
-        // `draft.get().is_some()` 与 `is_dirty()` 恒等价 (零编辑/改回原值都不留草稿, 由
-        // `Draft::edit`/`Draft::sync` 保证), 这里直接查草稿是否存在——与虚拟模型页 V5 的左栏
-        // `*` 标记同一种判定方式, 两个页面对这条不变式的依赖保持一致。P5 Task 7: `d`(删除)/
-        // `n`(新建向导) 加进这条守卫——两者都只在 `Focus::List` 下才有对应的按键分支 (见下),
-        // 但守卫放在 focus 分派之前, 草稿存在时哪怕当前焦点在 `Detail` 也一样拒绝。
+        // 判断不依赖那个不变式), 避免重拉覆盖编辑基线的困惑。`draft.get().is_some()` 与
+        // `is_dirty()` 恒等价 (零编辑/改回原值都不留草稿, 由 `Draft::edit`/`Draft::sync` 保证),
+        // 这里直接查草稿是否存在——与虚拟模型页左栏的 `*` 标记同一种判定方式。`d`(删除) /
+        // `n`(新建向导) 只在 `Focus::List` 下才有对应的按键分支 (见下), 但守卫放在 focus 分派之前,
+        // 草稿存在时哪怕当前焦点在 `Detail` 也一样拒绝。
         if self.draft.get().is_some() && matches!(key.code, KeyCode::Char('e' | 't' | 'm' | 'b' | 'd' | 'n')) {
             return Some(Action::Notify { kind: ToastKind::Info, text: s.sub_save_first.to_string() });
         }
@@ -637,7 +633,7 @@ impl Component for Subscriptions {
                     self.move_selection(subs, idx, self.last_page_rows.max(1) as isize);
                     None
                 }
-                // 两种宽度都有效 (Task 5): 宽屏下这只是把焦点从列表挪到详情 (边框跟着变), 窄屏下
+                // 两种宽度都有效: 宽屏下这只是把焦点从列表挪到详情 (边框跟着变), 窄屏下
                 // 才是「切一整屏」——同一个按键, `draw()` 按宽度决定怎么呈现。
                 KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') if idx.is_some() => {
                     self.focus = Focus::Detail { slot: Slot::Fable };
@@ -647,7 +643,7 @@ impl Component for Subscriptions {
                 KeyCode::Char('t') => idx.map(|i| Action::Mutate(Mutation::TestConnection { id: subs[i].id.clone() })),
                 KeyCode::Char('m') => idx.map(|i| Action::Mutate(Mutation::RefreshModels { id: subs[i].id.clone() })),
                 KeyCode::Char('b') => idx.map(|i| Action::Mutate(Mutation::RefreshBalance { id: subs[i].id.clone() })),
-                // P5 Task 7: 只在 `Focus::List` 生效 (与 e/t/m/b 不同, 这两个键在 `Focus::Detail`
+                // 只在 `Focus::List` 生效 (与 e/t/m/b 不同, 这两个键在 `Focus::Detail`
                 // 下没有对应分支, 落到那边的 `_ => None`)。没有选中项时 `d` 什么都不做; `n` 不依赖
                 // 选中项 (打开的是新建向导, 不是对现有订阅的操作)。
                 KeyCode::Char('d') => idx.map(|i| Self::confirm_delete_action(&subs[i], s)),
@@ -677,16 +673,16 @@ impl Component for Subscriptions {
                         Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::DiscardDraft) })
                     } else {
                         // 草稿不脏 (可能压根没有, 也可能改回了原值) 时直接放行, 顺带清掉它——
-                        // `focus == List` 时 `draft` 恒为 `None` 是页面维持的不变式。D2 起改回
-                        // 原值时草稿其实已经被 `Draft::edit` 自动丢弃了, 这里的 `clear()` 只是
-                        // 兜底 (真正没有草稿的普通情况下是个 no-op)。
+                        // `focus == List` 时 `draft` 恒为 `None` 是页面维持的不变式。改回原值时草稿
+                        // 其实已经被 `Draft::edit` 自动丢弃了, 这里的 `clear()` 只是兜底 (真正没有
+                        // 草稿的普通情况下是个 no-op)。
                         self.draft.clear();
                         self.focus = Focus::List;
                         None
                     }
                 }
                 KeyCode::Enter => {
-                    // I1/M5: 保存在飞行中时拒绝打开 picker——避免用户对着一份马上要被覆盖的草稿
+                    // 保存在飞行中时拒绝打开 picker——避免用户对着一份马上要被覆盖的草稿
                     // 继续编辑, `apply_picker_choice` 里的同款守卫是给"picker 已经开着、保存才
                     // 开始"这种更罕见的时序兜底, 这里挡的是更常见的"想再开一次 picker"。
                     if self.is_saving() {
@@ -703,8 +699,8 @@ impl Component for Subscriptions {
                     self.open_effort_picker_or_refuse(&subs[i], slot, s)
                 }
                 KeyCode::Char('s') => {
-                    // M5: 再按一次 s (保存已经在飞行中) 不再被 `App::start_mutation` 的忙碌表悄悄
-                    // 吞掉——就地给个提示, 而不是让用户以为按键没生效。
+                    // 再按一次 s (保存已经在飞行中) 不能被 `App::start_mutation` 的忙碌表悄悄吞掉——
+                    // 就地给个提示, 而不是让用户以为按键没生效。
                     if self.is_saving() {
                         return Some(Self::saving_notice(s));
                     }
@@ -770,18 +766,18 @@ impl Component for Subscriptions {
     fn hints(&self, s: &'static Strings) -> Vec<Hint<'static>> {
         match self.focus {
             Focus::List => {
-                // S1(a) (fix round P3b): `⏎` 现在两种宽度下都会真的切焦点进详情 (Task 5), 不该
-                // 只在窄屏才提示——宽屏用户一样需要知道这个键。
+                // `⏎` 两种宽度下都会真的切焦点进详情, 不该只在窄屏才提示——宽屏用户一样需要知道
+                // 这个键。
                 vec![("↑↓", s.key_select), ("⏎", s.key_detail), ("e", s.key_toggle), ("t", s.key_test), ("m", s.key_models), ("b", s.key_balance)]
             }
             Focus::Detail { .. } => {
-                // 放不下时 keybar 从右往左丢——e/t/m/b 排在最后, 会先被裁掉, 符合简报的预期。
-                // V1(b) (fix round P3b): 脏页面上 `s 保存` 排到 `↑↓ 选择` 右边第一个, 保证它是
+                // 放不下时 keybar 从右往左丢——e/t/m/b 排在最后, 会先被裁掉。
+                // 脏页面上 `s 保存` 排到 `↑↓ 选择` 右边第一个, 保证它是
                 // 最后才会被裁掉的那批——丢掉保存提示是所有裁剪结果里最糟的一种; 不脏时留在原位
                 // (跟在改模型/改档位后面, 视觉上更贴近它们描述的操作)。
-                // M6 (fix round final): 脏时精简成 `↑↓ 选择 / s 保存 / Esc 放弃 / ⏎ 改模型 / o
+                // 脏时精简成 `↑↓ 选择 / s 保存 / Esc 放弃 / ⏎ 改模型 / o
                 // 改档位` 这五个——e/t/m/b 此时全部被拒绝 (见 `handle_key` 顶部的守卫), 继续
-                // 提示它们只会让用户白按; `Esc 放弃` 是新增的, 紧跟在 `s` 后面 (同样是"保存/放弃
+                // 提示它们只会让用户白按; `Esc 放弃` 紧跟在 `s` 后面 (同样是"保存/放弃
                 // 这次编辑"这组操作里最该保留的一批, 优先级仅次于 `s` 本身)。
                 let mut hints = vec![("↑↓", s.key_select)];
                 if self.is_dirty() {
@@ -809,9 +805,9 @@ impl Component for Subscriptions {
 
     fn on_subscriptions_changed(&mut self, changed: &[String], store: &Store, s: &'static Strings) {
         // 整体替换而不是往后追加: 页面不可见时攒了好几拨变化, 回来只该闪最新一拨——旧的早就过时了,
-        // 而且不去重的 `extend` 会让积压的重复 id 在 `flash_rows.contains` 里白跑好几遍 (I10)。
+        // 而且不去重的 `extend` 会让积压的重复 id 在 `flash_rows.contains` 里白跑好几遍。
         self.flash_rows = changed.to_vec();
-        // S1(c) (fix round P3b): `Store` 这一刻刚接受了新列表, 立刻核对一遍草稿对应的订阅还在不在,
+        // `Store` 这一刻刚接受了新列表, 立刻核对一遍草稿对应的订阅还在不在,
         // 不用等下一次真正的 `update()` (`Refresh`/`Sse`/`PickerDone`/…) 才发现——早一帧总比晚一帧
         // 好, 尤其是「订阅被删了但用户还盯着详情面板」这种场景。
         self.sync_draft_with_store(store, s);
@@ -827,7 +823,7 @@ impl Component for Subscriptions {
     }
 
     fn on_mutation_started(&mut self, mutation: &Mutation) {
-        // I1: 记下这条订阅正有保存在飞行中——不看 `ok`/`err`, 那是 `on_mutation_done` 才知道的事;
+        // 记下这条订阅正有保存在飞行中——不看 `ok`/`err`, 那是 `on_mutation_done` 才知道的事;
         // 这里只关心"发出去了", 从这一刻起到结果落地之间拒绝继续编辑这份草稿。
         if let Mutation::UpdateSlots { id, .. } = mutation {
             self.saving = Some(id.clone());
@@ -835,7 +831,7 @@ impl Component for Subscriptions {
     }
 
     fn on_mutation_done(&mut self, mutation: &Mutation, ok: bool) {
-        // I1: 不管成败, 先把"正在保存"标记摘掉——`ok=false` 时草稿要继续可编辑 (原有行为不变),
+        // 不管成败, 先把"正在保存"标记摘掉——`ok=false` 时草稿要继续可编辑,
         // `ok=true` 时下面才决定草稿本身要不要清空。
         if let Mutation::UpdateSlots { id, .. } = mutation {
             if self.saving.as_deref() == Some(id.as_str()) {
@@ -845,7 +841,7 @@ impl Component for Subscriptions {
         if !ok {
             return;
         }
-        // D1 (fix round P3b): 只有「保存时发出去的那份负载」与「结果落地这一刻的当前草稿」完全
+        // 只有「保存时发出去的那份负载」与「结果落地这一刻的当前草稿」完全
         // 相等才清空——用户在保存在途期间可能已经又编辑了一次 (比如先选 m3、按 s、还没等结果回来
         // 又选了 m9), 这时不能凭 `id` 匹配就无条件清掉, 会把 m9 这次编辑悄悄冲掉且没有任何提示。
         if let Mutation::UpdateSlots { id, model_slots, slot_efforts } = mutation {
@@ -871,7 +867,7 @@ fn field_line(label: &'static str, mut value: Vec<Span<'static>>) -> Line<'stati
 
 /// 长文本超宽时截断成省略号收尾, 但不像 `format::fit` 那样把短文本右补空格到定宽——这几处
 /// (URL / 被引用列表 / 余额条目) 是自由文本行, 不是要跟表格对齐的列; 补出来的空格会把跟在
-/// 后面的别的 span (比如余额条目的 hint) 顶到可视宽度以外, 平白消失 (Fix round 1, #5 的教训)。
+/// 后面的别的 span (比如余额条目的 hint) 顶到可视宽度以外, 平白消失。
 fn clip(text: &str, width: usize) -> String {
     if text.width() <= width {
         text.to_string()
@@ -899,9 +895,9 @@ fn longest_model_width(model_slots: &ModelSlots) -> usize {
         .unwrap_or(0)
 }
 
-/// I2 (Task 5 修正): 模型名列宽 = `min(可用宽度, 五个槽里最长模型名的显示宽度 + 2)`, 下限 24
-/// (旧的固定值)——之前的版本把整段可用宽度都给了模型名, 短模型名 (常见情况) 后面拖着一大段
-/// 空白, effort 列被推到贴着右边框的地方; 现在按实际内容定宽, 让 effort 列贴着模型名。
+/// 模型名列宽 = `min(可用宽度, 五个槽里最长模型名的显示宽度 + 2)`, 下限 24——把整段可用宽度都
+/// 给模型名的话, 短模型名 (常见情况) 后面拖着一大段空白, effort 列被推到贴着右边框的地方; 按
+/// 实际内容定宽, 让 effort 列贴着模型名。
 /// 宽度小到连 24 都算不出来时仍然钳制在 24 (`.max(24)` 排在 `.min(available)` 之后), 不会因为
 /// 窄而给出更小 (甚至溢出成 0) 的值——80 列的最小终端保证了这种极端情况不会真的溢出面板。
 fn slot_model_col(width: u16, model_slots: &ModelSlots) -> usize {
@@ -912,7 +908,7 @@ fn slot_model_col(width: u16, model_slots: &ModelSlots) -> usize {
 /// `Slot` 的显示名: 四个主槽用英文原名 (与后端 `ModelSlots` 的字段名一致), `Fallback` 用现有的
 /// `s.sub_slot_fallback` (中文「兜底」)。
 ///
-/// `pub(crate)`: P5 Task 5 起向导第二步 (`wizard/mod.rs::draw_slots`) 复用这个函数画槽位标签,
+/// `pub(crate)`: 向导的槽位行 (`wizard/common.rs`) 与槽位选择器标题复用这个函数,
 /// 不在那边重写一份同样的 `match`——两处对"槽位怎么叫"必须是同一个答案, 分开维护迟早会走样。
 pub(crate) fn slot_label(slot: Slot, s: &'static Strings) -> &'static str {
     match slot {
@@ -1064,7 +1060,7 @@ fn detail_rows(
     }
     rows.push(DetailRow::Line(field_line(s.sub_f_state, status_spans)));
 
-    // I1: 上次操作的结果 (与对应 toast 同一份文本), 紧跟在状态后面; 没有条目就不画这一行。
+    // 上次操作的结果 (与对应 toast 同一份文本), 紧跟在状态后面; 没有条目就不画这一行。
     // 发起新操作那一刻 `App::start_mutation` 就会把这里清掉, 所以正忙的订阅不会同时既显示
     // 「正在测试连接…」又显示上一次早已过时的结果。
     if let Some((kind, text)) = ctx.last_outcome.get(&sub.id) {
@@ -1105,7 +1101,7 @@ fn detail_rows(
 
     // 限额: 每个设了上限的周期一行, 不只显示最紧的那个。`limit == Some(0)` 与「没设上限」同义
     // (`QuotaUsage::ratio()` 把它当无限额处理, 见 `tightest_quota` 同一条规则), 不能只看
-    // `limit.is_some()`——否则会显示一条 "0%  n / 0" 的假限额行 (M4)。
+    // `limit.is_some()`——否则会显示一条 "0%  n / 0" 的假限额行。
     let limited: Vec<&QuotaUsage> = sub.quota_usage.iter().filter(|q| q.ratio().is_some()).collect();
     if limited.is_empty() {
         rows.push(DetailRow::Line(field_line(s.sub_f_quota, vec![Span::styled("—", theme.muted_style())])));
@@ -1185,7 +1181,7 @@ fn draw_detail_row(frame: &mut Frame, rect: Rect, ctx: &DrawCtx, row: &DetailRow
     match row {
         DetailRow::Line(line) => frame.render_widget(line.clone(), Rect::new(rect.x, rect.y, rect.width, 1)),
         DetailRow::Quota { label, quota } => draw_quota_row(frame, Rect::new(rect.x, rect.y, rect.width, 1), ctx, label, quota),
-        // M2: 标签只画在第一行 (label_area), 正文整段交给 `Paragraph` 在 value_area 里自己折行——
+        // 标签只画在第一行 (label_area), 正文整段交给 `Paragraph` 在 value_area 里自己折行——
         // 这样续行天然从 value_area.x (与其它字段的值列完全相同的一列) 开始, 不会像"标签+正文拼成
         // 一整条字符串再整体 Wrap"那样, 续行找不到标签占的那几列, 缩回列 0。
         DetailRow::Wrapped { label, text, style, .. } => {
@@ -1207,10 +1203,10 @@ fn wrapped_row(label: &'static str, text: &str, value_width: u16, max_rows: u16,
 }
 
 /// 超过 `width` 列 `max_rows` 行装得下的字符数就截断收尾补省略号——`Paragraph` 的 `Wrap` 只会把
-/// 画不出来的内容悄悄丢掉, 不会自己加省略号, 所以这一步必须在喂给它之前做完 (M2)。
+/// 画不出来的内容悄悄丢掉, 不会自己加省略号, 所以这一步必须在喂给它之前做完。
 fn clip_to_rows(text: &str, width: u16, max_rows: u16) -> String {
     let width = width.max(1);
-    // M3: 上游的错误信息没有长度上限, `text.width()` 是 usize, 直接 `as u16` 在超长文本上会
+    // 上游的错误信息没有长度上限, `text.width()` 是 usize, 直接 `as u16` 在超长文本上会
     // 静默环绕算出错误的容量; 用 `try_from` 饱和到 `u16::MAX`, 不 panic 也不会算错。
     let text_width = u16::try_from(text.width()).unwrap_or(u16::MAX);
     let capacity = width.saturating_mul(max_rows);
@@ -1223,8 +1219,8 @@ fn clip_to_rows(text: &str, width: u16, max_rows: u16) -> String {
 
 /// 粗略估算 `Wrap { trim: true }` 会把这段文本折成几行: 按显示宽度整除是「贴着最后一列才换行」
 /// 的下界, 真实的按词 / 标点换行几乎总是提前收尾, 常见比整除结果多用一行——所以在整除结果上
-/// +1 兜底, 宁可多留一行空白也不要把最后一行文字挤没 (Fix round 1, #6)。`saturating_add` /
-/// `clamp` 到 `max_rows`: 超长文本 (M3) 不能让这两步在极端输入上 panic。
+/// +1 兜底, 宁可多留一行空白也不要把最后一行文字挤没。`saturating_add` / `clamp` 到
+/// `max_rows`: 超长文本不能让这两步在极端输入上 panic。
 fn wrapped_line_count(text: &str, width: u16, max_rows: u16) -> u16 {
     let width = width.max(1);
     let text_width = u16::try_from(text.width()).unwrap_or(u16::MAX);
@@ -1235,8 +1231,8 @@ fn draw_quota_row(frame: &mut Frame, area: Rect, ctx: &DrawCtx, label: &str, q: 
     let s = ctx.s;
     let theme = ctx.theme;
     // 先把标签切出来 (不带 spacing, 与 `field_line` 的值列起点严格一致), 再在剩下的宽度里给
-    // 周期名/进度条/百分比/用量四段各自留一点呼吸间距 (Fix round 1, #1: 之前把标签也算进
-    // `.spacing(1)` 里, 所有字段行的值都会因此错位一列)。
+    // 周期名/进度条/百分比/用量四段各自留一点呼吸间距 (标签不能算进 `.spacing(1)` 里, 否则所有
+    // 字段行的值都会因此错位一列)。
     let [label_area, value_area] = Layout::horizontal([Constraint::Length(FIELD_LABEL_COL as u16), Constraint::Min(0)]).areas(area);
     frame.render_widget(Line::raw(fit(label, FIELD_LABEL_COL)), label_area);
 
@@ -1256,7 +1252,7 @@ mod tests {
     use super::*;
     use crate::i18n::ZH;
 
-    /// Fix round 1, #10: 页面不可见时攒了好几拨订阅变化, 回来只该闪最新一拨——`extend` 会把
+    /// 页面不可见时攒了好几拨订阅变化, 回来只该闪最新一拨——`extend` 会把
     /// 旧的也留着, 之后每帧都要多扫一遍这些早就过时的 id。
     #[test]
     fn on_subscriptions_changed_replaces_the_queue_not_appends() {
@@ -1267,8 +1263,8 @@ mod tests {
         assert_eq!(page.flash_rows, vec!["c".to_string()], "第三次通知应该整体替换队列, 不是往后追加");
     }
 
-    /// D3: `Draft<T>` 的 `edit` 帮页面自动做「零编辑不留草稿」, D2 的槽位编辑单测因此可以直接从
-    /// `Draft` 的单测里覆盖——这里只补一条页面层面的集成检查: 通过 `apply_picker_choice` 选回原值
+    /// `Draft<T>` 的 `edit` 帮页面自动做「零编辑不留草稿」, 槽位编辑的这条规则由 `Draft` 的单测
+    /// 覆盖——这里只补一条页面层面的集成检查: 通过 `apply_picker_choice` 选回原值
     /// 之后, `draft` 真的被清空了 (`get()` 返回 `None`), 不是仅仅 `dirty` 缓存变假。
     #[test]
     fn a_reverted_pick_actually_clears_the_draft_not_just_the_dirty_cache() {
@@ -1296,7 +1292,7 @@ mod tests {
         };
         store.apply_subscriptions(1, vec![sub]);
         page.selected_id = Some("1".into());
-        // I5: `apply_picker_choice` 现在要求焦点在 `Detail` 且 `sub_id` 等于当前选中项才应用。
+        // `apply_picker_choice` 要求焦点在 `Detail` 且 `sub_id` 等于当前选中项才应用。
         page.focus = Focus::Detail { slot: Slot::Fable };
 
         page.apply_picker_choice(
@@ -1338,7 +1334,7 @@ mod tests {
         }
     }
 
-    /// I5: `save_action` 额外要求草稿的 `sub_id` 等于当前选中项, 绝不把它发给屏幕上并没有显示的
+    /// `save_action` 额外要求草稿的 `sub_id` 等于当前选中项, 绝不把它发给屏幕上并没有显示的
     /// 那一条订阅。这个不一致在正常的 `App` 驱动流程里走不到 (`focus == Detail` 期间选中项不会
     /// 变, 草稿存在时 `resolve_selection` 也不会把它换成一个不同的、仍然存在的订阅)——这里直接
     /// 摆一个理论上不该出现的内部状态, 覆盖这最后一道防线本身。
@@ -1362,9 +1358,9 @@ mod tests {
         assert_eq!(page.save_action(), None, "草稿的 sub_id 跟当前选中项不一致时不该发送");
     }
 
-    /// M3: 上游错误信息没有长度上限, 旧版 `text.width() as u16` 会在超长字符串上静默环绕
-    /// (70,000 % 65536 = 4,464), 算出一个错误但不 panic 的行数。修好之后应该稳稳落在 `max_rows`
-    /// 这个上限, 而不是那个环绕出来的错误值。
+    /// 上游错误信息没有长度上限, `text.width() as u16` 会在超长字符串上静默环绕
+    /// (70,000 % 65536 = 4,464), 算出一个错误但不 panic 的行数。应该稳稳落在 `max_rows` 这个上限,
+    /// 而不是那个环绕出来的错误值。
     #[test]
     fn wrapped_line_count_saturates_instead_of_panicking() {
         let text = "x".repeat(70_000);
@@ -1372,7 +1368,7 @@ mod tests {
         assert_eq!(wrapped_line_count(&text, 40, LAST_ACTION_ROWS), LAST_ACTION_ROWS);
     }
 
-    /// M3 的姊妹函数: `clip_to_rows` 也要在同一个输入上不 panic, 并且真的把文本截到了 `max_rows`
+    /// 同上, `clip_to_rows` 也要在同一个输入上不 panic, 并且真的把文本截到了 `max_rows`
     /// 行的容量以内 (含省略号)。
     #[test]
     fn clip_to_rows_saturates_instead_of_panicking() {
@@ -1386,8 +1382,8 @@ mod tests {
         ModelSlots { fable: "d".into(), opus: "a".into(), sonnet: sonnet.into(), haiku: "c".into(), fallback: String::new() }
     }
 
-    /// I2 (Task 5 修正): 模型名列宽是 `min(可用宽度, 最长模型名+2)`, 下限 24——不再是「把整段
-    /// 可用宽度都给模型名」那版, 短模型名不该拖出一大段空白让 effort 列远在天边。
+    /// 模型名列宽是 `min(可用宽度, 最长模型名+2)`, 下限 24——短模型名不该拖出一大段空白让 effort
+    /// 列远在天边。
     #[test]
     fn slot_model_col_uses_the_longest_model_name_capped_by_available_width_and_a_floor() {
         // 80 列窄屏详情面板: inner=76, 可用=76-2-8(SLOT_NAME_COL)-8(EFFORT_COL)=58。

@@ -335,7 +335,7 @@ fn help_popup_80x24() {
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
-// ---------- P5 Task 2: 新建订阅向导 (骨架) ----------
+// ---------- 新建订阅向导: 加载 ----------
 
 /// 向导刚打开、厂商列表还没拉回来的画面: 带边框的空容器 + 居中的「正在获取厂商列表…」+ throbber。
 #[test]
@@ -360,12 +360,11 @@ fn wizard_load_failure_shows_the_reason_and_esc_still_closes() {
     assert_eq!(a.update(Action::CloseWizard), vec![Cmd::Fetch(Fetch::Subscriptions)]);
 }
 
-// ---------- P5 Task 4: 向导第一步 (内置厂商) ----------
+// ---------- 新建订阅向导: 第一步 (内置厂商) ----------
 
-/// 内置厂商 (智谱 AI) 的假 `Provider`: 两个接入点, 默认选中国内版——`wizard_basics_80x24`
-/// 等用例照着 task-4-brief.md 的 80×24 布局例子选它。`example_models` 非空 (P5 Task 5 评审起):
-/// `wizard_at_slots_with_manual_fallback` 这类"自动发现失败"场景要用它验证槽位 picker 退回
-/// 手填候选这条路径, 之前留空导致这条路径完全没有测试覆盖过。
+/// 内置厂商 (智谱 AI) 的假 `Provider`: 两个接入点, 默认选中国内版。`example_models` 非空:
+/// `wizard_at_slots_with_manual_fallback` 这类「自动发现失败」场景要用它验证槽位 picker 退回
+/// 手填候选这条路径。
 fn zhipu_provider() -> Provider {
     Provider {
         id: "zhipu".into(),
@@ -394,7 +393,7 @@ fn chatgpt_provider() -> Provider {
     }
 }
 
-/// 打开向导并喂一份厂商列表, 停在 `Stage::Basics`、焦点在 `Provider` 行。
+/// 打开向导并喂一份厂商列表, 停在第一步、焦点在 `Provider` 行。
 fn wizard_with_providers(providers: Vec<Provider>) -> App {
     let mut a = app(false);
     a.update(Action::OpenWizard);
@@ -402,8 +401,8 @@ fn wizard_with_providers(providers: Vec<Provider>) -> App {
     a
 }
 
-/// 打开向导、拉到厂商列表、从厂商 picker 里选中 `custom:<protocol>` 条目, 停在 `Stage::Custom`、
-/// 焦点在 `ProviderName`——P5 Task 6 用例的公共起点, 与 `wizard_with_providers`/`select_zhipu`
+/// 打开向导、拉到厂商列表、从厂商 picker 里选中 `custom:<protocol>` 条目, 停在自定义单页、
+/// 焦点在 `ProviderName`——自定义路径用例的公共起点, 与 `wizard_with_providers`/`select_zhipu`
 /// 对内置路径的角色相同。厂商列表本身与自定义路径无关, 只是复用同一份 `zhipu_provider()` 夹具
 /// (不需要为这里单独造一份空列表)。
 fn wizard_custom(protocol: CustomProtocol) -> App {
@@ -530,8 +529,8 @@ fn pick_core_slots(a: &mut App, choice: impl Fn(Slot) -> PickerChoice) {
     }
 }
 
-/// 填完 `Basics` (智谱 AI / `sk-test`) 并提交, 返回那次提交产出的 `Action` (调用方按需再
-/// `a.update(...)` 一次, 进 `Stage::Creating`)。P5 Task 5 起多个用例共用这段驱动路径。
+/// 填完第一步 (智谱 AI / `sk-test`) 并提交, 返回那次提交产出的 `Action` (调用方按需再
+/// `a.update(...)` 一次, 创建请求即在飞)。
 fn submit_basics(a: &mut App) -> Action {
     select_zhipu(a);
     type_str(a, "sk-test");
@@ -539,20 +538,18 @@ fn submit_basics(a: &mut App) -> Action {
     a.handle_key(key(KeyCode::Enter)).expect("填完表单提交应该产出 Action")
 }
 
-/// 打开向导, 走完 `Basics` → 提交 → `Created(Ok)` (id 固定 `"sub-1"`), 停在
-/// `Stage::LoadingModels` (已经拿到 id, 文案是 `wiz_loading_models`, 在等 `Models` 结果——评审
-/// 收窄起这是独立的 stage, 不再是"停在 Creating 换文案")。P5 Task 5 的状态流转测试从这里接着
-/// 喂不同的 `Models` 结果。
+/// 打开向导, 走完第一步 → 提交 → `Created(Ok)` (id 固定 `"sub-1"`), 停在等模型列表 (已经拿到
+/// id, 文案是 `wiz_loading_models`)。第二步的状态流转测试从这里接着喂不同的 `Models` 结果。
 fn wizard_after_create() -> App {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     let submit_action = submit_basics(&mut a);
-    a.update(submit_action); // Stage::Creating
-    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))))); // Stage::LoadingModels
+    a.update(submit_action); // 创建在飞
+    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))))); // 等模型列表
     a
 }
 
-/// 同上, 再喂一份 `Models(Ok(Auto))`, 停在 `Stage::Slots`、聚焦 `Fable` 行——多个 Task 5 用例
-/// (幂等测试、快照、保存) 共用这条驱动路径, 只是候选模型列表不同。
+/// 同上, 再喂一份 `Models(Ok(Auto))`, 停在第二步、聚焦 `Fable` 行——多个用例 (幂等测试、快照、
+/// 保存) 共用这条驱动路径, 只是候选模型列表不同。
 fn wizard_at_slots(models: Vec<ModelInfo>) -> App {
     let mut a = wizard_after_create();
     a.update(Action::WizardDone(Box::new(WizardResult::Models {
@@ -572,9 +569,8 @@ fn wizard_at_slots_with_manual_fallback(reason: &str) -> App {
     a
 }
 
-/// 简报 80×24 例子: 厂商已选 (智谱 AI / 国内版, 都由选厂商时自动填好)、API Key 已填两个字符
-/// ("sk")、备注名是自动生成的默认值。**焦点落在 `ApiKey`** (选厂商后的自然结果, 简报手绘的
-/// ASCII 图里画在「厂商」行只是示意——见 task-4-report.md 里的说明)。
+/// 80×24: 厂商已选 (智谱 AI / 国内版, 都由选厂商时自动填好)、API Key 已填两个字符 ("sk")、
+/// 备注名是自动生成的默认值。**焦点落在 `ApiKey`** (选厂商后的自然结果)。
 #[test]
 fn wizard_basics_80x24() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
@@ -659,7 +655,7 @@ fn the_api_key_is_masked_until_ctrl_r() {
     assert!(!masked_again.contains("sk"), "{masked_again}");
 }
 
-/// I1: 掩码不能封顶 (`Secret::MASK_CAP` = 24) —— 108 字符的 key (Anthropic 实测长度) 掩码后
+/// 掩码不能封顶 (`Secret::MASK_CAP` = 24) —— 108 字符的 key (Anthropic 实测长度) 掩码后
 /// 值区里应该还能看到点、光标落在点串末尾一格 (紧跟其后的空位); 左移几下光标应该跟着点串一起
 /// 移动, 不会飞到空白区域 (那正是封顶版本会出的问题: 掩码文本比明文短, 光标按明文位置算却找
 /// 不到对应的点)。
@@ -689,7 +685,7 @@ fn a_long_api_key_keeps_the_cursor_aligned_with_the_mask() {
     assert_eq!(buf2[(cursor2.x, cursor2.y)].symbol(), "•", "左移之后光标应该仍然落在一个点上, 不是空白\n{}", terminal2.backend());
 }
 
-/// M2: 重选同一个厂商不该把用户手动改过的接入点弹回默认值。
+/// 重选同一个厂商不该把用户手动改过的接入点弹回默认值。
 #[test]
 fn reselecting_the_same_provider_keeps_the_manually_chosen_endpoint() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
@@ -712,7 +708,7 @@ fn reselecting_the_same_provider_keeps_the_manually_chosen_endpoint() {
     assert!(out2.contains("国际版"), "重选同一个厂商不该把手动改过的接入点弹回默认值\n{out2}");
 }
 
-/// M3: 校验失败挂上的字段错误, 在那个字段被编辑/重新选定之后应该消失。
+/// 校验失败挂上的字段错误, 在那个字段被编辑/重新选定之后应该消失。
 #[test]
 fn editing_a_field_clears_only_its_own_error() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
@@ -729,7 +725,7 @@ fn editing_a_field_clears_only_its_own_error() {
     assert!(!out2.contains(ZH.wiz_err_provider), "选了厂商之后, 厂商自己的错误应该消失\n{out2}");
 }
 
-/// M5: 确认弹窗叠在表单上时, 终端光标不该还留在被压暗的输入框里——`Terminal::draw` 按
+/// 确认弹窗叠在表单上时, 终端光标不该还留在被压暗的输入框里——`Terminal::draw` 按
 /// `Frame::set_cursor_position` 有没有在这一帧被调过来决定显示/隐藏光标, 向导在有弹窗时应该
 /// 完全不调它。
 #[test]
@@ -745,13 +741,13 @@ fn wizard_cursor_is_hidden_while_a_popup_is_on_top() {
     assert!(!terminal.backend().cursor_visible(), "确认弹窗叠在表单上时不该显示终端光标");
 }
 
-/// M8: `Tab`/`BackTab` 现在在所有行类型上都分别等同 `↓`/`↑`, 不再只在文本行才认。
+/// `Tab`/`BackTab` 在所有行类型上都分别等同 `↓`/`↑`, 不只在文本行才认。
 #[test]
 fn tab_and_backtab_move_focus_on_every_row_type() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     // 初始焦点在 Provider (选择行)。Tab 应该移到 Endpoint——用「厂商还没选, Endpoint 行 ⏎ 该被
     // 拒绝」这个只在焦点真的到了 Endpoint 才会触发的行为间接验证 (选择行本身不接受直接打字,
-    // 之前 Tab 在选择行上什么都不做, 现在应该像 ↓ 一样移动焦点)。
+    // Tab 在选择行上也应该像 ↓ 一样移动焦点)。
     a.handle_key(key(KeyCode::Tab));
     assert_eq!(
         a.handle_key(key(KeyCode::Enter)),
@@ -769,7 +765,7 @@ fn tab_and_backtab_move_focus_on_every_row_type() {
     }
 }
 
-/// M9: 请求在飞 (`Stage::Creating`) 时 `Esc` 应该被吞掉 (不弹确认、不关闭), 底栏也不该显示
+/// 创建请求在飞时 `Esc` 应该被吞掉 (不弹确认、不关闭), 底栏也不该显示
 /// `Esc 取消`——继续显示是纯误导, 这时候按了也没反应。
 #[test]
 fn creating_swallows_escape_and_hides_the_cancel_hint() {
@@ -778,18 +774,17 @@ fn creating_swallows_escape_and_hides_the_cancel_hint() {
     type_str(&mut a, "sk-test");
     focus_row(&mut a, ZH.wiz_btn_next);
     let submit_action = a.handle_key(key(KeyCode::Enter)).expect("提交应该产出 Action");
-    a.update(submit_action); // 进入 Stage::Creating
+    a.update(submit_action); // 创建在飞
 
     assert_eq!(a.handle_key(key(KeyCode::Esc)), None, "在飞时 Esc 应该被吞掉");
     let out = render(&mut a, 80, 24);
     assert!(!out.contains("Esc 取消"), "在飞时底栏不该显示 Esc 提示\n{out}");
 }
 
-// ---------- P5 Task 5: 向导第二步 (绑定模型) ----------
+// ---------- 新建订阅向导: 第二步 (绑定模型) ----------
 
-/// 状态流转表第 2 行: `Created(Ok(id))` 落地应该紧接着发一次 `LoadModels { id }`, 并进
-/// `Stage::LoadingModels` (评审收窄起这是独立的 stage, 不再是"停在 Creating 换文案"——见
-/// `wizard/mod.rs::Stage::LoadingModels` 的文档注释)。
+/// `Created(Ok(id))` 落地应该紧接着发一次 `LoadModels { id }`, 并进入等模型列表的阶段 (见
+/// `wizard/mod.rs::BasicsPhase::LoadingModels`)。
 #[test]
 fn a_successful_create_asks_for_the_model_list() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
@@ -803,15 +798,14 @@ fn a_successful_create_asks_for_the_model_list() {
     assert!(out.contains(ZH.wiz_loading_models), "拿到 id 之后文案应该换成「正在获取模型列表…」\n{out}");
 }
 
-/// 评审 Item 1(a): `Created(Err)` 回 `Basics` 后表单必须**真的能再操作**——不是仅仅"看起来"回到
-/// 了 `Basics` (说明行 + 字段值都在), 而是按钮真的能再按一次、再发一次 `Create`。删掉
-/// `apply_wizard_result` 里 `Created(Err)` 分支的 `self.stage = Stage::Basics` 这一行, 之前
-/// 没有任何测试会变红——表单会一直停在 `Creating`, 只能 `Ctrl+C` 强退整个 TUI。
+/// `Created(Err)` 回第一步后表单必须**真的能再操作**——不是仅仅「看起来」回去了 (说明行 + 字段
+/// 值都在), 而是按钮真的能再按一次、再发一次 `Create`; 否则表单会一直停在创建中, 只能 `Ctrl+C`
+/// 强退整个 TUI。
 #[test]
 fn a_failed_create_returns_to_an_operable_basics_form() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     let submit_action = submit_basics(&mut a);
-    a.update(submit_action); // Stage::Creating
+    a.update(submit_action); // 创建在飞
 
     a.update(Action::WizardDone(Box::new(WizardResult::Created(Err("上游炸了".into())))));
     let out = render(&mut a, 80, 24);
@@ -823,33 +817,32 @@ fn a_failed_create_returns_to_an_operable_basics_form() {
     assert!(matches!(retry, Some(Action::WizardRequest(_))), "回到 Basics 之后应该能再次提交, 实际 {retry:?}");
 }
 
-/// 评审 Item 5: `LoadingModels` (只读请求, 不落库) 底栏应该显示 `Esc 取消`; `Creating`/`Saving`
-/// (会落库的请求) 不显示——与 `creating_swallows_escape_and_hides_the_cancel_hint` 对照, 三个
-/// 阶段一次测全, 防止只测了一半漏掉另一半的回归。
+/// 等模型列表 (只读请求, 不落库) 时底栏应该显示 `Esc 取消`; 创建 / 保存 (会落库的请求) 在飞时
+/// 不显示——三个阶段一次测全。
 #[test]
 fn loading_models_shows_the_cancel_hint_but_creating_and_saving_do_not() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     let submit_action = submit_basics(&mut a);
-    a.update(submit_action); // Stage::Creating
+    a.update(submit_action); // 创建在飞
     let out_creating = render(&mut a, 80, 24);
     assert!(!out_creating.contains("Esc 取消"), "Creating 不该显示 Esc 取消\n{out_creating}");
 
-    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))))); // Stage::LoadingModels
+    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() }))))); // 等模型列表
     let out_loading_models = render(&mut a, 80, 24);
     assert!(out_loading_models.contains("Esc 取消"), "LoadingModels 应该显示 Esc 取消\n{out_loading_models}");
 
     a.update(Action::WizardDone(Box::new(WizardResult::Models {
         id: "sub-1".into(),
         result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 0 }),
-    }))); // Stage::Slots
+    }))); // 第二步
     focus_row(&mut a, ZH.wiz_btn_save);
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
-    a.update(save_action); // Stage::Saving
+    a.update(save_action); // 保存在飞
     let out_saving = render(&mut a, 80, 24);
     assert!(!out_saving.contains("Esc 取消"), "Saving 不该显示 Esc 取消\n{out_saving}");
 }
 
-/// 状态流转表第 4 行: `Models(Ok(Auto { models }))` 进 `Stage::Slots`, 候选非空时四个核心槽都
+/// `Models(Ok(Auto { models }))` 进第二步, 候选非空时四个核心槽都
 /// 预填 `models[0].id`, 兜底槽留空。
 #[test]
 fn auto_discovered_models_prefill_every_core_slot() {
@@ -867,9 +860,8 @@ fn auto_discovered_models_prefill_every_core_slot() {
     assert!(a.handle_key(key(KeyCode::Enter)).is_some(), "槽位已经填好, 提交应该通过校验");
 }
 
-/// `Models(Ok(Auto { models: vec![] }))` (理论上不该发生, 防御性覆盖——`if let Some(first) =
-/// models.first()` 那个保护没有专门的测试直接触发过): 没有候选可预填时四个核心槽应该留空、不
-/// panic, 照样进 `Stage::Slots`。
+/// `Models(Ok(Auto { models: vec![] }))` (理论上不该发生, 防御性覆盖 `if let Some(first) =
+/// models.first()` 那个保护): 没有候选可预填时四个核心槽应该留空、不 panic, 照样进第二步。
 #[test]
 fn an_empty_auto_list_leaves_the_core_slots_blank() {
     let mut a = wizard_at_slots(vec![]);
@@ -879,7 +871,7 @@ fn an_empty_auto_list_leaves_the_core_slots_blank() {
     assert!(out.contains(ZH.wiz_err_slot), "{out}");
 }
 
-/// 状态流转表第 5 行: `Models(Ok(ManualFallback { reason }))` 进 `Stage::Slots`, 候选为空、
+/// `Models(Ok(ManualFallback { reason }))` 进第二步, 候选为空、
 /// 槽位留空、说明行是 `wiz_models_manual(reason)`。
 #[test]
 fn a_manual_fallback_leaves_the_slots_empty_and_explains_why() {
@@ -895,8 +887,8 @@ fn a_manual_fallback_leaves_the_slots_empty_and_explains_why() {
     assert!(out2.contains(ZH.wiz_err_slot), "{out2}");
 }
 
-/// `Models(Err(e))` 与 `ManualFallback` 走同一条路 (`enter_slots_with_note`): 请求本身失败时
-/// 同样进 `Stage::Slots`、候选为空、说明行复用 `wiz_models_manual`。
+/// `Models(Err(e))` 与 `ManualFallback` 走同一条路: 请求本身失败时同样进第二步、候选为空、说明行
+/// 复用 `wiz_models_manual`。
 #[test]
 fn a_failed_model_list_request_behaves_like_manual_fallback() {
     let mut a = wizard_after_create();
@@ -905,7 +897,7 @@ fn a_failed_model_list_request_behaves_like_manual_fallback() {
     assert!(out.contains(&(ZH.wiz_models_manual)("网络错误")), "{out}");
 }
 
-/// 状态流转表第 6 行: `Save` 校验通过后发出的 `SaveSlots` 只带 `model_slots`——四个核心槽是真实
+/// `Save` 校验通过后发出的 `SaveSlots` 只带 `model_slots`——四个核心槽是真实
 /// 选的值, 兜底槽是空串, **没有 `slot_efforts` 这个概念** (`WizardCmd::SaveSlots` 这个变体本身
 /// 就没有那个字段, 这条断言顺带用类型形状锁住)。
 #[test]
@@ -929,28 +921,27 @@ fn saving_sends_only_the_model_slots_patch() {
     );
 }
 
-/// 评审 Item 1(c): `submit_slots` 校验通过后进 `Stage::Saving`——这个阶段必须真的只读, 不能在
-/// `SaveSlots` 还在飞的时候再发一个 (后端会收到两个重复的保存请求)。删掉 `submit_slots` 里的
-/// `self.stage = Stage::Saving` 这一行, 之前没有任何测试会变红。
+/// 保存发出后表单必须真的只读, 不能在 `SaveSlots` 还在飞的时候再发一个 (后端会收到两个重复的
+/// 保存请求)。
 #[test]
 fn saving_is_read_only_until_the_result_comes_back() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
     focus_row(&mut a, ZH.wiz_btn_save);
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
-    a.update(save_action); // Stage::Saving
+    a.update(save_action); // 保存在飞
 
     assert_eq!(a.handle_key(key(KeyCode::Enter)), None, "保存在飞时再按 ⏎ 不该发第二个请求");
     assert_eq!(a.handle_key(key(KeyCode::Esc)), None, "保存在飞时 Esc 也该被吞掉");
 }
 
-/// 状态流转表第 7 行: `SlotsSaved(Ok(()))` 应该关掉向导 (补一次重拉订阅列表) 并弹一条
+/// `SlotsSaved(Ok(()))` 应该关掉向导 (补一次重拉订阅列表) 并弹一条
 /// `wiz_created(display_name)` 的 Success toast。
 #[test]
 fn a_successful_save_closes_the_wizard_with_a_toast() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
     focus_row(&mut a, ZH.wiz_btn_save);
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
-    a.update(save_action); // Stage::Saving
+    a.update(save_action); // 保存在飞
 
     let cmds = a.update(Action::WizardDone(Box::new(WizardResult::SlotsSaved(Ok(())))));
     assert_eq!(cmds, vec![Cmd::Fetch(Fetch::Subscriptions)], "关掉向导应该补一次重拉订阅列表");
@@ -959,11 +950,10 @@ fn a_successful_save_closes_the_wizard_with_a_toast() {
     assert!(out.contains(&(ZH.wiz_created)("智谱 AI")), "应该出现「已创建」的成功 toast\n{out}");
 }
 
-/// `SlotsSaved(Err(e))` 应该回 `Stage::Slots` 并把 `wiz_save_failed(e)` 挂成说明行——不丢用户
-/// 已经选好的槽位值 (草稿原样保留, 只是多了一条说明)。评审 Item 1(b): 光看说明行和槽位文字还
-/// 不够——`draw_slots` 在 `Slots` 和 `Saving` 下画出来这两样一样, 删掉 `apply_wizard_result`
-/// 里 `SlotsSaved(Err)` 分支的 `self.stage = Stage::Slots` 这一行不会让这条断言变红; 必须再
-/// 断言表单**真的能操作**(按钮能再按一次、真的发出第二个 `SaveSlots`)才咬得住。
+/// `SlotsSaved(Err(e))` 应该回到可编辑的第二步并把 `wiz_save_failed(e)` 挂成说明行——不丢用户
+/// 已经选好的槽位值 (草稿原样保留, 只是多了一条说明)。光看说明行和槽位文字还不够 (保存中与
+/// 可编辑时画出来这两样一样), 必须再断言表单**真的能操作** (按钮能再按一次、真的发出第二个
+/// `SaveSlots`)。
 #[test]
 fn a_failed_save_returns_to_slots_and_explains_why() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
@@ -976,13 +966,13 @@ fn a_failed_save_returns_to_slots_and_explains_why() {
     assert!(out.contains(&(ZH.wiz_save_failed)("磁盘写满了")), "{out}");
     assert_eq!(out.matches("glm-4.6").count(), 4, "保存失败不该丢掉已经选好的槽位值\n{out}");
 
-    // 焦点还在 Save (submit_slots 失败前没有移动过它), 真的能再按一次 ⏎ 发出第二个 SaveSlots。
+    // 焦点还在 Save (提交时没有移动过它), 真的能再按一次 ⏎ 发出第二个 SaveSlots。
     let retry = a.handle_key(key(KeyCode::Enter));
     assert!(matches!(retry, Some(Action::WizardRequest(_))), "回到 Slots 之后应该能再次保存, 实际 {retry:?}");
 }
 
-/// 状态流转表最后一行: `Stage::Slots` 下 `Esc` 弹确认, 文案是 `wiz_confirm_exit_pending`
-/// (不是 `Basics` 用的 `confirm_discard`——订阅已经建好了, 退出会留下 (pending) 槽位)。
+/// 第二步 `Esc` 弹确认, 文案是 `wiz_confirm_exit_pending` (不是第一步用的 `confirm_discard`——
+/// 订阅已经建好了, 退出会留下 (pending) 槽位)。
 #[test]
 fn escaping_after_the_subscription_was_created_warns_about_pending() {
     let mut a = wizard_at_slots_with_manual_fallback("x");
@@ -993,9 +983,9 @@ fn escaping_after_the_subscription_was_created_warns_about_pending() {
     );
 }
 
-/// 评审 Item 2: 槽位 picker 的 `allow_custom` 必须是 `true`——`example_models` 为空的厂商遇上
+/// 槽位 picker 的 `allow_custom` 必须是 `true`——`example_models` 为空的厂商遇上
 /// `ManualFallback` 时, 如果不能手输, 四个核心槽永远填不上, 保存永远被校验拦住, 用户只能退出
-/// 留下一条 `(pending)`。同时锁住候选来源规则: 有真实候选 (`slots_draft.models`) 时用它
+/// 留下一条 `(pending)`。同时锁住候选来源规则: 有真实候选 (拉到的模型列表) 时用它
 /// (label = id, hint = display_name); 候选为空时退回当前厂商的 `example_models` (只有 id,
 /// 没有 hint)。
 #[test]
@@ -1033,7 +1023,7 @@ fn the_slot_picker_prefers_real_candidates_and_falls_back_to_example_models() {
     );
 }
 
-/// 评审 Item 2: 去掉兜底槽的「清空」项的话, 兜底槽一旦选过就改不回未配置——锁住它必须是第一项。
+/// 去掉兜底槽的「清空」项的话, 兜底槽一旦选过就改不回未配置——锁住它必须是第一项。
 #[test]
 fn the_fallback_slot_picker_offers_a_clear_item_first() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
@@ -1048,8 +1038,8 @@ fn the_fallback_slot_picker_offers_a_clear_item_first() {
     );
 }
 
-/// 评审 Item 2: 之前没有任何测试让 `PickerDone { WizardSlot, .. }` 真的经过 `App` 往下走——
-/// 自定义输入 (`PickerChoice::Custom`) 应该写进对应槽位的草稿。
+/// `PickerDone { WizardSlot, .. }` 真的经过 `App` 往下走: 自定义输入 (`PickerChoice::Custom`)
+/// 应该写进对应槽位的草稿。
 #[test]
 fn picking_a_slot_model_through_the_app_writes_it_into_the_draft() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
@@ -1080,7 +1070,7 @@ fn picking_clear_on_the_fallback_slot_writes_an_empty_string() {
     assert!(out2.contains(ZH.sub_slot_unset), "选「清空」应该把兜底槽写回空串, 重新显示未配置\n{out2}");
 }
 
-/// 简报 80×24 例子: 已创建、自动发现回来一个候选 (`glm-4.6`), 四个核心槽预填、兜底槽显示未配置,
+/// 80×24: 已创建、自动发现回来一个候选 (`glm-4.6`), 四个核心槽预填、兜底槽显示未配置,
 /// 聚焦停在 `Fable` 行 (`Models(Ok)` 落地后的默认聚焦)。
 #[test]
 fn wizard_slots_80x24() {
@@ -1088,14 +1078,14 @@ fn wizard_slots_80x24() {
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
-// ---------- P5 Task 6: 向导自定义厂商单页 ----------
+// ---------- 新建订阅向导: 自定义厂商单页 ----------
 
-/// 简报 80×24 例子: Anthropic 兼容协议, 厂商名/Base URL/API Key/备注名都已填好, 探测成功后
+/// 80×24: Anthropic 兼容协议, 厂商名/Base URL/API Key/备注名都已填好, 探测成功后
 /// 手动给四个核心槽选了模型 (探测成功**不**自动预填, 与桌面端一致), 兜底槽留空。
 #[test]
 fn wizard_custom_80x24() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    // 评审 7: 备注名跟着厂商名自动生成, 不用再手填一遍——打厂商名的同时备注名就已经是
+    // 备注名跟着厂商名自动生成, 不用再手填一遍——打厂商名的同时备注名就已经是
     // "我的中转" 了。
     // 请求路径 / 鉴权保留 Anthropic 预设, 备注名已经自动跟随厂商名, 都不用碰。
     fill_custom(
@@ -1104,7 +1094,7 @@ fn wizard_custom_80x24() {
     );
     focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
-    a.update(probe_action); // Stage::Probing
+    a.update(probe_action); // 探测在飞
 
     a.update(Action::WizardDone(Box::new(WizardResult::Probed {
         base_url: "https://api.example.com".into(),
@@ -1125,21 +1115,21 @@ fn wizard_custom_80x24() {
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
-/// 80×24 下自定义表单内容区实际可用高度是 **16 行**(24 − 3 标签栏 − 1 底栏 − 2 边框 − 2 内距,
-/// 评审 2 指出简报/早期文档把这个数字错记成了 20)。这里用一条**短**说明 (只占 1 行) 摆到"14 行
+/// 80×24 下自定义表单内容区实际可用高度是 **16 行** (24 − 3 标签栏 − 1 底栏 − 2 边框 − 2 内距)。
+/// 这里用一条**短**说明 (只占 1 行) 摆到"14 行
 /// 固定内容 + 1 行说明 + 1 行 Spacer = 16 行"的边界——恰好等于可用高度、**零余量**, 不该触发
 /// 滚动或出现 `form_more`。真正会溢出的长说明场景 (`form.rs` 的
 /// `scrolling_keeps_a_focused_button_visible_behind_a_long_wrapped_note`) 单独覆盖。
 #[test]
 fn the_custom_form_fits_the_minimum_terminal() {
     let mut a = wizard_custom(CustomProtocol::Gemini);
-    // Base URL 必须**替换**掉 Gemini 的非空预设: 旧写法在预设后面追加, 草稿成了两段 URL 拼接,
-    // 下面那份 `Probed` 被身份守卫 (评审 4) 当成别人的结果丢弃, 说明行根本没挂上——这条测试一度
-    // 只在量「14 行」而不是它声称的「16 行零余量」。请求路径保留 Gemini 预设 (已含 {model})。
+    // Base URL 必须**替换**掉 Gemini 的非空预设: 在预设后面追加的话, 草稿成了两段 URL 拼接,
+    // 下面那份 `Probed` 会被身份守卫当成别人的结果丢弃, 说明行根本挂不上, 这条测试就只在量「14 行」。
+    // 请求路径保留 Gemini 预设 (已含 {model})。
     fill_custom(&mut a, relay_fill());
     focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
-    a.update(probe_action); // Stage::Probing
+    a.update(probe_action); // 探测在飞
     // 探测失败, 挂上一条短说明 (只占 1 行: 14+1+1=16, 恰好等于可用高度)。
     a.update(Action::WizardDone(Box::new(WizardResult::Probed {
         base_url: "https://relay.example.com".into(),
@@ -1168,7 +1158,7 @@ fn a_locked_protocol_skips_the_auth_row() {
     assert!(out.contains("sk"), "Ctrl+R 应该已经在 ApiKey 行生效, 说明焦点跳过了锁定的 Auth 行\n{out}");
 }
 
-/// 评审 1 (仿 Task 4 评审 M2 在厂商行修过的同一类问题): 重选同一个协议什么都不重算——用户手动
+/// 重选同一个协议什么都不重算 (与厂商行重选同一个厂商同理)——用户手动
 /// 把 Base URL / 请求路径 / 鉴权都改成中转站真实值之后, 回到协议行确认同一个协议 (picker 默认
 /// 高亮当前项, 很容易无意中再按一次 ⏎), 这些手填的值不该被悄悄弹回协议预设。
 #[test]
@@ -1192,7 +1182,7 @@ fn reselecting_the_same_protocol_does_not_reset_the_edited_fields() {
     assert!(out.contains("x-api-key"), "重选同一个协议不该把手选的鉴权头弹回默认值\n{out}");
 }
 
-/// 评审 7 (拍板的一致性改动): 备注名跟着厂商名自动生成, 与内置路径 (`select_zhipu` 选厂商时)
+/// 备注名跟着厂商名自动生成, 与内置路径 (`select_zhipu` 选厂商时)
 /// 同一条规则——厂商名 trim 后非空、备注名还没被手改过时, 打厂商名的同时备注名就该跟着变。
 #[test]
 fn display_name_follows_the_provider_name_while_still_auto() {
@@ -1202,7 +1192,7 @@ fn display_name_follows_the_provider_name_while_still_auto() {
     assert_eq!(out.matches("MyRelay").count(), 2, "厂商名与备注名此刻应该是同一个值, 各出现一次\n{out}");
 }
 
-/// 评审 7: 用户手改过备注名之后不再跟随厂商名的后续编辑。
+/// 用户手改过备注名之后不再跟随厂商名的后续编辑。
 #[test]
 fn display_name_stops_following_after_a_manual_edit() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
@@ -1222,7 +1212,7 @@ fn display_name_stops_following_after_a_manual_edit() {
     assert_eq!(out.matches("MyRelayX").count(), 1, "手改过的备注名不该被厂商名的后续编辑覆盖\n{out}");
 }
 
-/// 评审 7: 厂商名与已有订阅重名时, 自动生成的备注名应该加序号 (`default_display_name` 本来就有
+/// 厂商名与已有订阅重名时, 自动生成的备注名应该加序号 (`default_display_name` 本来就有
 /// 这条规则, 这里验证自定义路径真的接上了它)。
 #[test]
 fn display_name_auto_fill_adds_a_number_on_collision_with_an_existing_subscription() {
@@ -1253,8 +1243,7 @@ fn probing_sends_the_protocol_and_the_trimmed_base_url() {
     );
 }
 
-/// 评审 6: 发起 `Probe` 时应该清掉上一次的失败说明 (仿 `submit`/`submit_slots` 对
-/// `create_error`/`note` 的处理)——否则重试在飞期间, 屏幕上会同时显示"上一次探测失败的原因"和
+/// 发起 `Probe` 时应该清掉上一次的失败说明 (与其它提交按钮同一条规则)——否则重试在飞期间, 屏幕上会同时显示"上一次探测失败的原因"和
 /// "正在获取模型列表…"两条互相矛盾的文案。
 #[test]
 fn submitting_probe_clears_the_previous_failure_note() {
@@ -1262,7 +1251,7 @@ fn submitting_probe_clears_the_previous_failure_note() {
     fill_custom(&mut a, CustomFill { base_url: Some("https://relay.example.com"), api_key: Some("sk-test"), ..Default::default() });
     focus_row(&mut a, ZH.wiz_btn_probe);
     let probe1 = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
-    a.update(probe1); // Stage::Probing
+    a.update(probe1); // 探测在飞
     a.update(Action::WizardDone(Box::new(WizardResult::Probed { base_url: "https://relay.example.com".into(), result: Err("网络错误".into()) })));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_models_manual)("网络错误")), "先确认失败说明确实挂上了\n{out}");
@@ -1276,7 +1265,7 @@ fn submitting_probe_clears_the_previous_failure_note() {
     assert!(!out2.contains(&(ZH.wiz_models_manual)("网络错误")), "重新发起探测时应该清掉上一次的失败说明\n{out2}");
 }
 
-/// 评审 6: 发起 `Create` 时同样应该清掉上一次的失败说明, 理由同 `submitting_probe_...`。
+/// 发起 `Create` 时同样应该清掉上一次的失败说明, 理由同 `submitting_probe_...`。
 #[test]
 fn submitting_create_clears_the_previous_failure_note() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
@@ -1285,12 +1274,12 @@ fn submitting_create_clears_the_previous_failure_note() {
     pick_core_slots(&mut a, |_| PickerChoice::Custom("glm-4.6".into()));
     focus_row(&mut a, ZH.wiz_btn_create);
     let submit1 = a.handle_key(key(KeyCode::Enter)).expect("创建应该产出 Action");
-    a.update(submit1); // Stage::Creating
+    a.update(submit1); // 创建在飞
     a.update(Action::WizardDone(Box::new(WizardResult::Created(Err("上游炸了".into())))));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_create_failed)("上游炸了")), "先确认失败说明确实挂上了\n{out}");
 
-    // 焦点还在 Submit (submit_custom 校验失败/落地失败都不移动焦点), 重试。
+    // 焦点还在 Submit (创建失败落地不移动焦点), 重试。
     let submit2 = a.handle_key(key(KeyCode::Enter));
     assert!(matches!(submit2, Some(Action::WizardRequest(_))), "重试应该发出新的 Create 请求, 实际 {submit2:?}");
     let out2 = render(&mut a, 80, 24);
@@ -1302,7 +1291,7 @@ fn submitting_create_clears_the_previous_failure_note() {
 #[test]
 fn creating_a_custom_subscription_sends_real_slots_and_closes() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    // 请求路径 / 鉴权保留默认 (/v1/messages, Authorization/Bearer); 备注名 (评审 7) 已经跟着
+    // 请求路径 / 鉴权保留默认 (/v1/messages, Authorization/Bearer); 备注名已经跟着
     // 厂商名自动填成"中转站"; 跳过探测; 兜底槽留空。
     fill_custom(&mut a, relay_fill());
     pick_core_slots(&mut a, |_| PickerChoice::Custom("glm-4.6".into()));
@@ -1347,23 +1336,23 @@ fn creating_a_custom_subscription_sends_real_slots_and_closes() {
     );
 }
 
-/// 自定义路径 `Created(Err)`: 回 `Stage::Custom`(不是内置路径的 `Stage::Basics`), 说明行挂
-/// `wiz_create_failed`, 表单真的能再操作 (与 Task 5 评审对内置路径 `Created(Err)` 的同款要求)。
+/// 自定义路径 `Created(Err)`: 回到可编辑的自定义单页 (不是内置路径的第一步), 说明行挂
+/// `wiz_create_failed`, 表单真的能再操作 (与内置路径 `Created(Err)` 的同款要求)。
 #[test]
 fn a_failed_custom_create_returns_to_custom_and_stays_operable() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    // 备注名 (评审 7) 已经跟着厂商名自动填成"中转站"。
+    // 备注名已经跟着厂商名自动填成"中转站"。
     fill_custom(&mut a, relay_fill());
     pick_core_slots(&mut a, |_| PickerChoice::Custom("glm-4.6".into()));
     focus_row(&mut a, ZH.wiz_btn_create);
     let submit_action = a.handle_key(key(KeyCode::Enter)).expect("创建应该产出 Action");
-    a.update(submit_action); // Stage::Creating
+    a.update(submit_action); // 创建在飞
 
     a.update(Action::WizardDone(Box::new(WizardResult::Created(Err("上游炸了".into())))));
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.wiz_create_failed)("上游炸了")), "{out}");
 
-    // 真的能再操作: 焦点还在 Submit (submit_custom 失败前没有移动焦点), 能再按一次 ⏎ 产出新请求。
+    // 真的能再操作: 焦点还在 Submit (提交时没有移动焦点), 能再按一次 ⏎ 产出新请求。
     let retry = a.handle_key(key(KeyCode::Enter));
     assert!(matches!(retry, Some(Action::WizardRequest(_))), "回到 Custom 之后应该能再次提交, 实际 {retry:?}");
 }
@@ -1373,11 +1362,11 @@ fn a_failed_custom_create_returns_to_custom_and_stays_operable() {
 #[test]
 fn a_successful_probe_records_models_url_for_later_create() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    // 备注名 (评审 7) 已经跟着厂商名自动填成"中转站"。
+    // 备注名已经跟着厂商名自动填成"中转站"。
     fill_custom(&mut a, relay_fill());
     focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
-    a.update(probe_action); // Stage::Probing
+    a.update(probe_action); // 探测在飞
 
     a.update(Action::WizardDone(Box::new(WizardResult::Probed {
         base_url: "https://relay.example.com".into(),
@@ -1402,11 +1391,11 @@ fn a_successful_probe_records_models_url_for_later_create() {
     );
 }
 
-/// `Probed` 晚到 (阶段已经不是 `Probing`, 还没开始探测): 不该被采纳。
+/// `Probed` 晚到 (没有探测在飞): 不该被采纳。
 #[test]
 fn a_stale_probed_result_is_discarded_outside_probing() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    // 还没探测 (停在 Custom, 不是 Probing), 喂一份晚到的 Probed 结果。
+    // 还没探测 (编辑中, 没有探测在飞), 喂一份晚到的 Probed 结果。
     a.update(Action::WizardDone(Box::new(WizardResult::Probed {
         base_url: "https://late.example.com".into(),
         result: Ok(ProbeModelsResult::Auto {
@@ -1426,11 +1415,10 @@ fn a_stale_probed_result_is_discarded_outside_probing() {
     );
 }
 
-/// 评审 4: `Probed` 阶段守卫之外还要核对结果自带的 `base_url`——向导 A 探测中转 X 还没回来,
-/// 用户退出重开向导 B (同样走到 `Stage::Probing`, 探测的是另一个 base_url); X 的结果这时晚到,
-/// **阶段守卫拦不住 (两边此刻都在 `Probing`)**, 必须靠 `base_url` 不一致丢弃——与
-/// `a_stale_probed_result_is_discarded_outside_probing`(阶段不同) 是两回事, 那条测不出这个
-/// 场景 (两边阶段相同时, 不比对身份就会被阶段守卫误判成"是我发起的")。
+/// `Probed` 阶段守卫之外还要核对结果自带的 `base_url`——向导 A 探测中转 X 还没回来, 用户退出
+/// 重开向导 B (同样在探测, 探测的是另一个 base_url); X 的结果这时晚到, **阶段守卫拦不住 (两边
+/// 此刻都在探测)**, 必须靠 `base_url` 不一致丢弃——与 `a_stale_probed_result_is_discarded_outside_probing`
+/// (阶段不同) 是两回事。
 #[test]
 fn a_probed_result_for_a_different_base_url_is_discarded() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
@@ -1440,7 +1428,7 @@ fn a_probed_result_for_a_different_base_url_is_discarded() {
     );
     focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
-    a.update(probe_action); // Stage::Probing, 草稿 base_url = "https://mine.example.com"
+    a.update(probe_action); // 探测在飞, 草稿 base_url = "https://mine.example.com"
 
     // 另一个向导实例当时探测的是 "https://other.example.com", 现在才晚到。
     let cmds = a.update(Action::WizardDone(Box::new(WizardResult::Probed {
@@ -1451,7 +1439,7 @@ fn a_probed_result_for_a_different_base_url_is_discarded() {
         }),
     })));
     assert!(cmds.is_empty(), "不该产出任何 Cmd");
-    // 应该仍然停在 Probing——没被这份不属于自己的结果打回 Custom (打回去了才说明被误采纳了)。
+    // 应该仍然在探测——没被这份不属于自己的结果打回编辑 (打回去了才说明被误采纳了)。
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.wiz_probing), "应该仍然显示探测中, 没被 base_url 不一致的结果打断\n{out}");
 
@@ -1472,13 +1460,12 @@ fn a_probed_result_for_a_different_base_url_is_discarded() {
     assert!(!spec.items.iter().any(|item| item.id == "other-model"), "别人的探测结果不该混入候选\n{:?}", spec.items);
 }
 
-/// 评审 4: `Models` 同样要核对结果自带的 `id`——向导 A 创建成功进 `LoadingModels` 等模型列表,
-/// 用户退出重开向导 B (另一家厂商, 同样创建成功进 `LoadingModels`); A 的模型列表这时晚到,
-/// **阶段守卫拦不住 (两边此刻都在 `LoadingModels`)**, 必须靠 `id` 不一致丢弃——否则 B 的四个
-/// 核心槽会被预填成 A 那家厂商的模型名。
+/// `Models` 同样要核对结果自带的 `id`——向导 A 创建成功、在等模型列表, 用户退出重开向导 B (另一家
+/// 厂商, 同样创建成功在等模型列表); A 的模型列表这时晚到, **阶段守卫拦不住 (两边此刻都在等模型
+/// 列表)**, 必须靠 `id` 不一致丢弃——否则 B 的四个核心槽会被预填成 A 那家厂商的模型名。
 #[test]
 fn a_models_result_for_a_different_subscription_is_discarded() {
-    let mut a = wizard_after_create(); // created_id = "sub-1", Stage::LoadingModels
+    let mut a = wizard_after_create(); // 订阅 id = "sub-1", 等模型列表
     let cmds = a.update(Action::WizardDone(Box::new(WizardResult::Models {
         id: "sub-999".into(), // 另一个向导实例创建的订阅
         result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "other-vendor-model".into(), display_name: None }], fetched_at: 0 }),
@@ -1489,9 +1476,9 @@ fn a_models_result_for_a_different_subscription_is_discarded() {
     assert!(!out.contains("other-vendor-model"), "别的订阅的模型不该出现\n{out}");
 }
 
-/// 裁决 3: 自定义路径创建之前什么都没落库, `Esc` 的确认文案应该是 `confirm_discard`, 不是
-/// `wiz_confirm_exit_pending`(那个专属"订阅已经创建")——`Stage::Custom` 与 `Stage::Probing`
-/// (只读请求在飞, `Esc` 应该可用) 都要覆盖。
+/// 自定义路径创建之前什么都没落库, `Esc` 的确认文案应该是 `confirm_discard`, 不是
+/// `wiz_confirm_exit_pending` (那个专属「订阅已经创建」)——编辑中与探测在飞 (只读请求, `Esc`
+/// 应该可用) 都要覆盖。
 #[test]
 fn custom_stage_escape_uses_the_discard_prompt_not_the_pending_one() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
@@ -1507,7 +1494,7 @@ fn custom_stage_escape_uses_the_discard_prompt_not_the_pending_one() {
     );
     focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
-    a.update(probe_action); // Stage::Probing
+    a.update(probe_action); // 探测在飞
 
     assert!(a.handle_key(key(KeyCode::Esc)).is_some(), "Probing 是只读请求, Esc 应该可用");
     assert_eq!(
@@ -2770,7 +2757,7 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     let second = render(&mut r, 80, 24);
     assert_eq!(first, second, "日志详情弹窗滚动后的状态应该幂等");
 
-    // P5 Task 2: 向导打开 (加载厂商列表中) 的状态——throbber 是唯一读 tick 计数器的渲染路径,
+    // 向导打开 (加载厂商列表中) 的状态——throbber 是唯一读 tick 计数器的渲染路径,
     // 同一帧画两遍必须落在同一格上, 与订阅页忙碌行同一条纪律。
     let mut s = app(false);
     s.update(Action::OpenWizard);
@@ -2778,7 +2765,7 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     let second = render(&mut s, 80, 24);
     assert_eq!(first, second, "向导加载中的状态应该幂等");
 
-    // P5 Task 4: 向导 Basics 阶段 (已选厂商 + API Key 打了几个字符, 光标在 value 里的位置由
+    // 向导第一步 (已选厂商 + API Key 打了几个字符, 光标在 value 里的位置由
     // `visual_cursor()` 现算) 应该幂等。
     let mut t = wizard_with_providers(vec![zhipu_provider()]);
     select_zhipu(&mut t);
@@ -2787,13 +2774,13 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     let second = render(&mut t, 80, 24);
     assert_eq!(first, second, "向导 Basics 阶段应该幂等");
 
-    // P5 Task 5: 向导 Slots 阶段 (自动发现的候选已经预填四个核心槽, 聚焦在 Fable 行) 应该幂等。
+    // 向导第二步 (自动发现的候选已经预填四个核心槽, 聚焦在 Fable 行) 应该幂等。
     let mut u = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
     let first = render(&mut u, 80, 24);
     let second = render(&mut u, 80, 24);
     assert_eq!(first, second, "向导 Slots 阶段应该幂等");
 
-    // P5 Task 6: 向导 Custom 阶段 (已选 Anthropic 协议、正在填厂商名, 光标状态由
+    // 向导自定义单页 (已选 Anthropic 协议、正在填厂商名, 光标状态由
     // `visual_cursor()` 现算) 应该幂等。
     let mut v = wizard_custom(CustomProtocol::Anthropic);
     type_str(&mut v, "中转站");
@@ -4055,7 +4042,7 @@ fn subscriptions_dirty_80x24() {
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
-// ---------- P5 Task 7: 删除订阅 + `n` 新建向导的触发点 ----------
+// ---------- 删除订阅 + `n` 新建向导的触发点 ----------
 
 /// 按 `d` 应该先弹确认, 列出引用它的两个虚拟模型 (`detail_subs()` 的"智谱主号",
 /// `referenced_by = ["model-sonnet", "model-opus"]`)。`y` 应该真的产出 `Cmd::Mutate(Delete)`。

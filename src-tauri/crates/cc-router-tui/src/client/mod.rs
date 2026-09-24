@@ -21,11 +21,11 @@ pub mod commands {
     pub const LIST_VIRTUAL_MODELS: &str = "list_virtual_models";
     pub const UPDATE_VIRTUAL_MODEL: &str = "update_virtual_model";
     pub const LIST_REQUESTS: &str = "list_requests";
-    /// 新建订阅向导 (P5 Task 3): 拉厂商列表 / 创建 / 自定义厂商探测模型。
+    /// 新建订阅向导: 拉厂商列表 / 创建 / 自定义厂商探测模型。
     pub const LIST_PROVIDERS: &str = "list_providers";
     pub const CREATE_SUBSCRIPTION: &str = "create_subscription";
     pub const PROBE_CUSTOM_MODELS: &str = "probe_custom_models";
-    /// 删除订阅 (P5 Task 3 只加常量, 接线留给消费它的后续 Task)。
+    /// 订阅页 `d` 删除订阅。
     pub const DELETE_SUBSCRIPTION: &str = "delete_subscription";
     /// 契约测试遍历这张表; 加新 command 时同时加进来。
     pub const ALL: &[&str] = &[
@@ -62,7 +62,7 @@ pub mod events {
     pub const ALL: &[&str] = &[SUBSCRIPTION_STATE_CHANGED, SUBSCRIPTION_QUOTA_REACHED, ROUTE_ATTEMPT_STARTED, ROUTE_ATTEMPT_FINISHED];
 }
 
-/// 只给测试用的假后端 (Task 3: 事件流空闲超时)。放在 `client` 而不是 `http` 里, 是因为
+/// 只给测试用的假后端 (比如测事件流空闲超时)。放在 `client` 而不是 `http` 里, 是因为
 /// `http.rs` 与 `runtime.rs` 的测试都要用它。
 #[cfg(test)]
 pub(crate) mod test_support {

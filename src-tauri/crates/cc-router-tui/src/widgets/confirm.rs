@@ -1,8 +1,8 @@
 //! 「是 / 否」确认弹窗。`y`/`Y` 是, `n`/`N`/`Esc`/`⏎` 否 (默认 N), 其余按键被吞掉 (键盘路由在
 //! `App::handle_key` 里, 这里只画)。
 //!
-//! **支持多行 prompt**(P5 Task 7 起, 删除订阅需要列出引用它的虚拟模型): 按 `'\n'` 拆行, 宽度取
-//! 最宽一行 + 8, 高度是 `行数 + 4`——单行时仍然是 5, 既有的单行调用点字节不变。
+//! **支持多行 prompt** (删除订阅要列出引用它的虚拟模型): 按 `'\n'` 拆行, 宽度取最宽一行 + 8,
+//! 高度是 `行数 + 4`——单行时是 5。
 
 use ratatui::layout::{Constraint, Rect};
 use ratatui::text::{Line, Text};
@@ -34,10 +34,10 @@ fn height_for(prompt: &str) -> u16 {
 }
 
 /// 居中, 宽 = 最宽一行的显示宽度 + 8, 夹在 `MIN_WIDTH..=screen.width - SCREEN_MARGIN` 之间,
-/// 高 = 行数 + 4 (单行时是 5, 与旧版字节不变)。
+/// 高 = 行数 + 4 (单行时是 5)。
 ///
 /// `screen.width < MIN_WIDTH + SCREEN_MARGIN` (34) 时, `screen.width - SCREEN_MARGIN` 会小于
-/// `MIN_WIDTH`——`clamp(MIN_WIDTH, 那个更小的上界)` 违反 `min <= max` 会直接 panic (Fix round D)。
+/// `MIN_WIDTH`——`clamp(MIN_WIDTH, 那个更小的上界)` 违反 `min <= max` 会直接 panic。
 /// 用 `.max(MIN_WIDTH)` 兜底上界, 保证任何 `Rect` 传进来都不 panic; 主循环本来就不会在小于
 /// `app::MIN_WIDTH`(80)/`MIN_HEIGHT`(24) 的终端上调用这个函数 (`App::draw` 的早退分支挡住了),
 /// 这里只是让函数本身对任意输入都是全函数 (total function), 不依赖调用方守规矩。
@@ -83,8 +83,8 @@ mod tests {
         assert_eq!(mid.width, 38, "没有触顶或触底时, 宽度应该正好是提示宽度 + 8");
     }
 
-    /// P5 Task 7: 多行 prompt (删除确认列出引用它的虚拟模型) 应该把高度撑到「行数 + 4」, 宽度按
-    /// 最宽一行算——单行仍然是既有的 5, 不能因为这次改动悄悄变了 (既有快照全部字节不变)。
+    /// 多行 prompt (删除确认列出引用它的虚拟模型) 应该把高度撑到「行数 + 4」, 宽度按最宽一行算;
+    /// 单行仍然是 5。
     #[test]
     fn a_multi_line_prompt_grows_the_popup() {
         let screen = Rect::new(0, 0, 80, 24);
@@ -100,8 +100,8 @@ mod tests {
         assert_eq!(three_lines.width, widest_only.width, "宽度应该由最宽一行决定");
     }
 
-    /// Fix round D: `screen.width < MIN_WIDTH + SCREEN_MARGIN` (34) 时旧版会在 `clamp` 里 panic
-    /// (下界 30 > 上界 `screen.width - 4`)。20 列宽的屏幕远小于这个阈值, 任何提示长度都不该
+    /// `screen.width < MIN_WIDTH + SCREEN_MARGIN` (34) 时直接 `clamp` 会 panic (下界 30 > 上界
+    /// `screen.width - 4`)。20 列宽的屏幕远小于这个阈值, 任何提示长度都不该
     /// panic——内部算出来的目标宽度会被 `.max(MIN_WIDTH)` 兜到 30, 但 `Rect::centered` 用的
     /// `Layout` 约束求解器会把它进一步夹到父矩形自己的宽度以内, 结果不会比屏幕本身更宽。
     #[test]

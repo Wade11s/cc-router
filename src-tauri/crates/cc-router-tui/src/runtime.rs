@@ -22,12 +22,12 @@ use crate::client::{commands, Client, ClientError};
 
 const TICK: Duration = Duration::from_millis(250);
 const FRAME: Duration = Duration::from_millis(16);
-/// 事件流连上住满这么久, 断线重连计数器才清零; 刚连上就断不算「恢复」, 不能让退避失效 (G4a)。
+/// 事件流连上住满这么久, 断线重连计数器才清零; 刚连上就断不算「恢复」, 不能让退避失效。
 const STABLE_AFTER: Duration = Duration::from_secs(10);
-/// 等 `events()` 建立连接 (拿到响应头) 的上限; 网络卡住不能让重连无限期挂起 (G4b)。
+/// 等 `events()` 建立连接 (拿到响应头) 的上限; 网络卡住不能让重连无限期挂起。
 const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
 /// 后端每 15 秒发一次保活 (`src-tauri/src/proxy/web/events.rs::sse_handler`), 连续三次都没
-/// 收到才算断 (Task 3: 连接中途被黑洞时没有这个超时, 界面会一直显示「已连接」)。
+/// 收到才算断 (连接中途被黑洞时没有这个超时, 界面会一直显示「已连接」)。
 const IDLE_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub fn unix_ms() -> i64 {
@@ -44,7 +44,7 @@ pub fn backoff(attempt: u32) -> Duration {
 }
 
 /// 断线重连计数器的下一个值: 这一轮连接住满 `STABLE_AFTER` 才清零 (真的恢复了才重置退避),
-/// 否则接着累加 —— 刚连上就断的抖动连接不会让退避一直停在 1s (G4a)。
+/// 否则接着累加 —— 刚连上就断的抖动连接不会让退避一直停在 1s。
 fn next_attempt(attempt: u32, stream_lived: Duration) -> u32 {
     if stream_lived >= STABLE_AFTER {
         0
@@ -183,8 +183,8 @@ async fn call_wizard(client: &Client, cmd: &WizardCmd) -> WizardResult {
     }
 }
 
-/// 向导的请求。与 `spawn_mutation` 一样**不去重、不补跑**, 判重在向导自己那一层
-/// (`Wizard` 的 `pending` 状态, Task 3 起真正用到)。
+/// 向导的请求。与 `spawn_mutation` 一样**不去重、不补跑**: 向导同一时刻最多一个请求在飞, 由它
+/// 自己的阶段保证。
 fn spawn_wizard(client: Arc<Client>, tx: UnboundedSender<Action>, cmd: WizardCmd) {
     tokio::spawn(async move {
         let result = call_wizard(&client, &cmd).await;
@@ -222,10 +222,10 @@ fn stamp_barrier(action: &mut Action, issued: &Issued) {
 /// 跑一轮「连上事件流 → 转发事件, 直到断线」。返回值是这一轮事件流**实际存活了多久**——
 /// 连接失败 / 超时是 `Duration::ZERO` (绝不会被当成「稳定过」), 连上了才从 `events()` 成功的
 /// 那一刻开始计时到断线为止。`connect_deadline` 独立传参而不是直接读 `CONNECT_DEADLINE`,
-/// 方便测试用一个远小于生产值的超时去戳一个卡住不响应的 mock, 不用真等 10 秒 (G4)。
+/// 方便测试用一个远小于生产值的超时去戳一个卡住不响应的 mock, 不用真等 10 秒。
 ///
 /// `ever_connected` 只有真的连上过一次才置 true: 调用方靠它判断「从没连上时不发
-/// `ConnectionLost`」(G6), 免得「从未连接」被 `App` 当成「掉线重连」。
+/// `ConnectionLost`」, 免得「从未连接」被 `App` 当成「掉线重连」。
 ///
 /// `idle` 独立传参而不是直接读 `IDLE_TIMEOUT`, 与 `connect_deadline` 同理: 测试传一个远小于
 /// 生产值的超时, 不用真等 45 秒去戳一个中途沉默的 mock。
@@ -236,16 +236,16 @@ async fn run_once(
     connect_deadline: Duration,
     idle: Duration,
 ) -> Duration {
-    // 建立连接本身也要有超时, 否则一个卡住不响应的上游会让这个任务永久挂起 (G4b)。
+    // 建立连接本身也要有超时, 否则一个卡住不响应的上游会让这个任务永久挂起。
     let Ok(Ok(stream)) = tokio::time::timeout(connect_deadline, client.events()).await else {
         return Duration::ZERO;
     };
     // 两次收到任何字节 (含保活) 之间最多等 idle, 否则视为黑洞——不这样做, 中途被黑洞的连接会
-    // 让 `stream.next()` 永远卡住, 界面上「已连接」再也不会变化 (Task 3)。
+    // 让 `stream.next()` 永远卡住, 界面上「已连接」再也不会变化。
     let mut stream = stream.with_idle_timeout(idle);
     *ever_connected = true;
     // 从连上的这一刻开始计时, 而不是从这一轮循环 (含连接排队 / 后面的退避 sleep) 开始算,
-    // 否则「流活了多久」会把连接耗时和断线后的等待都算进去, next_attempt 判断全乱 (G4)。
+    // 否则「流活了多久」会把连接耗时和断线后的等待都算进去, next_attempt 判断全乱。
     let up = tokio::time::Instant::now();
     let app_version = client.runtime().await.app_version;
     if tx.send(Action::Connected { app_version }).is_err() {
@@ -274,10 +274,10 @@ async fn sse_loop(client: Arc<Client>, tx: UnboundedSender<Action>) {
     }
 }
 
-/// 同一种加载同时只跑一个; 进行中又来了同种请求, 记一笔, 等这次回来后补跑一次 (G7:
-/// 否则会静默丢掉一次刷新请求, 比如断线重连期间某订阅状态变了, 要等下一次 5s 轮询才补上)。
+/// 同一种加载同时只跑一个; 进行中又来了同种请求, 记一笔, 等这次回来后补跑一次 (否则会
+/// 静默丢掉一次刷新请求, 比如断线重连期间某订阅状态变了, 要等下一次 5s 轮询才补上)。
 ///
-/// Task 4: 去重按 [`FetchKind`], 不按整个 [`Fetch`] 值——`Fetch::Requests` 带查询参数, 两个页码
+/// 去重按 [`FetchKind`], 不按整个 [`Fetch`] 值——`Fetch::Requests` 带查询参数, 两个页码
 /// 不同的请求仍然是「同一种」加载。进行中又来了同种请求, 只记最新那一笔 (`rerun` 是
 /// `HashMap<FetchKind, Fetch>` 而不是集合, 覆盖写入天然就是「最新为准」), 更早记下的那笔直接丢弃
 /// ——它对应的查询参数已经过时了, 没有必要为了它专门再跑一次。
@@ -351,11 +351,10 @@ fn process_action(
                     spawn_fetch(client.clone(), tx.clone(), fetch, issued.next());
                 }
             }
-            // `Cmd::Mutate` 的负载是 `Box<Mutation>` (Fix round I, 消掉 clippy 的
-            // `large_enum_variant`); `spawn_mutation` 本身不需要跟着改签名, 这里解引用一次拿回
+            // `Cmd::Mutate` 的负载是 `Box<Mutation>` (消掉 clippy 的 `large_enum_variant`); `spawn_mutation` 本身不需要跟着改签名, 这里解引用一次拿回
             // 所有权就够了。
             Cmd::Mutate(mutation) => spawn_mutation(client.clone(), tx.clone(), *mutation),
-            // 同上, `Cmd::Wizard` 的负载也是 `Box` (P5 Task 2), 同样只是为了避免 `Vec<Cmd>` 的
+            // 同上, `Cmd::Wizard` 的负载也是 `Box`, 同样只是为了避免 `Vec<Cmd>` 的
             // 每个元素都按最大变体分配, 不需要 `spawn_wizard` 跟着收 `Box`。
             Cmd::Wizard(cmd) => spawn_wizard(client.clone(), tx.clone(), *cmd),
         }
@@ -365,7 +364,7 @@ fn process_action(
 
 /// `keys.next()` 的结果 → 要喂给 `App::update` 的 `Action` (`None` = 这一轮不产生动作, 比如
 /// Resize 事件)。真正的按键交给 `app.handle_key` (有状态, 不是纯函数), 但「流终结了该怎么办」这
-/// 条规则单独抽出来, 不用真的驱动一整个 `event_loop` 就能测 (Fix round B)。
+/// 条规则单独抽出来, 不用真的驱动一整个 `event_loop` 就能测。
 ///
 /// **`None`/`Err` 必须映射到 [`Action::ForceQuit`], 不能是 [`Action::Quit`]**: `EventStream`
 /// 返回 `None`/`Err` 说明键盘流已经终结 (典型场景是 tty 被关掉), 循环还在空转——`keys.next()`
@@ -384,7 +383,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, client: Arc<Client>
     let (tx, mut rx) = unbounded_channel::<Action>();
     let mut sse = tokio::spawn(sse_loop(client.clone(), tx.clone()));
     // sse_loop 正常情况下永远不返回; 它结束了 (panic 或者提前 return) 说明事件流彻底死了,
-    // 得让界面知道, 不然「已连接」会永远挂在那 (G5)。一个已经 ready 过的 JoinHandle 不能
+    // 得让界面知道, 不然「已连接」会永远挂在那。一个已经 ready 过的 JoinHandle 不能
     // 再被 poll, 所以用这个 bool 守卫 select! 分支, 命中一次之后就不再选它。
     let mut sse_alive = true;
 
@@ -425,7 +424,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, client: Arc<Client>
         // 再回到循环顶部画一帧 (为事件洪峰准备; 键盘与 tick 走 select! 的常规分支, 不受影响)。
         // **有界**: 只抽干「进入这段代码那一刻已经排队的那些」(`rx.len()` 那一刻的快照),
         // 不是无条件 `while let` —— 否则一个持续produce的生产者 (比如密集 SSE) 会让抽干永远
-        // 抽不完, 一直不回到循环顶部, 键盘响应和下一帧重绘都被无限期推迟 (M5 fix round 1)。
+        // 抽不完, 一直不回到循环顶部, 键盘响应和下一帧重绘都被无限期推迟。
         // 抽干过程中 `process_action` 触发的新 fetch 结果晚一点由下一轮循环处理, 不会丢。
         for _ in 0..rx.len() {
             match rx.try_recv() {
@@ -467,7 +466,7 @@ mod tests {
         })
     }
 
-    /// Fix round B: 键盘流终结 (`None`/`Err`, 典型场景是 tty 被关掉) 必须映射到 `ForceQuit`,
+    /// 键盘流终结 (`None`/`Err`, 典型场景是 tty 被关掉) 必须映射到 `ForceQuit`,
     /// 不能是会先弹确认框的 `Quit`——否则一旦有页面 dirty, 会弹出一个没有终端能回答的确认弹窗,
     /// 而 `keys.next()` 立刻又会返回同一个终结结果, 主循环从此 100% CPU 空转、永远退不出去。
     #[test]
@@ -512,10 +511,9 @@ mod tests {
         assert_eq!(next_attempt(5, Duration::from_secs(20)), 0);
     }
 
-    /// 咬住 G4 的 bug 场景: 连续几轮「连上即断」(`lived` 都是 `Duration::ZERO`, 对应连接失败 /
+    /// 连续几轮「连上即断」(`lived` 都是 `Duration::ZERO`, 对应连接失败 /
     /// 超时) 必须让退避一档一档往上走 (1s → 2s → 5s), 而不是每轮都被误判成「稳定过」而清零 ——
-    /// 这正是 fix round 1 里量错区间导致的回归: 把 `Duration::ZERO` 之外的「连接耗时 + 退避
-    /// sleep 时长」算进 `stream_lived`, 会让 `next_attempt` 提前判定为已恢复。
+    /// 把「连接耗时 + 退避 sleep 时长」算进 `stream_lived` 会让 `next_attempt` 提前判定为已恢复。
     #[test]
     fn consecutive_failures_back_off_1_2_5_via_next_attempt_wiring() {
         let mut attempt = 0;
@@ -549,7 +547,7 @@ mod tests {
         assert_eq!(f.finished(FetchKind::Overview), None);
     }
 
-    /// Task 4: `Fetch::Requests` 带查询参数, 去重按 `FetchKind` 不按整个值——进行中又来了两次同种
+    /// `Fetch::Requests` 带查询参数, 去重按 `FetchKind` 不按整个值——进行中又来了两次同种
     /// 请求, 只应该补跑最新那一次 (page 3), page 2 那次被直接丢弃, 不会「先补 page 2 再补 page 3」。
     /// 另附带验证其它 kind 与这条链路互不影响。
     #[test]
@@ -615,7 +613,7 @@ mod tests {
         task.abort();
     }
 
-    /// G6: 从没连上过时不该报「掉线」——那会让 `App` 把「从未连接」误判成「重连中」,
+    /// 从没连上过时不该报「掉线」——那会让 `App` 把「从未连接」误判成「重连中」,
     /// 首次连上瞬间弹出不存在的「已重新连接」 toast。
     #[tokio::test]
     async fn never_connected_does_not_report_a_lost_connection() {
@@ -636,8 +634,8 @@ mod tests {
         task.abort();
     }
 
-    /// G4 回归: 直接测 `sse_loop` 内部真正喂给 `next_attempt` 的那个值, 而不只是 `next_attempt`
-    /// 这个纯函数本身 —— fix round 1 的 bug 恰恰是「纯函数本身是对的, 喂给它的区间量错了」。
+    /// 直接测 `sse_loop` 内部真正喂给 `next_attempt` 的那个值, 而不只是 `next_attempt` 这个纯函数
+    /// 本身——纯函数对了, 喂给它的区间量错了, 同样会让退避失效。
     #[tokio::test]
     async fn run_once_returns_zero_lived_duration_when_connect_fails() {
         let server = MockServer::start().await;
@@ -684,7 +682,7 @@ mod tests {
     }
 
     /// 上游卡住不响应 (mock 延迟 2s) 时, `run_once` 必须按传入的 `connect_deadline` (这里给
-    /// 200ms, 远小于生产的 10s) 及时放弃, 而不是真的等满 mock 的延迟——否则 G4b 的超时保护就是
+    /// 200ms, 远小于生产的 10s) 及时放弃, 而不是真的等满 mock 的延迟——否则建立连接的超时保护就是
     /// 摆设。外层再包一层 800ms 的 timeout 当安全网: 如果 `run_once` 真的没有遵守
     /// `connect_deadline`, 测试会在 800ms 处失败, 而不是真的挂等 2 秒。
     #[tokio::test]
@@ -712,7 +710,7 @@ mod tests {
         assert!(!ever_connected);
     }
 
-    /// Task 3: 事件流连上之后上游彻底沉默 (黑洞, 连保活都不再发), `run_once` 必须在 `idle`
+    /// 事件流连上之后上游彻底沉默 (黑洞, 连保活都不再发), `run_once` 必须在 `idle`
     /// 超时后主动放弃这一轮连接, 而不是永远卡在 `stream.next()` 里——这样上层 `sse_loop` 才能
     /// 照常退避重连, 而不是让界面永远停在「已连接」。用 `trickle_server` 只发一次保活就沉默
     /// (握住连接 10 秒模拟黑洞), 200ms 的 idle 应该远早于黑洞期结束就触发; 外层 1.5 秒的
@@ -738,7 +736,7 @@ mod tests {
         assert_eq!(rx.recv().await, Some(Action::Connected { app_version: "9.9.9-test".into() }));
     }
 
-    /// 五种就地操作 (含 P5 Task 7 的删除) 各自打对了 command、带对了 JSON 键名 (`id` / `enabled`,
+    /// 五种就地操作 (含删除) 各自打对了 command、带对了 JSON 键名 (`id` / `enabled`,
     /// 与后端 `#[tauri::command]` 的参数名同名, camelCase 下与蛇形写法一致), 并且把响应体正确包进
     /// 对应的 `MutationOutcome`。删除的真后端签名是 `AppResult<()>`, 响应体是 JSON `null`
     /// (与 `set_subscription_enabled` 同一套约定)。
@@ -840,7 +838,7 @@ mod tests {
         );
     }
 
-    /// Task 1: `spawn_mutation` 发出的 `MutationDone.barrier` 只是占位符 `0`; 真正的值由
+    /// `spawn_mutation` 发出的 `MutationDone.barrier` 只是占位符 `0`; 真正的值由
     /// `stamp_barrier` 在主循环收到这条消息那一刻补盖成当时的发起计数器值。用 wiremock 真的跑一次
     /// 变更走完 `spawn_mutation` 这条真实路径, 确认占位符是 0, 再验证 `stamp_barrier` 补盖出来的值
     /// 就是调用那一刻 `Issued` 的当前值 (即 "变更完成那一刻已经发起过的所有加载的序号")——不多不少。
@@ -875,7 +873,7 @@ mod tests {
         assert_eq!(*barrier, 3, "补盖后的 barrier 应该等于此刻发起计数器的值, 覆盖此前发起过的全部 3 次加载");
     }
 
-    /// M7: `process_action` 是主循环真正的路由——`mutations_are_never_coalesced` 只调了
+    /// `process_action` 是主循环真正的路由——`mutations_are_never_coalesced` 只调了
     /// `spawn_mutation` 本身, 哪怕以后有人手滑把 `Cmd::Mutate` 也接进 `Fetches` 的去重表, 那个测试
     /// 照样会通过, 咬不住这个回归。这里直接驱动 `process_action`:
     /// 1. 两次会各自让 `App::update` 产出 `Cmd::Fetch(Subscriptions)` 的 action → 只有一次真正的
@@ -1014,7 +1012,7 @@ mod tests {
         assert!(rx.recv().await.is_some());
     }
 
-    /// Task 4: `update_subscription` 的 patch 里 `model_slots` 整块发全 (含空 `fallback`),
+    /// `update_subscription` 的 patch 里 `model_slots` 整块发全 (含空 `fallback`),
     /// `slot_efforts` 只带非 auto 的槽位——`body_json` 精确断言请求体, 而不只是响应内容, 这是唯一
     /// 能咬住「auto 槽位漏发了 `null`」这类回归的地方。
     #[tokio::test]
@@ -1046,7 +1044,7 @@ mod tests {
         assert!(matches!(done, Action::MutationDone { result: Ok(MutationOutcome::SlotsSaved), .. }), "{done:?}");
     }
 
-    /// Task 4: `update_virtual_model` 带 `name` + `input{mode, subscription_ids}`, `mode` 用
+    /// `update_virtual_model` 带 `name` + `input{mode, subscription_ids}`, `mode` 用
     /// `as_wire()` 的线上名字 (`round_robin`, 不是 Rust 变体名 `RoundRobin`)。
     #[tokio::test]
     async fn update_virtual_model_sends_name_and_input() {
@@ -1079,7 +1077,7 @@ mod tests {
         assert!(matches!(done, Action::MutationDone { result: Ok(MutationOutcome::VirtualModelSaved), .. }), "{done:?}");
     }
 
-    /// Task 4: `Fetch::VirtualModels` 打对了 command, 把响应体正确包进 `FetchData::VirtualModels`,
+    /// `Fetch::VirtualModels` 打对了 command, 把响应体正确包进 `FetchData::VirtualModels`,
     /// 且 `mode` 按后端线上名字 (`round_robin`) 正确解析回 `RoutingMode::RoundRobin`。
     #[tokio::test]
     async fn fetch_virtual_models_reports_back() {
@@ -1113,7 +1111,7 @@ mod tests {
         assert_eq!(vms[1].subscription_ids, vec!["1".to_string()]);
     }
 
-    /// P5 Task 2: `WizardCmd::LoadProviders` 打对了 `list_providers`, 把响应体正确解析进
+    /// `WizardCmd::LoadProviders` 打对了 `list_providers`, 把响应体正确解析进
     /// `WizardResult::Providers(Ok(..))`——尤其是 `auth` 的键名 (`type`, 不是 `auth_type`) 与
     /// `Provider` 声明的字段形状对得上。
     #[tokio::test]
@@ -1170,12 +1168,11 @@ mod tests {
         assert!(providers.is_err(), "{providers:?}");
     }
 
-    /// Task 3 评审 #7: `call_mutation` 的每个分支都有 `body_json` 精确断言 (比如下面
-    /// `update_slots_sends_the_whole_patch_and_omits_auto_efforts`), `call_wizard` 里同样手写
-    /// patch 的 `SaveSlots` 分支之前却没有——`SubscriptionPatch` 全是 `Option` 且不拒绝未知键,
+    /// `call_wizard` 里手写 patch 的 `SaveSlots` 分支, 与 `call_mutation` 的每个分支一样要有
+    /// `body_json` 精确断言——`SubscriptionPatch` 全是 `Option` 且不拒绝未知键,
     /// 键名写错时后端会回 200 什么都没改, 向导显示保存成功, 订阅却停在 `(pending)`, 不会有任何测试
     /// 失败提醒。`body_json` 做结构化比对 (不是子集匹配), 精确锁住 patch 里**只有** `model_slots`
-    /// 一个键, **没有** `slot_efforts`——向导不设置思考档位 (Task 5 的裁决), 少发一个字段才不会把
+    /// 一个键, **没有** `slot_efforts`——向导不设置思考档位, 少发一个字段才不会把
     /// 已有值清掉; 如果实现手滑把 `slot_efforts` 也塞进去, 这条 mock 不匹配, 请求会退化成 404,
     /// 断言的 `Ok(())` 也就跟着失败。
     #[tokio::test]
@@ -1211,9 +1208,8 @@ mod tests {
         assert!(matches!(*result, WizardResult::SlotsSaved(Ok(()))), "{result:?}");
     }
 
-    /// Task 3 评审 #7 (顺手补上): `WizardCmd::LoadModels` 打对了 `refresh_model_list`、带对了
-    /// `{"id": id}`, 把响应体正确解析进 `WizardResult::Models { result: Ok(..), .. }`。评审 4:
-    /// 顺带确认带回去的 `id` 与发起请求时的 `id` 一致 (向导据此判断这份结果是不是自己发的那次)。
+    /// `WizardCmd::LoadModels` 打对了 `refresh_model_list`、带对了 `{"id": id}`, 把响应体正确解析进
+    /// `WizardResult::Models { result: Ok(..), .. }`, 并且带回去的 `id` 与发起请求时的 `id` 一致 (向导据此判断这份结果是不是自己发的那次)。
     #[tokio::test]
     async fn wizard_load_models_reports_back() {
         let server = MockServer::start().await;
@@ -1242,7 +1238,7 @@ mod tests {
         );
     }
 
-    /// Task 4: `Fetch::Requests` 发出的请求体精确匹配 `RequestQuery::to_args()` 文档里的例子——
+    /// `Fetch::Requests` 发出的请求体精确匹配 `RequestQuery::to_args()` 文档里的例子——
     /// `body_json` 做结构化比对 (不是子集匹配), 咬得住「漏发一个过滤键」或者「拼错大小写」这类
     /// 回归。默认查询 (无过滤) 时 `filters` 应该仍然是一个空对象, 不是被省略。
     #[tokio::test]

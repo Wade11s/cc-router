@@ -249,7 +249,7 @@ impl CustomField {
 /// 修正桌面端"校验不 trim、提交时才 trim"的不一致 (桌面端校验用原始输入, 真正发请求前才
 /// `.trim()`, 于是"Base URL 只有首尾空白"这种输入能通过校验、发请求时却变成空字符串; TUI
 /// 这里直接校验 trim 后的值, 校验通过 ⇔ 提交时真正发出去的值也合法), 与后端自己对这些字段的
-/// 校验口径一致 (评审确认: 不是 bug, 不要为了跟桌面端字面一致而改回去)。
+/// 校验口径一致。不要为了跟桌面端字面一致而改回去。
 pub fn validate_custom(d: &CustomDraft, s: &'static Strings) -> Option<(CustomField, &'static str)> {
     if d.provider_display_name.value().trim().is_empty() {
         return Some((CustomField::ProviderName, s.wiz_err_provider_name));
@@ -414,7 +414,7 @@ mod tests {
     }
 
     /// 逐条构造只违反其中一条规则的草稿, 断言 `validate_custom` 报的是那一条、不是别的——顺序
-    /// 与桌面端 `saveCustom` 一致 (简报): 厂商名 → base_url 非空 → base_url 前缀 → messages_path
+    /// 与桌面端 `saveCustom` 一致: 厂商名 → base_url 非空 → base_url 前缀 → messages_path
     /// 前缀 → gemini 的 `{model}` → API Key → 备注名 → 四个核心槽。
     #[test]
     fn validate_custom_follows_the_desktop_order() {

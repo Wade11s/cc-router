@@ -21,7 +21,7 @@ use crate::i18n::Strings;
 use crate::theme::Theme;
 
 /// `PageUp` / `PageDown` 在第一帧画出来之前没有真实的可视行数可用, 先给个不至于原地不动的默认值
-/// (仿 `pages::subscriptions::DEFAULT_PAGE_ROWS` 同款写法, Fix round G)。
+/// (仿 `pages::subscriptions::DEFAULT_PAGE_ROWS` 同款写法)。
 const DEFAULT_LIST_ROWS: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,9 +31,9 @@ pub struct PickerItem {
     pub hint: Option<String>,
 }
 
-/// 弹窗是给谁开的; 结果原样带回, 页面据此知道该把值填到哪 (Task 5/6 起消费)。
+/// 弹窗是给谁开的; 结果原样带回, 页面据此知道该把值填到哪。
 ///
-/// I5 (fix round final): 每个变体都带着"这次弹窗是为哪个实体开的" (订阅 id / 虚拟模型名)——
+/// 页面发起的变体都带着"这次弹窗是为哪个实体开的" (订阅 id / 虚拟模型名)——
 /// `PickerDone` 落地时可能已经隔了一段时间 (用户在弹窗里打字/翻页), 期间这个实体可能已经从
 /// `Store` 消失、或者 (理论上不该发生, 但防御性地) 页面的选中项变成了另一个; 页面据此判断"这次
 /// 结果还该不该应用到我当前的选中项上", 不匹配就静默忽略 (见 `pages::subscriptions::Subscriptions::applies_to`
@@ -43,32 +43,31 @@ pub enum PickerTag {
     SlotModel { sub_id: String, slot: Slot },
     SlotEffort { sub_id: String, slot: Slot },
     VmAddSubscription { vm: String },
-    /// 实时路由页 (Task 7) 按虚拟模型或订阅过滤; 日志页 (Task 8) 不复用这个变体, 用的是自己的
+    /// 实时路由页按虚拟模型或订阅过滤; 日志页不复用这个变体, 用的是自己的
     /// `LogsFilter` (见下)。
     LiveFilter,
-    /// 日志页 (Task 8) 按订阅 / 虚拟模型 / 状态过滤; 与 `LiveFilter` 分开是因为可选值的形状不同
+    /// 日志页按订阅 / 虚拟模型 / 状态过滤; 与 `LiveFilter` 分开是因为可选值的形状不同
     /// (多了状态维度)。
     LogsFilter,
-    /// 向导第一步选厂商 (P5 Task 4)。不带实体 id: 向导只有一个, 不存在"结果落地时选中项已经
+    /// 向导第一步选厂商。不带实体 id: 向导只有一个, 不存在"结果落地时选中项已经
     /// 变了"的问题 (`subscription_id()` 对它返回 `None`, 所以订阅列表刷新时不会误关它)。
     WizardProvider,
-    /// 向导第一步选接入点 (P5 Task 4)。
+    /// 向导第一步选接入点。
     WizardEndpoint,
-    /// 向导第二步给某个槽位选模型 (P5 Task 5)。与 `SlotModel` 分开: 那个带订阅 id, 用于订阅
-    /// 详情页的就地编辑 (订阅已经存在); 这个用于"还没保存过"的向导草稿, 同样不带实体 id。
-    /// **P5 Task 6 起自定义厂商单页也复用这同一个变体**——`wizard::apply_slot_choice` 按
-    /// `custom_draft` 是不是 `Some` 决定写回哪一份草稿, 两条路径互斥, 弹窗这一层不需要区分。
+    /// 向导给某个槽位选模型 (内置路径第二步与自定义单页共用)。与 `SlotModel` 分开: 那个带订阅 id,
+    /// 用于订阅详情页的就地编辑 (订阅已经存在); 这个用于「还没保存过」的向导草稿, 同样不带实体
+    /// id——向导按自己当前所在的阶段决定写回哪一份草稿, 弹窗这一层不需要区分。
     WizardSlot { slot: Slot },
-    /// 向导自定义厂商单页 (P5 Task 6): 选协议 (5 项)。不带实体 id, 理由同 `WizardProvider`。
+    /// 向导自定义厂商单页: 选协议 (5 项)。不带实体 id, 理由同 `WizardProvider`。
     WizardProtocol,
-    /// 向导自定义厂商单页 (P5 Task 6): 只有 Anthropic 未锁定鉴权头时才会打开, 在
+    /// 向导自定义厂商单页: 只有 Anthropic 未锁定鉴权头时才会打开, 在
     /// `ANTHROPIC_AUTH_PRESETS` 两项里选。
     WizardAuth,
 }
 
 impl PickerTag {
-    /// 这个弹窗是为哪条订阅开的; 与订阅无关的 (`VmAddSubscription`, 以及 Task 7/8 加的过滤弹窗)
-    /// → `None`。Task 5: `App` 据此判断一个已经打开的选择器是否该在它所属的订阅消失时自动关掉——
+    /// 这个弹窗是为哪条订阅开的; 与订阅无关的 (`VmAddSubscription`、过滤弹窗、向导的弹窗)
+    /// → `None`。`App` 据此判断一个已经打开的选择器是否该在它所属的订阅消失时自动关掉——
     /// 不依赖任何页面主动发出通知 (弹窗打开之后、用户还没在里面选任何值之前, 页面自己压根没有
     /// 草稿, 不会触发那类通知)。
     pub fn subscription_id(&self) -> Option<&str> {
@@ -92,9 +91,9 @@ pub struct PickerSpec {
     pub title: String,
     pub items: Vec<PickerItem>,
     pub allow_custom: bool,
-    /// I2(a) (fix round final): 只用来定位打开时的初始选中行 (`id == initial` 的那一项, 没有就
-    /// 第一行)——**不再预填进输入框**, 不参与过滤, 也不会让"使用「…」"自定义行在打开那一刻就出现
-    /// (旧版会把它塞进输入框, 用户第一次打字变成"追加在预填值后面", 见 I2 的问题描述)。
+    /// 只用来定位打开时的初始选中行 (`id == initial` 的那一项, 没有就第一行)——**不预填进输入框**,
+    /// 不参与过滤, 也不会让「使用「…」」自定义行在打开那一刻就出现 (预填的话, 用户第一次打字会变成
+    /// 「追加在预填值后面」)。
     pub initial: String,
 }
 
@@ -118,15 +117,14 @@ pub struct PickerState {
     selected: usize,
     list_state: ListState,
     /// 上一帧列表区域的可视行数, `PageUp`/`PageDown` 按这个翻页; 第一帧画出来之前用
-    /// `DEFAULT_LIST_ROWS` 兜底 (Fix round G, 不再是猜的固定步长)。
+    /// `DEFAULT_LIST_ROWS` 兜底。
     last_list_rows: usize,
 }
 
 // `tui_input::Input` 不实现 `PartialEq` (它的内部还有 yank 缓冲等实现细节, 不适合参与相等比较),
 // 所以不能整体 `#[derive(PartialEq)]`——按「逻辑上是同一个状态」手写: 规格、输入框的文本与光标
 // 位置、选中下标。`list_state` (滚动偏移缓存) 与 `last_list_rows` (上一帧量出来的几何) 都不参与
-// 相等判断, 跟 `Fx` / `TableState` 同一条道理: 不是业务状态。I2(a) (fix round final) 起输入框不再
-// 预填 `initial`, "是否编辑过" (旧版的 `dirty` 字段) 不再影响过滤, 从相等比较里一并去掉。
+// 相等判断, 跟 `Fx` / `TableState` 同一条道理: 不是业务状态。
 impl PartialEq for PickerState {
     fn eq(&self, other: &Self) -> bool {
         self.spec == other.spec
@@ -137,15 +135,14 @@ impl PartialEq for PickerState {
 }
 
 impl PickerState {
-    /// 这次弹窗是为哪个实体开的 (Task 5 起供 `App` 在订阅列表刷新后核对是否该自动关闭)。
+    /// 这次弹窗是为哪个实体开的 (供 `App` 在订阅列表刷新后核对是否该自动关闭)。
     pub fn tag(&self) -> &PickerTag {
         &self.spec.tag
     }
 
     pub fn new(spec: PickerSpec) -> Self {
-        // I2(a) (fix round final): 输入框不再预填 `initial`——旧版预填之后用户第一次打字会变成
-        // "追加在预填值后面" (I2 的问题描述: 输入 "glm" 实际变成 "dglm"); `initial` 现在只用来
-        // 定位下面的初始选中行。
+        // 输入框不预填 `initial`——预填的话用户第一次打字会变成「追加在预填值后面」(输入 "glm"
+        // 实际变成 "dglm"); `initial` 只用来定位下面的初始选中行。
         let input = Input::default();
         let mut state = Self { spec, input, selected: 0, list_state: ListState::default(), last_list_rows: DEFAULT_LIST_ROWS };
         let rows = state.visible();
@@ -159,12 +156,10 @@ impl PickerState {
     /// 当前过滤后的可见行。纯函数, 供测试与 `draw` 共用。
     ///
     /// 过滤规则: 输入按空白拆成多个词 (大小写不敏感), 每个词都要是某一项 `label` 或 `id` 的子串
-    /// 才算命中——输入框起初是空的 (见 [`PickerState::new`]), 空查询天然显示全部, 不再需要额外的
-    /// "还没编辑过就忽略当前文本" 特殊处理。
+    /// 才算命中——输入框起初是空的 (见 [`PickerState::new`]), 空查询天然显示全部。
     ///
-    /// I2(b) (fix round final): 顺序是**匹配的 item 在前, 「使用输入的文本」这一行 (`allow_custom`
-    /// 时) 排在最后**——旧版把自定义行置顶, 过滤后按 `⏎` 默认选中它而不是排在后面的真实匹配项,
-    /// 是 I2 报告的根因。自定义行只在 `allow_custom` 为真、输入非空白、且不精确等于某个 item 的
+    /// 顺序是**匹配的 item 在前, 「使用输入的文本」这一行 (`allow_custom` 时) 排在最后**——自定义行
+    /// 置顶的话, 过滤后按 `⏎` 默认选中的是它而不是真实匹配项。自定义行只在 `allow_custom` 为真、输入非空白、且不精确等于某个 item 的
     /// id 时才出现, 与是否编辑过输入框无关。
     pub fn visible(&self) -> Vec<PickerRow> {
         let query = self.input.value();
@@ -236,9 +231,8 @@ impl PickerState {
             KeyCode::Esc => Some(Action::ClosePopup),
             _ => {
                 if self.input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
-                    // I2(c): 过滤结果变了, 选中下标回到第一行 (现在是第一个匹配的 item, 或者没有
-                    // 匹配时是排在最后、此刻也是唯一一行的自定义行)——不再停在旧下标上 (可能已经
-                    // 指向别的项目甚至越界)。
+                    // 过滤结果变了, 选中下标回到第一行 (第一个匹配的 item, 或者没有匹配时是排在
+                    // 最后、此刻也是唯一一行的自定义行)——停在原下标上可能已经指向别的项目甚至越界。
                     self.selected = 0;
                 }
                 None
@@ -294,18 +288,18 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut PickerState, theme: &Them
         .title_bottom(Line::from(format!(" {current}/{total} ")).right_aligned().style(theme.muted_style()))
         .padding(Padding::new(1, 1, 1, 1));
     let inner = block.inner(area);
-    // Fix round A: `Clear` 本身修不好紧贴弹窗边缘、横跨边界的宽字符, 必须在弹窗画任何内容之前
+    // `Clear` 本身修不好紧贴弹窗边缘、横跨边界的宽字符, 必须在弹窗画任何内容之前
     // (含 `Clear` 自己) 先跑一遍 `clear_popup_area` 里的修复——它内部才会真的调 `Clear`。
     crate::widgets::clear_popup_area(frame, area);
     frame.render_widget(block, area);
 
     let [input_area, list_area] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
-    // Fix round G: 记录这一帧真实画出来的可视行数, 供 `PageUp`/`PageDown` 下次按键时使用——
+    // 记录这一帧真实画出来的可视行数, 供 `PageUp`/`PageDown` 下次按键时使用——
     // 只是记几何, 不改业务状态, 符合「同一状态画两次得到同一帧」的约束 (仿
     // `pages::subscriptions::Subscriptions::last_page_rows` 同款写法)。
     state.last_list_rows = list_area.height.max(1) as usize;
 
-    // Fix round F: 留一列给光标——用输入框可视宽度减 1 去算 `visual_scroll`, 否则文本正好填满
+    // 留一列给光标——用输入框可视宽度减 1 去算 `visual_scroll`, 否则文本正好填满
     // 输入框时光标会画在最后一个字符上面 (盖住它), 而不是紧跟在它后面的空位。
     let visual_width = input_area.width.max(1).saturating_sub(1) as usize;
     let scroll = state.input.visual_scroll(visual_width);
@@ -314,7 +308,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut PickerState, theme: &Them
     frame.set_cursor_position((cursor_x.min(input_area.right().saturating_sub(1)), input_area.y));
 
     if rows.is_empty() {
-        // I2(d): 允许自定义、还没打过字 (trim 之后是空) 时没有 "使用「…」" 行可看 (它要求非空白),
+        // 允许自定义、还没打过字 (trim 之后是空) 时没有 "使用「…」" 行可看 (它要求非空白),
         // 也没有任何候选——引导用户打字后按 ⏎ 直接用输入的文本, 而不是笼统的 "没有匹配项"
         // (`picker_empty` 留给 "确实有候选但过滤不出结果" / "不允许自定义" 这两种场景)。
         let text = if state.spec.allow_custom && state.input.value().trim().is_empty() { s.picker_type_to_enter } else { s.picker_empty };
@@ -400,16 +394,15 @@ mod tests {
         type_str(&mut exact, "a");
         assert!(!exact.visible().iter().any(|r| matches!(r, PickerRow::UseTyped(_))), "精确匹配 id 时不出现");
 
-        // I2(b) (fix round final): 非空且不精确匹配时应该出现, 但排在**最后**一行 (旧版置顶,
-        // 正是 I2 报告的根因: 过滤后按 ⏎ 默认选中它而不是后面的真实匹配项)。
+        // 非空且不精确匹配时应该出现, 但排在**最后**一行 (置顶的话过滤后按 ⏎ 默认选中的是它而不是
+        // 后面的真实匹配项)。
         let mut custom = PickerState::new(spec(items, true, ""));
         type_str(&mut custom, "zzz");
         assert_eq!(custom.visible().last(), Some(&PickerRow::UseTyped("zzz".into())), "非空且不精确匹配时应该置底");
     }
 
-    /// I2(a) (fix round final): `initial` 只用来定位打开时的选中行, 不再预填进输入框——`initial`
-    /// 本身是不是某个 item 的 id, 都不该在打开那一刻就冒出一行 "使用「…」" (旧版会, 因为输入框被
-    /// 预填成了 `initial`)。
+    /// `initial` 只用来定位打开时的选中行, 不预填进输入框——`initial` 本身是不是某个 item 的 id,
+    /// 都不该在打开那一刻就冒出一行 "使用「…」"。
     #[test]
     fn initial_never_shows_a_custom_row_or_prefills_the_input() {
         let items = vec![item("a", "Alpha")];
@@ -425,7 +418,7 @@ mod tests {
         );
     }
 
-    /// I2: 过滤后按 ⏎ 应该选中第一个真正匹配的 item, 不是 (旧版会) 排在最前面的自定义文本行。
+    /// 过滤后按 ⏎ 应该选中第一个真正匹配的 item, 不是自定义文本行。
     #[test]
     fn filter_then_enter_picks_the_first_match() {
         let items = vec![item("glm-4.6", "GLM 4.6 主力"), item("glm-4.5-air", "GLM 4.5 Air"), item("gpt-4o", "GPT-4o")];
@@ -441,7 +434,7 @@ mod tests {
         );
     }
 
-    /// I2(b): 自定义行排在匹配项的最后面, 只有在没有任何匹配项时才会被选中 (它此时是唯一一行)。
+    /// 自定义行排在匹配项的最后面, 只有在没有任何匹配项时才会被选中 (它此时是唯一一行)。
     #[test]
     fn custom_row_is_last_and_selected_only_when_nothing_matches() {
         let items = vec![item("glm-4.6", "GLM 4.6 主力"), item("glm-4.5-air", "GLM 4.5 Air")];
@@ -566,7 +559,7 @@ mod tests {
         assert_eq!((tiny.width, tiny.height), (36, 16), "宽度应该夹到 screen-4");
     }
 
-    /// Fix round D: `area()` 用的是 `.min()` 不是 `.clamp()`, 天生不会因为屏幕比 `SCREEN_MARGIN`
+    /// `area()` 用的是 `.min()` 不是 `.clamp()`, 天生不会因为屏幕比 `SCREEN_MARGIN`
     /// 还小而 panic (`saturating_sub` 兜底), 但补一条回归测试锁住这个事实——万一以后有人手滑把
     /// `.min()` 改成 `.clamp(下限, ...)`, 这里会立刻炸。
     #[test]
@@ -595,7 +588,7 @@ mod tests {
             .unwrap();
     }
 
-    /// Fix round F: 文本正好填满输入框可视宽度时, 光标应该落在最后一个字符之后的空位 (一个空格),
+    /// 文本正好填满输入框可视宽度时, 光标应该落在最后一个字符之后的空位 (一个空格),
     /// 不能盖在字符本身上面。用一个好辨认的收尾字符 'Z', 直接检查光标那一格画出来的符号是不是空格
     /// ——只看光标坐标本身在修复前后可能是同一个数字 (被 clamp 到同一列), 咬不住这个回归。
     #[test]
@@ -605,7 +598,7 @@ mod tests {
 
         let items = vec![item("a", "Alpha")];
         let mut state = PickerState::new(spec(items, false, ""));
-        // 60 列弹窗 - 2 边框 - 2 padding = 56 列输入框; 填 56 个字符正好撑满"旧版不预留光标列"的
+        // 60 列弹窗 - 2 边框 - 2 padding = 56 列输入框; 填 56 个字符正好撑满「不预留光标列」时的
         // 宽度, 最后一个字符用 'Z' 收尾, 方便识别它有没有被光标盖住。
         type_str(&mut state, &"a".repeat(55));
         state.handle_key(key(KeyCode::Char('Z')));
@@ -621,8 +614,7 @@ mod tests {
         assert_eq!(at_cursor, " ", "光标应该落在 'Z' 之后的空位, 不是盖在 'Z' 上面 (实际那一格是 {at_cursor:?})");
     }
 
-    /// Fix round G: 画过一帧之后, `PageUp`/`PageDown` 应该按真实量出来的可视行数翻页, 不再是
-    /// 猜的固定步长。
+    /// 画过一帧之后, `PageUp`/`PageDown` 应该按真实量出来的可视行数翻页, 不是猜的固定步长。
     #[test]
     fn page_step_follows_the_last_drawn_list_height() {
         use ratatui::backend::TestBackend;

@@ -55,22 +55,22 @@ pub struct Strings {
     pub key_test: &'static str,
     pub key_models: &'static str,
     pub key_balance: &'static str,
-    /// Task 5: 订阅详情里改当前槽位的模型 (⏎) / 思考档位 (o) / 保存草稿 (s)。
+    /// 订阅详情里改当前槽位的模型 (⏎) / 思考档位 (o) / 保存草稿 (s)。
     pub key_edit_model: &'static str,
     pub key_edit_effort: &'static str,
     pub key_save: &'static str,
-    /// M6 (fix round final): 脏页面上 `Esc` 的 hint 文案 ("放弃"), 与 `key_back` ("返回", 不脏时
+    /// 脏页面上 `Esc` 的 hint 文案 ("放弃"), 与 `key_back` ("返回", 不脏时
     /// 用) 区分开——同一个键在脏/不脏两种状态下的语义不同, 底栏提示也该跟着换。
     pub key_discard: &'static str,
-    /// Task 6: 虚拟模型页——成员列表里 `J`/`K` 重排序、`a` 加入、`x` 移除。
+    /// 虚拟模型页——成员列表里 `J`/`K` 重排序、`a` 加入、`x` 移除。
     pub key_move: &'static str,
     pub key_add: &'static str,
     pub key_remove: &'static str,
     pub key_mode: &'static str,
-    /// M6 (fix round final): 虚拟模型页 Models 焦点下 `⏎` 的 hint 文案 ("成员")——比旧的
-    /// `key_detail` ("详情") 更准确地描述这个键的作用 (进入这个虚拟模型的订阅成员列表)。
+    /// 虚拟模型页 Models 焦点下 `⏎` 的 hint 文案 ("成员")——比 `key_detail` ("详情") 更准确地
+    /// 描述这个键的作用 (进入这个虚拟模型的订阅成员列表)。
     pub key_members: &'static str,
-    /// P5 Task 7 起订阅页 `n` 的 hint 文案 ("新建")。
+    /// 订阅页 `n` 的 hint 文案 ("新建")。
     pub key_new: &'static str,
     /// 向导底栏右侧固定提示 ("取消"); 弹窗的取消统一用 `key_close` ("关闭"), 向导用这个不同的词是
     /// 因为向导按 Esc 退出会放弃已经填的内容, 语气上更接近「取消这次新建」。
@@ -89,22 +89,22 @@ pub struct Strings {
     /// 过滤选择弹窗里「使用当前输入」那一行的文案, 参数是输入框里 (trim 过的) 文本。
     pub picker_use_typed: fn(text: &str) -> String,
     /// 过滤后没有任何匹配项时列表区显示的占位文案 (且 `allow_custom` 为 false, 或者输入框非空但
-    /// 没有匹配——I2(d) 起 "零匹配 + 空输入 + 允许自定义" 这种情况改用 [`Strings::picker_type_to_enter`])。
+    /// 没有匹配; "零匹配 + 空输入 + 允许自定义" 这种情况用 [`Strings::picker_type_to_enter`])。
     pub picker_empty: &'static str,
-    /// I2(d): `allow_custom` 且输入框为空 (trim 之后) 且没有任何候选项时的占位文案——引导用户
+    /// `allow_custom` 且输入框为空 (trim 之后) 且没有任何候选项时的占位文案——引导用户
     /// 打字后回车直接用输入的文本, 与 `picker_empty` ("没有匹配项", 用于确实存在候选但过滤不出
     /// 结果、或者压根不允许自定义的场景) 区分开。
     pub picker_type_to_enter: &'static str,
     /// 过滤选择弹窗底部的键位提示。
     pub picker_keys: &'static str,
-    /// Task 5: 改模型 / 改思考档位两个 picker 的标题, 参数是槽位显示名 (四个主槽的英文原名, 或
+    /// 改模型 / 改思考档位两个 picker 的标题, 参数是槽位显示名 (四个主槽的英文原名, 或
     /// [`Strings::sub_slot_fallback`])。
     pub pick_model_title: fn(slot: &str) -> String,
     pub pick_effort_title: fn(slot: &str) -> String,
     /// 兜底槽模型 picker 里置顶的「清空」选项 (对应 `id: ""`)。
     pub pick_clear_fallback: &'static str,
 
-    /// 只读详情弹窗 (`Popup::Detail`, Task 1; Task 8 起被请求日志详情页使用) 底部的键位提示。
+    /// 只读详情弹窗 (`Popup::Detail`, 请求日志详情用) 底部的键位提示。
     pub detail_keys: &'static str,
 
     pub too_small: &'static str,
@@ -188,12 +188,12 @@ pub struct Strings {
     pub sub_busy_testing: &'static str,
     pub sub_busy_models: &'static str,
     pub sub_busy_balance: &'static str,
-    /// `Mutation::UpdateSlots` (Task 5 起从订阅详情页发起) 的进行中文案; 与四个既有就地操作用同一套
+    /// `Mutation::UpdateSlots` (订阅详情页发起) 的进行中文案; 与四个既有就地操作用同一套
     /// 「状态行后追加 busy 文案」机制。
     pub sub_busy_saving: &'static str,
-    /// `Mutation::Delete` (P5 Task 7) 的进行中文案, 同一套机制。
+    /// `Mutation::Delete` 的进行中文案, 同一套机制。
     pub sub_busy_deleting: &'static str,
-    /// Task 5: 草稿里跟 `Store` 当前值不同的槽位行末尾追加的 muted 提示。
+    /// 草稿里跟 `Store` 当前值不同的槽位行末尾追加的 muted 提示。
     pub sub_slot_modified: &'static str,
     /// 有草稿时按 e/t/m/b 的拒绝提示 (避免重拉覆盖编辑基线)。
     pub sub_save_first: &'static str,
@@ -204,12 +204,11 @@ pub struct Strings {
     pub sub_model_required: &'static str,
     /// 草稿对应的订阅从 `Store` 消失 (被别处删除) 时的提示。
     pub sub_gone: &'static str,
-    /// I1/M5 (fix round final): 这条订阅 (虚拟模型同理) 正有一次保存在飞行中时, 拒绝任何会修改
-    /// 草稿的按键 (含再按一次 `s`) 时的提示——避免飞行中的编辑被落地的保存结果悄悄冲掉 (D1 的
-    /// 姊妹问题: D1 保证了草稿不会被冲掉, 但没有在编辑发生的那一刻就告诉用户"现在编辑不安全")。
+    /// 这条订阅 (虚拟模型同理) 正有一次保存在飞行中时, 拒绝任何会修改草稿的按键 (含再按一次 `s`)
+    /// 时的提示——避免飞行中的编辑被落地的保存结果悄悄冲掉, 并在编辑发生的那一刻就告诉用户。
     pub saving_in_progress: &'static str,
 
-    // ---------- P5 Task 7: 删除订阅 ----------
+    // ---------- 删除订阅 ----------
     /// 删除确认弹窗的正文, 参数是订阅备注名; `referenced_by` 为空时单行只有这一句。
     pub sub_confirm_delete: fn(name: &str) -> String,
     /// `referenced_by` 非空时追加的第二行, 参数是引用它的虚拟模型个数。
@@ -217,12 +216,12 @@ pub struct Strings {
     /// 引用方超过 4 个时, 第三行 (虚拟模型名列表) 只列前 4 个, 再接这句, 参数是剩余个数
     /// (总数减 4, 不是总数本身)。
     pub sub_delete_refs_more: fn(n: usize) -> String,
-    /// 删除确认弹窗第三行 (虚拟模型名列表) 的分隔符——刻意与详情面板「被引用」字段的 `", "`
-    /// (那处是既有代码, 不在这次改动范围内) 分开, 各自独立配置。
+    /// 删除确认弹窗第三行 (虚拟模型名列表) 的分隔符——与详情面板「被引用」字段的 `", "` 各自
+    /// 独立配置。
     pub list_sep: &'static str,
     pub toast_deleted: fn(name: &str) -> String,
 
-    // ---------- Task 6: 虚拟模型页 ----------
+    // ---------- 虚拟模型页 ----------
     pub vm_title: &'static str,
     /// `RoutingMode` 的四个短名 (列表列用), 通过 [`Strings::vm_mode_short`] 取。
     pub vm_mode_seq: &'static str,
@@ -244,7 +243,7 @@ pub struct Strings {
     pub vm_will_skip: &'static str,
     /// `a` 键在没有可加入的订阅时的提示 (就地回答, 不开弹窗)。
     pub vm_nothing_to_add: &'static str,
-    /// V2 (fix round P3b): 草稿里还有 `Store` 找不到的 id (「已删除」的订阅) 时, `s` 拒绝保存的
+    /// 草稿里还有 `Store` 找不到的 id (「已删除」的订阅) 时, `s` 拒绝保存的
     /// 提示——不能把这种裸 id 发给后端, 后端会用一句英文报错拒绝, 对用户毫无意义。
     pub vm_remove_ghosts_first: &'static str,
     /// `a` 弹窗的标题, 参数是虚拟模型名。
@@ -253,13 +252,13 @@ pub struct Strings {
     /// 拒绝保存的提示——`Unknown.as_wire()` 会静默降级成 `"sequential"`, 不能让用户在不知情的
     /// 情况下把它发回后端。
     pub vm_unknown_mode: &'static str,
-    /// I4 (fix round final): 订阅列表还没加载完 (或一直加载失败) 时, `a`/`x`/`J`/`K`/`s` 的拒绝
+    /// 订阅列表还没加载完 (或一直加载失败) 时, `a`/`x`/`J`/`K`/`s` 的拒绝
     /// 提示——这段时间不能断定成员列表里找不到的 id 到底是"已删除"还是"只是还没拉到", 所以不
     /// 显示 `vm_missing`、也不允许这几个会依赖订阅列表的编辑操作。
     pub vm_subs_not_loaded: &'static str,
     pub vm_help_rows: &'static [(&'static str, &'static str)],
 
-    // ---------- Task 7: 实时路由页 ----------
+    // ---------- 实时路由页 ----------
     pub live_spark_title: &'static str,
     pub live_spark_total: fn(n: u64) -> String,
     pub live_title: &'static str,
@@ -278,7 +277,7 @@ pub struct Strings {
     pub live_interrupted: &'static str,
     pub live_filter_title: &'static str,
     pub live_filter_all: &'static str,
-    /// 当前过滤的摘要, 参数是过滤条件的显示名。日志页 (Task 8) 共用。
+    /// 当前过滤的摘要, 参数是过滤条件的显示名。日志页共用。
     pub filter_summary: fn(what: &str) -> String,
     pub filter_dim_vm: &'static str,
     pub filter_dim_sub: &'static str,
@@ -292,7 +291,7 @@ pub struct Strings {
     pub key_clear_filter: &'static str,
     pub live_help_rows: &'static [(&'static str, &'static str)],
 
-    // ---------- Task 8: 请求日志页 ----------
+    // ---------- 请求日志页 ----------
     pub lg_title: &'static str,
     pub lg_col_time: &'static str,
     pub lg_col_status: &'static str,
@@ -358,12 +357,12 @@ pub struct Strings {
     pub lg_d_truncated: &'static str,
     pub lg_d_unnamed: &'static str,
 
-    // ---------- P5 Task 2: 新建订阅向导 (骨架; Task 4 起补表单文案) ----------
+    // ---------- 新建订阅向导 ----------
     pub wiz_title: &'static str,
     pub wiz_loading_providers: &'static str,
     pub wiz_load_failed: fn(reason: &str) -> String,
 
-    // ---------- P5 Task 4: 向导第一步 (内置厂商: 选厂商 / 选接入点 / API Key / 备注名) ----------
+    // ---------- 向导第一步 (内置厂商: 选厂商 / 选接入点 / API Key / 备注名) ----------
     /// 步骤条的两段文案 (含序号), `form::FormView::steps` 直接用。
     pub wiz_steps: [&'static str; 2],
     pub wiz_f_provider: &'static str,
@@ -385,23 +384,20 @@ pub struct Strings {
     pub wiz_err_display_name: &'static str,
     pub wiz_err_provider: &'static str,
     pub wiz_err_endpoint: &'static str,
-    /// `Stage::Creating` 时表单的按钮文案 (busy 态)。
+    /// 创建请求在飞时 (两条路径) 按钮的文案 (busy 态)。
     pub wiz_creating: &'static str,
-    /// `create_subscription` 成功后的 notice 文案 (Task 4 临时关掉向导时用; Task 5 换成"接着拉
-    /// 模型列表"之后这条文案挪到保存槽位成功那一刻, 但字段本身继续用)。
+    /// 向导完成时的 toast: 内置路径在保存槽位成功时弹, 自定义路径在创建成功时弹。
     pub wiz_created: fn(name: &str) -> String,
     /// `create_subscription` 失败时挂在表单顶部的说明行 (`FormRow::Note`)。
     pub wiz_create_failed: fn(reason: &str) -> String,
 
-    // ---------- P5 Task 5: 向导第二步 (绑定模型) ----------
-    /// `Stage::Creating` 里 `Created(Ok)` 落地后、`Models` 结果回来之前的按钮文案 (仍然是
-    /// `Stage::Creating`, 只是文案从 `wiz_creating` 换过来——订阅其实已经建好了, 只是还在等模型
-    /// 候选)。
+    // ---------- 向导第二步 (绑定模型) ----------
+    /// 订阅已经建好、在等候选模型列表时第一步按钮的文案 (busy 态)。
     pub wiz_loading_models: &'static str,
     /// `update_subscription` (只带 `model_slots` 的 patch) 失败时挂在表单顶部的说明行, 与
-    /// `wiz_models_manual` 共用同一个 `SlotsDraft::note` 字段, 谁最后发生谁的文案盖住。
+    /// `wiz_models_manual` 共用同一个位置, 谁最后发生显示谁。
     pub wiz_save_failed: fn(reason: &str) -> String,
-    /// `refresh_model_list` 返回 `ManualFallback` (或整个请求失败) 时挂在表单顶部的说明行, 参数
+    /// 拉模型列表 / 探测模型返回 `ManualFallback` (或整个请求失败) 时挂在表单顶部的说明行, 参数
     /// 是后端给的原因。
     pub wiz_models_manual: fn(reason: &str) -> String,
     /// 槽位行 `⏎` 打开的模型 picker 标题, 参数是槽位显示名 (与 `pick_model_title` 同参数形状但
@@ -411,13 +407,13 @@ pub struct Strings {
     pub wiz_btn_save: &'static str,
     /// 四个核心槽位任一为空时的校验错误 (兜底槽不参与)。
     pub wiz_err_slot: &'static str,
-    /// `Stage::Slots` 下 `Esc` 的确认文案: 订阅已经建好了 (不是 `confirm_discard` 那种"放弃未保存
+    /// 订阅已经建好之后 `Esc` 的确认文案: 订阅已经建好了 (不是 `confirm_discard` 那种"放弃未保存
     /// 的编辑", 而是"这条订阅会带着 (pending) 槽位留在后端")。
     pub wiz_confirm_exit_pending: &'static str,
-    /// `Stage::Saving` 的按钮文案 (busy 态)。
+    /// 保存槽位在飞时的按钮文案 (busy 态)。
     pub wiz_saving: &'static str,
 
-    // ---------- P5 Task 6: 向导自定义厂商单页 (协议 / Base URL / 鉴权 / 探测) ----------
+    // ---------- 向导自定义厂商单页 (协议 / Base URL / 鉴权 / 探测) ----------
     pub wiz_custom_title: &'static str,
     pub wiz_f_protocol: &'static str,
     pub wiz_f_provider_name: &'static str,
@@ -438,20 +434,18 @@ pub struct Strings {
     pub wiz_err_messages_path: &'static str,
     /// 只有 `Gemini` (不含 `GeminiInteractions`) 要求请求路径含 `{model}`。
     pub wiz_err_gemini_placeholder: &'static str,
-    /// `Stage::Probing` 的按钮文案 (busy 态)。
+    /// 探测在飞时「获取模型列表」按钮的文案 (busy 态)。
     pub wiz_probing: &'static str,
     /// 自定义表单「协议」字段行自己的展示名 (顺序同 `CustomProtocol::ALL`)——**独立于**
-    /// `wiz_custom_labels`(那份带 `自定义 · ` 前缀, 给厂商 picker 用), 不是从它派生出来的
-    /// (评审 3: 不能靠剥字符串前缀算, 两份译文各自独立维护)。
+    /// `wiz_custom_labels`(那份带 `自定义 · ` 前缀, 给厂商 picker 用), 不是从它派生出来的——
+    /// 剥前缀在翻译或改文案后会静默失效, 两份译文各自独立维护。
     pub wiz_protocol_names: [&'static str; 5],
 
     /// 向导表单底栏: `↑↓` 在字段间移动。
     pub key_field: &'static str,
     /// 向导表单底栏 / 选择行右端 hint: `⏎` 打开选择弹窗。
     pub key_pick: &'static str,
-    /// 向导表单底栏: 焦点在文本行 (`ApiKey`/`DisplayName`) 时 `⏎` 的说明 (移到下一项, 不是提交)。
-    /// 评审 I2: 底栏之前写死三条固定提示, 文本行上 `⏎` 实际是"下一项"却显示成"选择", 需要单独
-    /// 一个字段区分开。
+    /// 向导表单底栏: 焦点在文本行时 `⏎` 的说明 (移到下一项, 不是提交, 也不是选择)。
     pub key_next_field: &'static str,
     /// 向导表单底栏 / API Key 行右端 hint: `Ctrl+R` 切换明文/掩码。
     pub key_reveal: &'static str,

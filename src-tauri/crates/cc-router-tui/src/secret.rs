@@ -66,30 +66,21 @@ mod tests {
     /// 的写法: 遍历 `src/` 下的 `.rs`, 凡是出现 `expose(` 的文件名必须在白名单里——防止有人在
     /// 表单渲染 / 日志 / 别的随手一个地方直接读明文。白名单两个成员见各自的注释。
     ///
-    /// Review round 1 的两处修正:
-    /// - `p.strip_prefix(&src)` 产出的是**相对 `src/` 的路径**, 与后端 `runtime_file.rs` 白名单
-    ///   写 `"proxy/server.rs"` 这种带目录的形式同一套规则——`dto.rs` 真实路径是
-    ///   `src/client/dto.rs`, 白名单必须写 `"client/dto.rs"`, 不能只写文件名 (原来的
-    ///   `"dto.rs"` 是个死条目, 永远不命中, Task 3 一往 `client/dto.rs` 里写 `.expose()` 就会被
-    ///   误判成「出现在白名单之外」)。
-    /// - 匹配串从 `.expose(` 放宽成 `expose(`: 前者只认得到方法调用语法 `x.expose()`, UFCS 写法
-    ///   `Secret::expose(&x)` 不含 `.` 会被绕过。放宽后会多抓到本文件自己的定义/文档, 但白名单本来
-    ///   就含 `secret.rs`, 无妨。
-    ///
-    /// Task 3 评审 #8: `runtime.rs` 曾经也在这张白名单里 (当初是「留给将来」占的位), 但
-    /// `call_wizard`/`call_mutation` 实际调的是 `to_args()`, 一个 `expose(` 都没有——它又恰好是
-    /// 「最容易不小心把明文拼进某条错误文本 / 日志」的地方, 所以从白名单里去掉: 谁真的要在这个文件
-    /// 里读明文, 得先说明白为什么, 而不是顺着一个「留着也无妨」的旧条目继续写下去。
-    ///
-    /// 另外加一条「白名单成员必须真的存在于 `src/` 下」的断言, 防止以后再出现同类死条目。
+    /// - 白名单写**相对 `src/` 的路径** (`"client/dto.rs"`, 不是只写文件名), 与后端
+    ///   `runtime_file.rs` 白名单写 `"proxy/server.rs"` 同一套规则; 只写文件名的条目永远不命中。
+    /// - 匹配串是 `expose(` 而不是 `.expose(`: 后者认不出 UFCS 写法 `Secret::expose(&x)`。这样会
+    ///   多抓到本文件自己的定义 / 文档, 但白名单本来就含 `secret.rs`。
+    /// - `runtime.rs` **刻意不在**白名单里: `call_wizard` / `call_mutation` 调的是 `to_args()`, 自己
+    ///   不读明文, 而它恰好是最容易不小心把明文拼进错误文本 / 日志的地方。
+    /// - 白名单成员必须真的存在于 `src/` 下, 防止死条目。
     #[test]
     fn expose_is_only_called_in_allowlisted_files() {
         const EXPOSE_ALLOWLIST: [&str; 3] = [
             "secret.rs",     // 定义处与它自己的测试
-            "client/dto.rs", // `CreateInput::to_args()` / `ProbeInput::to_args()`, 唯一把它变成线上 JSON 的地方 (Task 3)
-            // `SecretField::display()`: 向导 API Key 行 `Ctrl+R` 就地切换明文/掩码显示 (P5 Task 4 起;
-            // 7R-a 随文本字段类型从 `wizard/fields.rs` 挪到这里)。`SecretField` 的输入框私有, 明文
-            // 在这个文件之外只能经 `secret()` → `expose()` 拿到, 所以这个文件是向导里唯一读明文的地方。
+            "client/dto.rs", // `CreateInput::to_args()` / `ProbeInput::to_args()`, 唯一把它变成线上 JSON 的地方
+            // `SecretField::display()`: 向导 API Key 行 `Ctrl+R` 就地切换明文 / 掩码显示。`SecretField`
+            // 的输入框私有, 明文在这个文件之外只能经 `secret()` → `expose()` 拿到, 所以这个文件是向导里
+            // 唯一读明文的地方。
             "wizard/text.rs",
         ];
 
@@ -117,7 +108,7 @@ mod tests {
             .iter()
             .filter(|p| {
                 // 读不了源码文件说明这条扫描规则没有真正覆盖全部文件——宁可 panic 也不要把它当
-                // 「没有 expose(」悄悄放过 (fail-closed, Review round 1)。
+                // 「没有 expose(」悄悄放过 (fail-closed)。
                 let text = std::fs::read_to_string(p).unwrap_or_else(|e| panic!("读取 {p:?} 失败: {e}"));
                 text.contains("expose(")
             })
