@@ -104,10 +104,18 @@ pub struct FormView<'a> {
 }
 
 /// 画在 `area` 里: `Block::bordered()` + `BorderType::Rounded`, `title_top` 左边是 `title`、
-/// 右边是步骤条, `Padding::new(2, 2, 1, 1)`。内容超过可视高度时从顶部往下画, 放不下的那些整体
-/// 截断, 在最后一行画 `s.form_more`——表单不做滚动。
+/// 右边是步骤条, `Padding::new(2, 2, 1, 1)`。**内容超过可视高度时按焦点行滚动**(评审 2, P5
+/// Task 6 收尾修的——旧版永远从头画到满就截断, 焦点行(含它下面的错误行)完全可能被截在看不见的
+/// 地方, 自定义表单 14 行内容在 80×24 下实测就会撞到: 内容区可用高度只有 16 行, 带一条会折成
+/// 2 行的说明时总高度 17 行, `Created(Err)` 落地时焦点常常停在最后一行的「创建」按钮上——旧算法
+/// 会把这一行连同它上面几行一起截没, 用户完全看不到自己正在操作哪一行)。算法: 焦点行底边 (含它
+/// 自己的高度, 用 `FormRow::height` 按真实高度算, 不是按行数) ≤ 可用高度就从第 0 行画起; 否则
+/// 起点 = 焦点行底边 − 可用高度, 再向上取整到最近的行边界 (只能整行跳过, 不能把一行从中间切开)。
+/// 需要滚动时保守地给顶部/底部提示行各留一行 (哪怕最终只有一侧真的截断)——换一次能一步算清楚的
+/// 起点, 不用先画一遍猜、猜错了再回头重算。
 ///
-/// **返回聚焦行的矩形** (被截断而没画出来时是 `None`)。调用方 (向导) 拿它播 `fx::field_err`
+/// **返回聚焦行的矩形** (焦点行自己比可用高度还高时是 `None`——理论上不会发生: 表单里最高的可
+/// 聚焦行是"字段 + 错误"两行, 只要可用高度 ≥ 2 就不会触发)。调用方 (向导) 拿它播 `fx::field_err`
 /// (Task 8) ——几何只有 `draw` 知道, 而校验失败时焦点一定就在出错的那一行, 所以一个矩形就够。
 pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'static Strings) -> Option<Rect> {
     let mut block = Block::bordered()
@@ -123,29 +131,66 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // 两遍: 先算总高度决定要不要给 `form_more` 留一行, 再真正画——避免"最后一行恰好卡在边界"
-    // 时该不该留提示行的边界判断出错 (先量整体, 不是画一行判一次)。
-    let total_height: u16 = view.rows.iter().map(|r| r.height(inner.width)).sum();
-    let reserve_more = total_height > inner.height;
-    let usable = if reserve_more { inner.height.saturating_sub(1) } else { inner.height };
+    let heights: Vec<u16> = view.rows.iter().map(|r| r.height(inner.width)).collect();
+    let total_height: u16 = heights.iter().sum();
 
-    let mut y = inner.y;
-    let mut used = 0u16;
-    let mut focus_rect = None;
-    for (i, row) in view.rows.iter().enumerate() {
-        let needed = row.height(inner.width);
-        if used + needed > usable {
+    let (first_visible, usable) = if total_height <= inner.height {
+        // 全部放得下: 不滚动、不留提示行, 从第一行画起——与旧行为完全一致。
+        (0usize, inner.height)
+    } else {
+        let usable = inner.height.saturating_sub(2).max(1);
+        let focus_idx = view.focus.min(heights.len().saturating_sub(1));
+        let focus_bottom: u16 = heights[..=focus_idx].iter().sum();
+        let start_height = focus_bottom.saturating_sub(usable);
+
+        let mut skipped = 0u16;
+        let mut first = heights.len();
+        for (i, h) in heights.iter().enumerate() {
+            if skipped >= start_height {
+                first = i;
+                break;
+            }
+            skipped += *h;
+        }
+        (first, usable)
+    };
+
+    // 从 `first_visible` 起, 按 `usable` 装得下多少整行——顺带算出下方是否被截断; 上方截没截
+    // 由 `first_visible > 0` 直接得出。
+    let mut shown = 0u16;
+    let mut last_visible = first_visible;
+    let mut bottom_cut = false;
+    for (i, h) in heights.iter().enumerate().skip(first_visible) {
+        if shown + h > usable {
+            bottom_cut = true;
             break;
         }
+        shown += h;
+        last_visible = i;
+    }
+    let top_cut = first_visible > 0;
+
+    let mut y = inner.y;
+    if top_cut {
+        frame.render_widget(Line::raw(s.form_more).centered().style(theme.muted_style()), Rect::new(inner.x, y, inner.width, 1));
+        y += 1;
+    }
+
+    // `last_visible` 从 `first_visible` 起步、只增不减 (上面那个 for 循环的初值与推进方式保证),
+    // 减法不会下溢。
+    let mut focus_rect = None;
+    let visible_count = last_visible + 1 - first_visible;
+    for (i, row) in view.rows.iter().enumerate().skip(first_visible).take(visible_count) {
+        let needed = heights[i];
         let row_rect = Rect::new(inner.x, y, inner.width, needed);
         draw_row(frame, row_rect, row, i == view.focus, theme, view.tick, view.show_cursor);
         if i == view.focus {
             focus_rect = Some(row_rect);
         }
         y += needed;
-        used += needed;
     }
-    if reserve_more {
+
+    if bottom_cut {
         frame.render_widget(Line::raw(s.form_more).centered().style(theme.muted_style()), Rect::new(inner.x, y, inner.width, 1));
     }
 
@@ -415,10 +460,12 @@ mod tests {
         assert!(!a_lines[0].contains('…'), "第一行不该有省略号\n{out}");
     }
 
-    /// M10: 内容超过可视高度时的截断路径此前没有任何测试真的触发过。8 行内容塞进只有 5 行可用
-    /// 高度的区域, 聚焦行 (下标 7) 必然被截掉——断言最后一行是 `form_more`、返回值是 `None`。
+    /// M10 → 评审 2 改写: 内容超过可视高度时**不再简单截断**, 而是按焦点行滚动。8 行内容塞进
+    /// 只有 5 行可用高度的区域, 焦点在最后一行 (下标 7)——旧语义断言"截掉、返回 None", **新语义
+    /// 反过来**: 应该滚到能看见焦点行, 顶部因此被截 (前几行不可见、顶部出现 `form_more`), 返回值
+    /// 是 `Some`。
     #[test]
-    fn content_taller_than_the_area_is_truncated_with_a_more_hint_and_no_focus_rect() {
+    fn content_taller_than_the_area_scrolls_so_the_focus_row_stays_visible() {
         let labels = ["行0", "行1", "行2", "行3", "行4", "行5", "行6", "行7"];
         let rows: Vec<FormRow> = labels.iter().map(|l| field(l, "值")).collect();
         let view = FormView { title: "T", steps: None, rows: &rows, focus: rows.len() - 1, tick: 0, show_cursor: true };
@@ -433,8 +480,67 @@ mod tests {
             })
             .unwrap();
         let out = terminal.backend().to_string();
-        assert!(out.contains(ZH.form_more), "放不下时应该显示提示行\n{out}");
-        assert!(focus_rect.is_none(), "聚焦行被截断掉时应该返回 None");
+        assert!(out.contains(ZH.form_more), "顶部被滚出去的内容应该显示提示行\n{out}");
+        assert!(out.contains("行7"), "聚焦行 (最后一行) 应该被滚进可视区域\n{out}");
+        assert!(!out.contains("行0"), "被滚出去的行不该再出现\n{out}");
+        assert!(focus_rect.is_some(), "聚焦行现在应该可见, 应该返回它的矩形\n{out}");
+    }
+
+    /// 评审 2 (b): 聚焦第一行时应该从顶部开始画 (不该无谓地把它也滚出视野), 下方装不下的内容
+    /// 用 `form_more` 提示, 不该同时出现顶部提示 (那意味着起点算错、平白多滚了一段)。
+    #[test]
+    fn content_taller_than_the_area_starts_from_the_top_when_focus_is_near_the_top() {
+        let labels = ["行0", "行1", "行2", "行3", "行4", "行5", "行6", "行7"];
+        let rows: Vec<FormRow> = labels.iter().map(|l| field(l, "值")).collect();
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0, show_cursor: true };
+
+        let theme = Theme::new(ColorMode::TrueColor);
+        let mut terminal = Terminal::new(TestBackend::new(50, 9)).unwrap();
+        let mut focus_rect = None;
+        terminal
+            .draw(|frame| {
+                focus_rect = draw(frame, frame.area(), &view, &theme, &ZH);
+            })
+            .unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("行0"), "聚焦第一行时应该从顶部开始画\n{out}");
+        assert!(!out.contains("行7"), "下方装不下的行不该出现\n{out}");
+        assert!(out.contains(ZH.form_more), "下方装不下的内容应该显示提示\n{out}");
+        let rect = focus_rect.expect("聚焦的第一行现在应该可见");
+        assert_eq!(rect.y, 2, "第一行应该紧贴内容区顶部 (border 1 + padding-top 1), 不该被顶部提示占位\n{out}");
+    }
+
+    /// 评审 2 (a): 复现评审给的最糟场景——一条真实的长错误 (经 `wiz_create_failed` 格式化) 在
+    /// 表单宽度下会折成 2 行, 加上自定义表单固定的 14 行内容, 总高度 (2 说明 + 1 空行 + 14) = 17
+    /// 超过 80×24 下自定义表单实际可用的 16 行 (24 − 3 标签栏 − 1 底栏 − 2 边框 − 2 内距); 焦点
+    /// 停在最后一行的「创建」按钮——旧算法会把这一行连同它上面几行一起截没, 新算法必须让它连同
+    /// 它前面的说明行一起可判定地滚出/滚入, 返回它的矩形。
+    #[test]
+    fn scrolling_keeps_a_focused_button_visible_behind_a_long_wrapped_note() {
+        let note = (ZH.wiz_create_failed)("network: error sending request for url (https://relay.example.com/v1beta/models)");
+        let mut rows: Vec<FormRow> = vec![FormRow::Note { text: &note }, FormRow::Spacer];
+        for label in ["协议", "厂商名", "Base URL", "请求路径", "鉴权", "API Key", "备注名"] {
+            rows.push(field(label, "值"));
+        }
+        rows.push(FormRow::Button { label: "获取模型列表", busy: false });
+        for label in ["fable", "opus", "sonnet", "haiku", "兜底"] {
+            rows.push(field(label, "值"));
+        }
+        rows.push(FormRow::Button { label: "创建", busy: false });
+        let focus = rows.len() - 1;
+        let view = FormView { title: "T", steps: None, rows: &rows, focus, tick: 0, show_cursor: true };
+
+        let theme = Theme::new(ColorMode::TrueColor);
+        let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+        let mut focus_rect = None;
+        terminal
+            .draw(|frame| {
+                focus_rect = draw(frame, frame.area(), &view, &theme, &ZH);
+            })
+            .unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("[ 创建 ]"), "聚焦的创建按钮应该被滚动进可视区域\n{out}");
+        assert!(focus_rect.is_some(), "聚焦行现在应该可见, 应该返回它的矩形\n{out}");
     }
 
     /// P5 Task 5 前置项 1: `show_cursor: false` 时哪怕聚焦行带着 `cursor`, 画完之后终端光标也

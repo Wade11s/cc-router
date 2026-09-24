@@ -178,12 +178,27 @@ pub enum WizardCmd {
 
 /// 向导请求的结果。**绝不带 `Secret`**——去程带 key, 回程一律不带, 这样 key 只在单向的一段消息里
 /// 存在过。
+///
+/// **结构性规律 (评审 4): 落库请求靠"吞 `Esc`"防跨实例, 只读请求靠"结果自证身份"防跨实例。**
+/// 会落库的请求 (`Create`/`SaveSlots`) 在飞时 `can_cancel()` 为假, `Esc` 直接被吞掉——用户没有
+/// 办法在它还没返回之前退出向导再开一个新的, 所以它们的结果不可能跨向导实例, `apply_wizard_result`
+/// 开头"按 `self.stage` 判"那道阶段守卫就够了。但只读请求 (`Probe`/`LoadModels`, 还有理论上的
+/// 任何将来的只读请求) 在飞时 `Esc` 可用 (`can_cancel()` 为真)、关闭向导也不会取消这个请求 (最长
+/// 等到 30 秒超时才会真的死掉)——用户可以退出向导 A、马上开向导 B、B 也走到同一个 `Stage`(比如
+/// 都在 `Probing`), 这时阶段守卫完全拦不住 A 的晚到结果被 B 接受。**只读请求的结果必须带上发起
+/// 请求那一刻的身份 (`Probed` 带 `base_url`、`Models` 带 `id`), 落地时与当前草稿里的同一份身份
+/// 值比对, 不一致就整个丢弃**(见 `wizard::mod::apply_wizard_result` 里这两条分支的比对逻辑)——
+/// `Probing`/`LoadingModels` 期间表单只读, 草稿里的值就是这次请求发出时的值, 不一致必然是另一个
+/// 向导实例的结果。以后加新的只读请求, 照这个模式办, 不能只靠阶段守卫。
 #[derive(Debug, Clone, PartialEq)]
 pub enum WizardResult {
     Providers(Result<Vec<Provider>, String>),
     Created(Result<CreatedSubscription, String>),
-    Models(Result<RefreshModelsResult, String>),
-    Probed(Result<ProbeModelsResult, String>),
+    /// `id`: 发起这次 `LoadModels` 请求时的订阅 id (即 `WizardCmd::LoadModels { id }` 里的那个)。
+    Models { id: String, result: Result<RefreshModelsResult, String> },
+    /// `base_url`: 发起这次 `Probe` 请求时 (已经 trim 过) 的 `base_url`(即
+    /// `ProbeInput::base_url`)。
+    Probed { base_url: String, result: Result<ProbeModelsResult, String> },
     SlotsSaved(Result<(), String>),
 }
 

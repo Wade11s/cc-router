@@ -151,7 +151,7 @@ impl App {
         // 向导那一层排在弹窗之后、全局键之前: 存在时除 `Ctrl+C` 外的全部按键归它 (所以 `q` / `r` /
         // `1`-`5` 能被向导当普通字符输入), 全局键与页面都到不了。
         if let Some(wizard) = &mut self.wizard {
-            return wizard.handle_key(key, self.s);
+            return wizard.handle_key(key, &self.store, self.s);
         }
         match key.code {
             KeyCode::Char('q') => Some(Action::Quit),

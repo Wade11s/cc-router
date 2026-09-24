@@ -180,9 +180,13 @@ impl CustomDraft {
         draft
     }
 
-    /// 换协议: 把 `base_url` / `messages_path` / 鉴权头重置成这个协议的预设, 并清掉 `probe`
-    /// (旧的探测结果对新协议没有意义)。**已经填过的 API Key / 备注名 / 槽位不动** (桌面端也
-    /// 不动——用户切协议大概率是选错了重选, 不该连已经填好的凭据/名字都丢)。
+    /// 换协议: 把 `base_url` / `messages_path` / 鉴权头重置成这个协议的预设, 并清掉 `probe`、
+    /// 探测到的候选模型 (`slots.models`) 与"自动获取失败"的说明行 (`slots.note`)——旧协议探测
+    /// 到的模型对新协议没有意义 (评审 5: OpenAI Responses 下探测到 `gpt-5.5`, 切到 Gemini 之后
+    /// `Fable` 的 picker 候选里还挂着 `gpt-5.5`, 选上就建出模型名对不上协议的 Gemini 订阅), 旧的
+    /// 失败说明同样过期。**已经填进槽位的值不动**(评审 5 明确: 只清候选与说明, 不清用户已经选定
+    /// 的槽位), **API Key / 备注名也不动** (桌面端同规则——用户切协议大概率是选错了重选, 不该连
+    /// 已经填好的凭据/名字都丢)。
     pub fn apply_protocol(&mut self, protocol: CustomProtocol) {
         let preset = protocol.preset();
         self.protocol = protocol;
@@ -191,6 +195,8 @@ impl CustomDraft {
         self.auth_header_name = preset.auth_header_name.to_string();
         self.auth_header_format = preset.auth_header_format;
         self.probe = None;
+        self.slots.models = Vec::new();
+        self.slots.note = None;
     }
 
     /// 只有探测成功、且此后 `base_url`(trim 后) 一个字都没改过时才回传 `models_url`。与桌面端
@@ -241,6 +247,12 @@ impl CustomField {
 
 /// 校验顺序与桌面端 `saveCustom` 逐条对齐: 厂商名 → base_url 非空 → base_url 前缀 →
 /// messages_path 前缀 → gemini 的 `{model}` → API Key → 备注名 → 四个核心槽。
+///
+/// **`base_url`/`messages_path` 校验的是 `trim` 后的值, 不是原样的草稿字符串**——这是有意
+/// 修正桌面端"校验不 trim、提交时才 trim"的不一致 (桌面端校验用原始输入, 真正发请求前才
+/// `.trim()`, 于是"Base URL 只有首尾空白"这种输入能通过校验、发请求时却变成空字符串; TUI
+/// 这里直接校验 trim 后的值, 校验通过 ⇔ 提交时真正发出去的值也合法), 与后端自己对这些字段的
+/// 校验口径一致 (评审确认: 不是 bug, 不要为了跟桌面端字面一致而改回去)。
 pub fn validate_custom(d: &CustomDraft, s: &'static Strings) -> Option<(CustomField, &'static str)> {
     if d.provider_display_name.trim().is_empty() {
         return Some((CustomField::ProviderName, s.wiz_err_provider_name));
@@ -396,6 +408,24 @@ mod tests {
             assert_eq!(d.auth_header_format, preset.auth_header_format, "{protocol:?}");
             assert!(d.probe.is_none(), "换协议应该清空 probe ({protocol:?})");
         }
+    }
+
+    /// 评审 5: 换协议还应该清空探测到的候选模型 (`slots.models`) 与"自动获取失败"的说明行
+    /// (`slots.note`)——旧协议探测到的模型 (比如 OpenAI Responses 下的 `gpt-5.5`) 对新协议
+    /// (比如切到 Gemini) 没有意义, 留着会让用户在 Fable 的 picker 里选出模型名对不上协议的值。
+    /// **已经填进槽位的值不该被清**(与 API Key / 备注名同规则)。
+    #[test]
+    fn apply_protocol_clears_stale_candidates_and_note_but_keeps_chosen_slots() {
+        let mut d = CustomDraft::new(CustomProtocol::OpenaiResponses);
+        d.slots.models = vec![ModelInfo { id: "gpt-5.5".into(), display_name: None }];
+        d.slots.note = Some("上一次自动获取失败的原因".into());
+        d.slots.slots.fable = "gpt-5.5".into();
+
+        d.apply_protocol(CustomProtocol::Gemini);
+
+        assert!(d.slots.models.is_empty(), "换协议应该清空旧协议探测到的候选模型");
+        assert!(d.slots.note.is_none(), "换协议应该清空旧的说明行");
+        assert_eq!(d.slots.slots.fable, "gpt-5.5", "已经填进槽位的值不该被换协议清掉");
     }
 
     /// 一份填满全部字段 (含四个核心槽) 的草稿——`CustomProtocol::Anthropic` 的预设 `base_url`

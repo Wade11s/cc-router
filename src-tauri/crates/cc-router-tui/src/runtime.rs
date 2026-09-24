@@ -159,12 +159,14 @@ async fn call_wizard(client: &Client, cmd: &WizardCmd) -> WizardResult {
         WizardCmd::LoadModels { id } => {
             let result =
                 client.call_with_timeout::<RefreshModelsResult>(commands::REFRESH_MODEL_LIST, json!({ "id": id }), REFRESH_TIMEOUT).await;
-            WizardResult::Models(result.map_err(|e: ClientError| e.to_string()))
+            // `id` 原样带回去: 只读请求靠结果自证身份防跨向导实例 (见 `WizardResult` 文档注释)。
+            WizardResult::Models { id: id.clone(), result: result.map_err(|e: ClientError| e.to_string()) }
         }
         WizardCmd::Probe(input) => {
             let result =
                 client.call_with_timeout::<ProbeModelsResult>(commands::PROBE_CUSTOM_MODELS, input.to_args(), REFRESH_TIMEOUT).await;
-            WizardResult::Probed(result.map_err(|e: ClientError| e.to_string()))
+            // `input.base_url` 在 `submit_probe` 打包 `ProbeInput` 时已经 trim 过, 原样带回去。
+            WizardResult::Probed { base_url: input.base_url.clone(), result: result.map_err(|e: ClientError| e.to_string()) }
         }
         WizardCmd::SaveSlots { id, model_slots } => {
             // 只带 `model_slots` 这一块 patch (不带 `slot_efforts`): 向导不设置思考档位, 少发一个
@@ -1188,7 +1190,8 @@ mod tests {
     }
 
     /// Task 3 评审 #7 (顺手补上): `WizardCmd::LoadModels` 打对了 `refresh_model_list`、带对了
-    /// `{"id": id}`, 把响应体正确解析进 `WizardResult::Models(Ok(..))`。
+    /// `{"id": id}`, 把响应体正确解析进 `WizardResult::Models { result: Ok(..), .. }`。评审 4:
+    /// 顺带确认带回去的 `id` 与发起请求时的 `id` 一致 (向导据此判断这份结果是不是自己发的那次)。
     #[tokio::test]
     async fn wizard_load_models_reports_back() {
         let server = MockServer::start().await;
@@ -1209,7 +1212,8 @@ mod tests {
 
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::WizardDone(result) = done else { panic!("{done:?}") };
-        let WizardResult::Models(models) = *result else { panic!("{result:?}") };
+        let WizardResult::Models { id, result: models } = *result else { panic!("{result:?}") };
+        assert_eq!(id, "1", "带回去的 id 应该与发起请求时的 id 一致");
         assert_eq!(
             models.expect("应该成功"),
             RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 1 }

@@ -425,6 +425,10 @@ pub struct Strings {
     pub wiz_err_gemini_placeholder: &'static str,
     /// `Stage::Probing` 的按钮文案 (busy 态)。
     pub wiz_probing: &'static str,
+    /// 自定义表单「协议」字段行自己的展示名 (顺序同 `CustomProtocol::ALL`)——**独立于**
+    /// `wiz_custom_labels`(那份带 `自定义 · ` 前缀, 给厂商 picker 用), 不是从它派生出来的
+    /// (评审 3: 不能靠剥字符串前缀算, 两份译文各自独立维护)。
+    pub wiz_protocol_names: [&'static str; 5],
 
     /// 向导表单底栏: `↑↓` 在字段间移动。
     pub key_field: &'static str,
@@ -831,6 +835,7 @@ pub const ZH: Strings = Strings {
     wiz_err_messages_path: "请求路径必须以 / 开头",
     wiz_err_gemini_placeholder: "Gemini 的请求路径必须包含 {model}",
     wiz_probing: "正在获取模型列表…",
+    wiz_protocol_names: ["Anthropic 兼容", "Gemini", "OpenAI Responses", "OpenAI Chat Completions", "Gemini Interactions"],
 
     key_field: "字段",
     key_pick: "选择",

@@ -212,12 +212,15 @@ impl Wizard {
 
     /// 除 `Ctrl+C` 外的全部按键。`None` = 吞掉 (或只改了向导自己的状态)。`Esc` 的处理跟阶段
     /// 无关 (`can_cancel()` 为假时连 `Esc` 也不接), 排在最前面统一判断; 其余按键只有
-    /// `Stage::Basics`/`Slots` 才会真的处理——`Loading`/`LoadFailed` 没有字段可以接收输入,
-    /// `Creating`/`LoadingModels`/`Saving` 整张表单只读 (请求在飞, 见文件顶部"表单交互的总
-    /// 规则")。**两种文案**: 还没创建 (`Basics`) 复用既有的 `confirm_discard`; 订阅已经建好
-    /// (`Slots`, 以及只读等待中的 `LoadingModels`) 时换成 `wiz_confirm_exit_pending` (退出会
-    /// 留下带 (pending) 槽位的订阅, 跟"放弃未保存的编辑"不是同一件事)。
-    pub fn handle_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
+    /// `Stage::Basics`/`Slots`/`Custom` 才会真的处理——`Loading`/`LoadFailed` 没有字段可以接收
+    /// 输入, `Creating`/`LoadingModels`/`Saving`/`Probing` 整张表单只读 (请求在飞, 见文件顶部
+    /// "表单交互的总规则")。**两种文案**: 还没创建 (`Basics`/`Custom`/`Probing`) 复用既有的
+    /// `confirm_discard`; 订阅已经建好 (`Slots`, 以及只读等待中的 `LoadingModels`) 时换成
+    /// `wiz_confirm_exit_pending` (退出会留下带 (pending) 槽位的订阅, 跟"放弃未保存的编辑"不是
+    /// 同一件事)。`store` 只有 `Stage::Custom` 编辑厂商名时会用到 (评审 7: 备注名自动跟随厂商名,
+    /// 判重名要查 `Store`), 与 `apply_picker_choice`/`apply_provider_choice` 已经在用的 `store`
+    /// 是同一个。
+    pub fn handle_key(&mut self, key: KeyEvent, store: &Store, s: &'static Strings) -> Option<Action> {
         if key.code == KeyCode::Esc && self.can_cancel() {
             if !self.has_input() {
                 return Some(Action::CloseWizard);
@@ -230,7 +233,7 @@ impl Wizard {
         } else if matches!(self.stage, Stage::Slots) {
             self.handle_slots_key(key, s)
         } else if matches!(self.stage, Stage::Custom) {
-            self.handle_custom_key(key, s)
+            self.handle_custom_key(key, store, s)
         } else {
             None
         }
@@ -348,7 +351,7 @@ impl Wizard {
     /// `Submit` 是按钮行, `⏎` 触发对应请求; 槽位行 `⏎` 开模型 picker。`custom_draft` 是 `None`
     /// 时 (理论不该发生, `Stage::Custom` 只由 `apply_provider_choice` 设置且同时写好
     /// `custom_draft`) 防御性地什么都不做。
-    fn handle_custom_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
+    fn handle_custom_key(&mut self, key: KeyEvent, store: &Store, s: &'static Strings) -> Option<Action> {
         let locked = self.custom_draft.as_ref()?.protocol.auth_locked();
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
@@ -381,7 +384,7 @@ impl Wizard {
                 None
             }
             _ if self.custom_focus == CustomField::ProviderName => {
-                self.edit_custom_provider_name(key);
+                self.edit_custom_provider_name(key, store);
                 None
             }
             _ if self.custom_focus == CustomField::BaseUrl => {
@@ -432,12 +435,34 @@ impl Wizard {
         }
     }
 
-    fn edit_custom_provider_name(&mut self, key: KeyEvent) {
-        if self.provider_name_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
+    /// **评审 7 (拍板的一致性改动)**: 备注名跟着厂商名自动生成, 与内置路径
+    /// (`apply_provider_choice` 选厂商时) 同一条规则——备注名为空、**或**等于上一次自动生成的
+    /// 值时才跟着重算 (复用同一个 `last_auto_display_name` 字段判断; 两条路径互斥, 共用无妨);
+    /// 用户手改过备注名之后不再跟随; 厂商名 trim 后为空时不自动填 (刚进表单、还没打字时不该凭空
+    /// 冒出一个基于空字符串的默认值)。
+    fn edit_custom_provider_name(&mut self, key: KeyEvent, store: &Store) {
+        let Some(changed) = self.provider_name_input.handle_event(&Event::Key(key)) else { return };
+        if !changed.value {
+            return;
+        }
+        let name = self.provider_name_input.value().to_string();
+        if let Some(draft) = &mut self.custom_draft {
+            draft.provider_display_name = name.clone();
+        }
+        self.clear_custom_field_error(CustomField::ProviderName);
+
+        let still_auto = self
+            .custom_draft
+            .as_ref()
+            .is_some_and(|d| d.display_name.is_empty() || self.last_auto_display_name.as_deref() == Some(d.display_name.as_str()));
+        if still_auto && !name.trim().is_empty() {
+            let generated = default_display_name(name.trim(), store);
             if let Some(draft) = &mut self.custom_draft {
-                draft.provider_display_name = self.provider_name_input.value().to_string();
+                draft.display_name = generated.clone();
             }
-            self.clear_custom_field_error(CustomField::ProviderName);
+            self.custom_display_name_input = Input::new(generated.clone());
+            self.last_auto_display_name = Some(generated);
+            self.clear_custom_field_error(CustomField::DisplayName);
         }
     }
 
@@ -535,11 +560,19 @@ impl Wizard {
 
     /// 换协议: 重置连接相关字段的草稿与对应的 `Input`(与草稿保持同步, 见 `provider_name_input`
     /// 等字段的文档注释), 清掉这三个字段自己的校验错误 (评审 M3 同一条道理——被 `apply_protocol`
-    /// 重写的字段等同于被"编辑"过), 再 `clamp_custom_focus` 防止焦点悬空。
+    /// 重写的字段等同于被"编辑"过), 再 `clamp_custom_focus` 防止焦点悬空。**重选同一个协议
+    /// (评审 1, 仿 Task 4 评审 M2 在厂商行修过的同一类问题) 什么都不重算, 连 `probe` 都不清**——
+    /// 否则用户在 Anthropic 下手动把 Base URL / 请求路径 / 鉴权都改成中转站的真实值之后, 回到
+    /// 协议行看一眼、又按了一次 `⏎`(picker 默认高亮当前项, 很容易无意中确认同一项), 这些手填的
+    /// 值会被悄悄弹回协议预设 (Anthropic 的预设 Base URL 是空串, 用户完全看不出发生了什么——
+    /// 只会看到灰字占位符, 误以为那就是真值), 建出的订阅连不上上游。
     fn apply_protocol_choice(&mut self, choice: &PickerChoice) {
         let PickerChoice::Item(id) = choice else { return };
         let Some(protocol) = CustomProtocol::ALL.iter().find(|p| p.as_wire() == id).copied() else { return };
         let Some(draft) = &mut self.custom_draft else { return };
+        if protocol == draft.protocol {
+            return;
+        }
         draft.apply_protocol(protocol);
         self.base_url_input = Input::new(draft.base_url.clone());
         self.messages_path_input = Input::new(draft.messages_path.clone());
@@ -560,7 +593,9 @@ impl Wizard {
     }
 
     /// `Probe` 行 `⏎`: 只校验 `base_url` 非空 + API Key 非空 (与桌面端一致, 其余字段这一步不
-    /// 校验), 通过则打包 `WizardCmd::Probe` 并进 `Stage::Probing`。
+    /// 校验), 通过则打包 `WizardCmd::Probe` 并进 `Stage::Probing`。**发起时清掉 `slots.note`**
+    /// (评审 6, 仿 `submit`/`submit_slots` 对 `create_error`/`note` 的处理)——否则重试在飞期间,
+    /// 屏幕上会同时显示"上一次探测失败的原因"和"正在获取模型列表…"两条互相矛盾的文案。
     fn submit_probe(&mut self, s: &'static Strings) -> Option<Action> {
         let draft = self.custom_draft.as_ref()?;
         if draft.base_url.trim().is_empty() {
@@ -573,7 +608,6 @@ impl Wizard {
             self.custom_field_error = Some((CustomField::ApiKey, s.wiz_err_api_key));
             return None;
         }
-        self.custom_field_error = None;
         let cmd = WizardCmd::Probe(ProbeInput {
             base_url: draft.base_url.trim().to_string(),
             auth_header_name: draft.auth_header_name.clone(),
@@ -581,6 +615,10 @@ impl Wizard {
             api_key: draft.api_key.clone(),
             protocol: draft.protocol,
         });
+        self.custom_field_error = None;
+        if let Some(draft) = &mut self.custom_draft {
+            draft.slots.note = None;
+        }
         self.stage = Stage::Probing;
         Some(Action::WizardRequest(Box::new(cmd)))
     }
@@ -589,6 +627,7 @@ impl Wizard {
     /// `submit`/`submit_slots` 同一条道理); 通过则打包 `WizardCmd::Create`——`model_slots` 是
     /// 真实选值 (不是 `ModelSlots::pending()`, `validate_custom` 已经保证四个核心槽非空),
     /// `models_url` 由 `CustomDraft::models_url()` 按"探测后 base_url 没再改过"这条规则算。
+    /// **发起时清掉 `slots.note`**(评审 6), 理由同 `submit_probe`。
     fn submit_custom(&mut self, s: &'static Strings) -> Option<Action> {
         let draft = self.custom_draft.as_ref()?;
         match validate_custom(draft, s) {
@@ -598,7 +637,6 @@ impl Wizard {
                 None
             }
             None => {
-                self.custom_field_error = None;
                 let cmd = WizardCmd::Create(CreateInput {
                     display_name: draft.display_name.clone(),
                     api_key: draft.api_key.clone(),
@@ -613,6 +651,10 @@ impl Wizard {
                         models_url: draft.models_url().map(str::to_string),
                     })),
                 });
+                self.custom_field_error = None;
+                if let Some(draft) = &mut self.custom_draft {
+                    draft.slots.note = None;
+                }
                 self.stage = Stage::Creating;
                 Some(Action::WizardRequest(Box::new(cmd)))
             }
@@ -729,6 +771,10 @@ impl Wizard {
             self.custom_display_name_input = Input::default();
             self.reveal_custom_api_key = false;
             self.custom_field_error = None;
+            // 全新的自定义草稿: 上一次 (可能是内置路径留下的) 自动生成备注名的记录不该带过来,
+            // 否则 `edit_custom_provider_name` 第一次判断"是否还处于自动跟随"时可能被 stale 值
+            // 干扰 (评审 7)。
+            self.last_auto_display_name = None;
             self.custom_draft = Some(draft);
             self.custom_focus = CustomField::ProviderName;
             self.stage = Stage::Custom;
@@ -869,11 +915,19 @@ impl Wizard {
     /// `Stage::Probing`。**不这样做的失败场景**: 按 `n` 打开向导 → 厂商列表还没回来就 `Esc` →
     /// 再按 `n` 重开; 旧的 `Providers` 结果晚到时, 如果不管阶段直接接受, 会把已经走到 `Slots` 的
     /// 表单打回 `Basics`——`self.providers` 也被换成旧的那一份, 草稿里的 `provider_id` 可能已经
-    /// 不在这份新列表里。`Created`/`Models`/`SlotsSaved`/`Probed` 同理: 晚到的 `Created` 会覆盖
-    /// 已经在用的 `created_id` 并再发一次 `LoadModels`; 晚到的 `Models` 会在 `created_id` 还是
-    /// `None` 时把表单带进 `Slots`, 保存时变成无声的空操作; 晚到的 `SlotsSaved` 会在错误的阶段
-    /// 关掉向导或弹一条不该出现的 toast; 晚到的 `Probed` 会把过期的候选模型塞进当前 (可能早已
-    /// 不是同一次探测发起的) 表单。
+    /// 不在这份新列表里。`Created`/`SlotsSaved` 同理: 晚到的 `Created` 会覆盖已经在用的
+    /// `created_id` 并再发一次 `LoadModels`; 晚到的 `SlotsSaved` 会在错误的阶段关掉向导或弹一条
+    /// 不该出现的 toast。
+    ///
+    /// **`Models`/`Probed` 除了阶段守卫, 还要额外核对结果自带的身份 (评审 4)**: 这两个是
+    /// `WizardResult` 上方文档注释里说的"只读请求"——在飞时 `Esc` 可用, 关闭向导不会取消请求
+    /// (最长等到 30 秒超时), 所以用户能退出向导 A、马上开向导 B、B 也走到同一个 `Stage`, A 的
+    /// 结果这时晚到, 单靠阶段守卫拦不住。`Models { id, .. }` 与 `self.created_id` 不一致、
+    /// `Probed { base_url, .. }` 与草稿当前 (trim 后) 的 `base_url` 不一致, 都整个丢弃——
+    /// `LoadingModels`/`Probing` 期间表单只读, 草稿里的值就是这次请求发出时的值, 不一致必然是
+    /// 另一个向导实例的结果。不这样做: 晚到的 `Probed` 会把中转 X 的候选模型记成"当前 Base URL
+    /// 是 Y", 按创建时把 X 的 `models_url` 与 Y 的 base_url 一起落库; 晚到的 `Models` 会把另一家
+    /// 厂商的模型名预填进当前的四个核心槽。
     ///
     /// `Providers` 成功后转进 `Stage::Basics`; `Created(Ok)` 按 `custom_draft` 是不是 `Some`
     /// 分流 (P5 Task 6, `Stage::Creating` 被两条路径共用)——内置路径记下 id、发 `LoadModels`、进
@@ -935,8 +989,13 @@ impl Wizard {
                     }
                 }
             }
-            WizardResult::Models(inner) => {
+            WizardResult::Models { id, result: inner } => {
                 if !matches!(self.stage, Stage::LoadingModels) {
+                    return Vec::new();
+                }
+                // 评审 4: 只读请求自证身份, 与 `self.created_id`(发起 `LoadModels` 时用的那个)
+                // 不一致就是另一个向导实例的晚到结果, 整个丢弃。
+                if self.created_id.as_deref() != Some(id.as_str()) {
                     return Vec::new();
                 }
                 match inner {
@@ -958,18 +1017,26 @@ impl Wizard {
                     Err(e) => self.enter_slots_with_note((s.wiz_models_manual)(e)),
                 }
             }
-            WizardResult::Probed(inner) => {
+            WizardResult::Probed { base_url, result: inner } => {
                 if !matches!(self.stage, Stage::Probing) {
                     return Vec::new();
                 }
                 let Some(draft) = &mut self.custom_draft else { return Vec::new() };
+                // 评审 4: 只读请求自证身份——`Probing` 期间表单只读, 草稿当前 (trim 后) 的
+                // `base_url` 就是这次请求发出时的值; 与结果带回来的 `base_url` 不一致, 必然是
+                // 另一个向导实例的晚到探测结果, 整个丢弃。
+                if draft.base_url.trim() != base_url.as_str() {
+                    return Vec::new();
+                }
                 match inner {
                     Ok(ProbeModelsResult::Auto { models, models_url }) => {
                         draft.slots.models = models.clone();
                         draft.slots.note = None;
                         // 不自动预填槽位 (与桌面端一致): 自定义中转的模型名千差万别, 猜错不如
-                        // 留空, 与 Task 5 内置路径"有候选就预填四个核心槽"故意不同。
-                        draft.probe = Some(ProbedModels { base_url: draft.base_url.trim().to_string(), models_url: models_url.clone() });
+                        // 留空, 与 Task 5 内置路径"有候选就预填四个核心槽"故意不同。`base_url`
+                        // 用结果里带的这个值 (已经与上面的一致性检查对齐过), 不用再重新 trim
+                        // 一遍草稿。
+                        draft.probe = Some(ProbedModels { base_url: base_url.clone(), models_url: models_url.clone() });
                     }
                     Ok(ProbeModelsResult::ManualFallback { reason }) => {
                         draft.slots.models = Vec::new();
@@ -1340,13 +1407,15 @@ impl Wizard {
         let _focus_rect = form::draw(frame, area, &view, theme, s);
     }
 
-    /// `wiz_custom_labels` 复用自厂商 picker (带 `自定义 · ` 前缀, 用于在一长串厂商里认出这一类
-    /// 条目); 自定义表单自己的「协议」行不需要重复这个前缀 (标题已经写明「新建订阅 · 自定义」),
-    /// 所以剥掉它——两处共用同一份文案表, 不新造一份只差几个字的翻译。
+    /// 协议行自己的展示名, 与厂商 picker 里带 `自定义 · ` 前缀的 `wiz_custom_labels`(标题已经
+    /// 写明「新建订阅 · 自定义」, 字段行没必要重复这个前缀) 分开成独立的 `wiz_protocol_names`
+    /// 字段, **不靠剥字符串前缀算**(评审 3): 剥前缀是非测试代码里出现中文字面量, 且 P6 把
+    /// `wiz_custom_labels` 翻成英文之后前缀不再匹配, 会静默显示带冗余前缀的全称——哪怕今天只是
+    /// 改一下中文 label 里 `·` 两边的空格也会同样静默失效。两个数组顺序都与 `CustomProtocol::ALL`
+    /// 一致, 但是两份独立的文案, 不是派生关系。
     fn custom_protocol_label(protocol: CustomProtocol, s: &'static Strings) -> &'static str {
         let idx = CustomProtocol::ALL.iter().position(|p| *p == protocol).unwrap_or(0);
-        let full = s.wiz_custom_labels[idx];
-        full.strip_prefix("自定义 · ").unwrap_or(full)
+        s.wiz_protocol_names[idx]
     }
 
     /// 鉴权格式的展示名——英文技术词汇 (与请求头名 "Authorization"/"x-api-key" 同类), 不进
@@ -1509,7 +1578,7 @@ mod tests {
     fn has_no_input_yet_so_escape_closes_without_confirming() {
         let mut w = Wizard::new();
         assert!(!w.has_input());
-        assert_eq!(w.handle_key(key(KeyCode::Esc), &crate::i18n::ZH), Some(Action::CloseWizard));
+        assert_eq!(w.handle_key(key(KeyCode::Esc), &Store::default(), &crate::i18n::ZH), Some(Action::CloseWizard));
     }
 
     /// 除 `Esc` 外的按键在 `Stage::Loading` 一律被吞掉——没有任何字段可以接收字符输入 (`Basics`
@@ -1518,7 +1587,7 @@ mod tests {
     fn other_keys_are_swallowed() {
         let mut w = Wizard::new();
         for code in [KeyCode::Char('q'), KeyCode::Char('r'), KeyCode::Char('1'), KeyCode::Tab, KeyCode::Enter] {
-            assert_eq!(w.handle_key(key(code), &crate::i18n::ZH), None, "{code:?}");
+            assert_eq!(w.handle_key(key(code), &Store::default(), &crate::i18n::ZH), None, "{code:?}");
         }
     }
 
@@ -1531,7 +1600,7 @@ mod tests {
         assert!(w.take_notice().is_none());
         assert!(!w.take_close_request());
         // 进了 `Stage::Basics`, 但草稿还是空的 (`has_input()` 仍然为假), Esc 照常直接关闭。
-        assert_eq!(w.handle_key(key(KeyCode::Esc), &crate::i18n::ZH), Some(Action::CloseWizard));
+        assert_eq!(w.handle_key(key(KeyCode::Esc), &Store::default(), &crate::i18n::ZH), Some(Action::CloseWizard));
     }
 
     #[test]
@@ -1560,7 +1629,7 @@ mod tests {
         let mut w = Wizard::new();
         w.stage = Stage::Creating;
         assert!(!w.can_cancel(), "在飞时不该能取消");
-        assert_eq!(w.handle_key(key(KeyCode::Esc), &crate::i18n::ZH), None, "在飞时 Esc 应该被吞掉");
+        assert_eq!(w.handle_key(key(KeyCode::Esc), &Store::default(), &crate::i18n::ZH), None, "在飞时 Esc 应该被吞掉");
     }
 
     /// 同上, `Stage::Saving` 是新加的另一个"在飞"阶段, 应该同样吞掉 `Esc`。
@@ -1569,7 +1638,7 @@ mod tests {
         let mut w = Wizard::new();
         w.stage = Stage::Saving;
         assert!(!w.can_cancel(), "保存在飞时不该能取消");
-        assert_eq!(w.handle_key(key(KeyCode::Esc), &crate::i18n::ZH), None, "保存在飞时 Esc 应该被吞掉");
+        assert_eq!(w.handle_key(key(KeyCode::Esc), &Store::default(), &crate::i18n::ZH), None, "保存在飞时 Esc 应该被吞掉");
     }
 
     /// P5 Task 5 前置项 2: 底栏提示按焦点行的类型变化, 四个分支 (选择行 / API Key 文本行 / 备注名
@@ -1625,7 +1694,7 @@ mod tests {
         w.field_error = Some((BasicsField::Provider, s.wiz_err_provider));
         w.focus = BasicsField::DisplayName;
 
-        w.handle_key(key(KeyCode::Char('a')), s);
+        w.handle_key(key(KeyCode::Char('a')), &Store::default(), s);
 
         assert_eq!(w.field_error, Some((BasicsField::Provider, s.wiz_err_provider)), "编辑备注名不该清掉厂商行的错误");
     }
@@ -1654,7 +1723,7 @@ mod tests {
         w.stage = Stage::Basics;
         w.draft.provider_id = "zhipu".into(); // has_input() 为真
         assert_eq!(
-            w.handle_key(key(KeyCode::Esc), s),
+            w.handle_key(key(KeyCode::Esc), &Store::default(), s),
             Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::CloseWizard) })
         );
     }
@@ -1669,7 +1738,7 @@ mod tests {
         w.created_id = Some("sub-1".into());
         assert!(w.can_cancel(), "等模型列表时应该能取消");
         assert_eq!(
-            w.handle_key(key(KeyCode::Esc), s),
+            w.handle_key(key(KeyCode::Esc), &Store::default(), s),
             Some(Action::OpenConfirm { prompt: s.wiz_confirm_exit_pending.to_string(), on_yes: Box::new(Action::CloseWizard) })
         );
     }
@@ -1711,10 +1780,10 @@ mod tests {
     fn a_stale_models_result_is_discarded_outside_loading_models() {
         let mut w = Wizard::new();
         w.stage = Stage::Creating;
-        let action = Action::WizardDone(Box::new(WizardResult::Models(Ok(RefreshModelsResult::Auto {
-            models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }],
-            fetched_at: 0,
-        }))));
+        let action = Action::WizardDone(Box::new(WizardResult::Models {
+            id: "sub-1".into(),
+            result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 0 }),
+        }));
         let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
         assert!(cmds.is_empty());
         assert!(matches!(w.stage, Stage::Creating), "阶段不该被晚到的 Models 结果打进 Slots");
