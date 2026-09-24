@@ -23,6 +23,8 @@ pub(super) struct SlotsForm {
     pub(super) examples: Vec<String>,
     /// 自动获取模型失败 / 上一次保存失败的原因, 挂在表单顶部。
     pub(super) note: Option<String>,
+    /// 同 `BasicsForm::pending_field_err`。
+    pub(super) pending_field_err: bool,
 }
 
 impl FormFields for SlotsForm {
@@ -50,11 +52,16 @@ impl FormFields for SlotsForm {
     fn text_field(&mut self, _field: SlotsField) -> Option<&mut dyn TextInput> {
         None
     }
+
+    fn cursor_for(&self, _field: SlotsField) -> Option<usize> {
+        // 五个槽位行是选择行, `Save` 是按钮行——这张表单没有任何文本行。
+        None
+    }
 }
 
 impl SlotsForm {
     pub(super) fn new(draft: SlotsDraft, examples: Vec<String>, note: Option<String>) -> Self {
-        Self { draft, state: FormState::new(SlotsField::Row(Slot::Fable)), examples, note }
+        Self { draft, state: FormState::new(SlotsField::Row(Slot::Fable)), examples, note, pending_field_err: false }
     }
 
     /// 只在没有保存请求在飞时被调用。提交成功时把 `saving` 置真。
@@ -73,6 +80,7 @@ impl SlotsForm {
     fn submit(&mut self, id: &str, saving: &mut bool, s: &'static Strings) -> Option<Action> {
         let failure = validate_slots(&self.draft, s).map(|(slot, message)| (SlotsField::Row(slot), message));
         if !self.state.validate(failure) {
+            self.pending_field_err = true;
             return None;
         }
         self.note = None;
@@ -90,7 +98,7 @@ impl SlotsForm {
         common::hints(self, s)
     }
 
-    pub(super) fn draw(&self, frame: &mut Frame, area: Rect, saving: bool, p: &Paint) {
+    pub(super) fn draw(&self, frame: &mut Frame, area: Rect, saving: bool, p: &Paint) -> Option<(usize, Rect)> {
         let s = p.s;
         let hints = RowHints::new(s);
         let mut rows = Rows::new(self, &hints, s, saving);
@@ -99,6 +107,7 @@ impl SlotsForm {
         rows.spacer();
         rows.button(SlotsField::Save, saving.then_some(s.wiz_saving));
         let built = rows.finish();
+        let focus_index = built.focus;
 
         let view = FormView {
             title: s.wiz_title,
@@ -108,6 +117,6 @@ impl SlotsForm {
             tick: p.tick,
             show_cursor: p.show_cursor,
         };
-        let _focus_rect = form::draw(frame, area, &view, p.theme, s);
+        form::draw(frame, area, &view, p.theme, s).map(|rect| (focus_index, rect))
     }
 }

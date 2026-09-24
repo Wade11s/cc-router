@@ -11,7 +11,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use tachyonfx::pattern::SweepPattern;
-use tachyonfx::{fx, Duration, Effect, EffectManager, Interpolation};
+use tachyonfx::{fx, CellFilter, Duration, Effect, EffectManager, Interpolation};
 
 /// 标称时长 (毫秒)。入场用 `QuadOut`, 退场用 `QuadIn`。
 pub mod ms {
@@ -25,6 +25,10 @@ pub mod ms {
     pub const VALUE_CHANGED: u32 = 400;
     /// 实时路由页新行的淡入 (Task 7)。
     pub const ROW_NEW: u32 = 300;
+    /// 向导表单校验失败的那一行。
+    pub const FIELD_ERR: u32 = 300;
+    /// 向导换步 (`Basics → Slots`)。
+    pub const WIZARD_STEP: u32 = 180;
 }
 
 // `Default` 只是为了满足 `EffectManager<K>: Default` 的派生约束 (tachyonfx 0.25), 没有语义。
@@ -40,6 +44,10 @@ pub enum FxKey {
     Value(&'static str),
     /// 实时路由的条目序号 (Task 7)。
     LiveRow(u64),
+    /// 向导表单里的一行 (行下标)。
+    Field(usize),
+    /// 向导整块内容区。
+    Wizard,
 }
 
 /// 切页方向: 往右边的标签走是 `Forward`。
@@ -159,6 +167,24 @@ impl Fx {
         let effect = fx::fade_from_fg(from, (ms::ROW_NEW, Interpolation::QuadOut)).with_area(row);
         self.add(FxKey::LiveRow(seq), effect);
     }
+
+    /// 向导表单校验失败: 那一行泛 `err` 色再回落。只染文字 (`CellFilter::Text`), 不染边框——
+    /// 我们不知道用户终端的背景色, 边框本身也不该被这个反馈染色。
+    pub fn field_err(&mut self, row_index: usize, row: Rect, color: Color) {
+        let effect = fx::fade_from_fg(color, (ms::FIELD_ERR, Interpolation::QuadOut)).with_filter(CellFilter::Text).with_area(row);
+        self.add(FxKey::Field(row_index), effect);
+    }
+
+    /// 向导换步: 带方向的淡入, 与 [`Self::page_enter`] 同一套只是更快——原设计写的是
+    /// `slide_in`, 但那需要指定背景色, 违反「只动前景色」这条纪律。
+    pub fn wizard_step(&mut self, dir: Dir, content: Rect, from: Color) {
+        let pattern = match dir {
+            Dir::Forward => SweepPattern::left_to_right(12),
+            Dir::Backward => SweepPattern::right_to_left(12),
+        };
+        let effect = fx::fade_from_fg(from, (ms::WIZARD_STEP, Interpolation::QuadOut)).with_pattern(pattern).with_area(content);
+        self.add(FxKey::Wizard, effect);
+    }
 }
 
 #[cfg(test)]
@@ -184,6 +210,8 @@ mod tests {
             ("row_changed", ms::ROW_CHANGED, Box::new(|f| f.row_changed("id", PART, Color::Red))),
             ("value_changed", ms::VALUE_CHANGED, Box::new(|f| f.value_changed("requests", PART, Color::Red))),
             ("row_new", ms::ROW_NEW, Box::new(|f| f.row_new(1, PART, Color::Red))),
+            ("field_err", ms::FIELD_ERR, Box::new(|f| f.field_err(0, PART, Color::Red))),
+            ("wizard_step", ms::WIZARD_STEP, Box::new(|f| f.wizard_step(Dir::Forward, AREA, Color::DarkGray))),
         ]
     }
 

@@ -767,8 +767,18 @@ impl Component for Subscriptions {
         match self.focus {
             Focus::List => {
                 // `⏎` 两种宽度下都会真的切焦点进详情, 不该只在窄屏才提示——宽屏用户一样需要知道
-                // 这个键。
-                vec![("↑↓", s.key_select), ("⏎", s.key_detail), ("e", s.key_toggle), ("t", s.key_test), ("m", s.key_models), ("b", s.key_balance)]
+                // 这个键。`n`/`d` 排最后, 放不下时 (见下面 `Detail` 分支的注释) 最先被裁掉——帮助
+                // 弹窗里还有, 可以接受。
+                vec![
+                    ("↑↓", s.key_select),
+                    ("⏎", s.key_detail),
+                    ("e", s.key_toggle),
+                    ("t", s.key_test),
+                    ("m", s.key_models),
+                    ("b", s.key_balance),
+                    ("n", s.key_new),
+                    ("d", s.key_delete),
+                ]
             }
             Focus::Detail { .. } => {
                 // 放不下时 keybar 从右往左丢——e/t/m/b 排在最后, 会先被裁掉。

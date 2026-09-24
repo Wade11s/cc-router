@@ -72,6 +72,8 @@ pub struct Strings {
     pub key_members: &'static str,
     /// 订阅页 `n` 的 hint 文案 ("新建")。
     pub key_new: &'static str,
+    /// 订阅页 `d` 的 hint 文案 ("删除")。
+    pub key_delete: &'static str,
     /// 向导底栏右侧固定提示 ("取消"); 弹窗的取消统一用 `key_close` ("关闭"), 向导用这个不同的词是
     /// 因为向导按 Esc 退出会放弃已经填的内容, 语气上更接近「取消这次新建」。
     pub key_cancel: &'static str,
@@ -522,6 +524,7 @@ pub const ZH: Strings = Strings {
     key_mode: "模式",
     key_members: "成员",
     key_new: "新建",
+    key_delete: "删除",
     key_cancel: "取消",
 
     help_title: "键位",
@@ -627,13 +630,16 @@ pub const ZH: Strings = Strings {
         ("PgUp / PgDn", "翻页"),
         ("⏎ / → / l", "进入详情"),
         ("Esc / ← / h", "退出详情"),
-        ("⏎ (详情内)", "改当前槽位的模型"),
-        ("o", "改当前槽位的思考档位"),
+        // 与「改当前槽位的模型」「改当前槽位的思考档位」两行合并——新增 n/d 两行后帮助弹窗刚好
+        // 顶到最小终端高度, 合并这一对腾出一行 (`every_page_help_fits_the_minimum_terminal`)。
+        ("⏎ / o (详情内)", "改模型 / 改思考档位"),
         ("s", "保存槽位修改"),
         ("e", "启用 / 停用"),
         ("t", "测试连接"),
         ("m", "刷新模型列表"),
         ("b", "刷新余额"),
+        ("n", "新建订阅"),
+        ("d", "删除订阅"),
     ],
     sub_busy_toggling: "正在切换…",
     sub_busy_testing: "正在测试连接…",

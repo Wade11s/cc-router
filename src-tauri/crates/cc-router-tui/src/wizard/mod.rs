@@ -33,6 +33,7 @@ use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 
 use crate::action::{Action, Cmd, WizardCmd, WizardResult};
 use crate::client::dto::{CustomProtocol, ModelSlots, ProbeModelsResult, Provider, RefreshModelsResult, Slot};
+use crate::fx::Dir;
 use crate::i18n::Strings;
 use crate::pages::DrawCtx;
 use crate::store::Store;
@@ -106,6 +107,10 @@ pub struct Wizard {
     notice: Option<(ToastKind, String)>,
     /// `take_close_request()` 的待办标记。
     close_request: bool,
+    /// 换步动效待播的方向; `draw` 取走并调 `fx::wizard_step`。只有 `Basics → Slots` 这一次转场
+    /// 会设它 (见 `apply_wizard_result` 的 `Models` 分支)——`Loading → Basics` 与自定义单页的阶段
+    /// 切换都不算「换步」。
+    pending_step_fx: Option<Dir>,
 }
 
 // clippy::new_without_default: `Wizard::new()` 是这个 crate 第一个零参数的 `new()`, 照 clippy 的
@@ -118,7 +123,7 @@ impl Default for Wizard {
 
 impl Wizard {
     pub fn new() -> Self {
-        Self { stage: Stage::Loading, providers: Vec::new(), notice: None, close_request: false }
+        Self { stage: Stage::Loading, providers: Vec::new(), notice: None, close_request: false, pending_step_fx: None }
     }
 
     /// 刚打开: 要发的请求 (拉厂商列表)。`App` 在创建它之后立刻调一次。
@@ -285,6 +290,9 @@ impl Wizard {
                     .unwrap_or_default();
                 let name = form.draft.display_name.value().to_string();
                 self.stage = Stage::Slots { id: id.clone(), name, form: SlotsForm::new(draft, examples, note), saving: false };
+                // 内置路径唯一的「换步」转场: 第一步的表单换成第二步。自定义单页没有第二步,
+                // `Loading → Basics` 是加载而不是换步, 都不该播这个动效。
+                self.pending_step_fx = Some(Dir::Forward);
                 Vec::new()
             }
             WizardResult::Probed { base_url, result: inner } => {
@@ -337,7 +345,10 @@ impl Wizard {
     pub fn draw(&mut self, frame: &mut Frame, area: Rect, ctx: &mut DrawCtx, popup_open: bool) {
         let paint = Paint { theme: ctx.theme, s: ctx.s, tick: ctx.tick, show_cursor: !popup_open };
         let s = ctx.s;
-        match &self.stage {
+        // 两个动效调用点都在这里 (几何只有 `draw` 知道): 校验失败时每张表单自己的 `draw` 已经
+        // 返回了聚焦行的 (下标, 矩形), 这里只需要取走 `pending_field_err` 决定要不要播;
+        // `mem::take` 让下一帧不会重复播 (与 `pages::subscriptions` 的 `flash_rows` 同一套写法)。
+        match &mut self.stage {
             Stage::Loading => {
                 let state = spinner_state(ctx.tick);
                 // `to_symbol_span` 自己已经在符号后面带一个空格, 这里不用再加。
@@ -349,9 +360,33 @@ impl Wizard {
                 let line = Line::styled((s.wiz_load_failed)(reason), Style::new().fg(ctx.theme.err)).centered();
                 Self::draw_placeholder(frame, area, ctx.theme, s, line);
             }
-            Stage::Basics { form, phase } => form.draw(frame, area, phase, &self.providers, &paint),
-            Stage::Slots { form, saving, .. } => form.draw(frame, area, *saving, &paint),
-            Stage::Custom { form, phase } => form.draw(frame, area, *phase, &paint),
+            Stage::Basics { form, phase } => {
+                let focus = form.draw(frame, area, phase, &self.providers, &paint);
+                if std::mem::take(&mut form.pending_field_err) {
+                    if let Some((row, rect)) = focus {
+                        ctx.fx.field_err(row, rect, ctx.theme.err);
+                    }
+                }
+            }
+            Stage::Slots { form, saving, .. } => {
+                let focus = form.draw(frame, area, *saving, &paint);
+                if std::mem::take(&mut form.pending_field_err) {
+                    if let Some((row, rect)) = focus {
+                        ctx.fx.field_err(row, rect, ctx.theme.err);
+                    }
+                }
+            }
+            Stage::Custom { form, phase } => {
+                let focus = form.draw(frame, area, *phase, &paint);
+                if std::mem::take(&mut form.pending_field_err) {
+                    if let Some((row, rect)) = focus {
+                        ctx.fx.field_err(row, rect, ctx.theme.err);
+                    }
+                }
+            }
+        }
+        if let Some(dir) = self.pending_step_fx.take() {
+            ctx.fx.wizard_step(dir, area, ctx.theme.border);
         }
     }
 
@@ -440,7 +475,7 @@ fn follow_display_name(display_name: &mut TextField, last_auto: &mut Option<Stri
 mod tests {
     use super::*;
     use crate::client::dto::{CreatedSubscription, ModelInfo};
-    use fields::{BasicsField, SlotsField};
+    use fields::{BasicsField, CustomField, SlotsField};
 
     fn provider(id: &str) -> Provider {
         Provider {
@@ -602,6 +637,49 @@ mod tests {
 
         slots(&mut w).state.focus_on(SlotsField::Save);
         assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.wiz_btn_save)], "保存按钮行应该显示它自己的标签");
+    }
+
+    /// 同上, 自定义表单覆盖全部行类型: 选择行 (`Protocol`)、解锁的鉴权选择行、锁定的鉴权行 (没有
+    /// 额外提示)、四个普通文本行、API Key 文本行 (带 Ctrl+R)、`Probe` 按钮行、槽位选择行、
+    /// `Submit` 按钮行。
+    #[test]
+    fn hints_follow_focus_on_every_custom_row_type() {
+        let s = &crate::i18n::ZH;
+        let mut w = custom_at(CustomPhase::Editing);
+
+        custom(&mut w).state.focus_on(CustomField::Protocol);
+        assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.key_pick)], "协议行应该提示 ⏎ 选择");
+
+        // `custom_at` 默认造的是 Anthropic 协议, 鉴权头未锁定。
+        assert!(!custom(&mut w).draft.protocol.auth_locked(), "准备: Anthropic 的鉴权头不该锁定");
+        custom(&mut w).state.focus_on(CustomField::Auth);
+        assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.key_pick)], "解锁的鉴权行应该提示 ⏎ 选择");
+
+        let mut locked = custom_at(CustomPhase::Editing);
+        custom(&mut locked).draft.apply_protocol(CustomProtocol::Gemini);
+        custom(&mut locked).state.focus_on(CustomField::Auth);
+        assert_eq!(locked.hints(s), vec![("↑↓", s.key_field)], "锁定的鉴权行不该有额外提示");
+
+        for field in [CustomField::ProviderName, CustomField::BaseUrl, CustomField::MessagesPath, CustomField::DisplayName] {
+            custom(&mut w).state.focus_on(field);
+            assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.key_next_field)], "{field:?} 应该是普通文本行提示");
+        }
+
+        custom(&mut w).state.focus_on(CustomField::ApiKey);
+        assert_eq!(
+            w.hints(s),
+            vec![("↑↓", s.key_field), ("⏎", s.key_next_field), ("Ctrl+R", s.key_reveal)],
+            "API Key 行额外带 Ctrl+R 提示"
+        );
+
+        custom(&mut w).state.focus_on(CustomField::Probe);
+        assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.wiz_btn_probe)], "Probe 按钮行应该显示它自己的标签");
+
+        custom(&mut w).state.focus_on(CustomField::Slot(Slot::Fable));
+        assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.key_pick)], "槽位行应该提示 ⏎ 选择");
+
+        custom(&mut w).state.focus_on(CustomField::Submit);
+        assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.wiz_btn_create)], "Submit 按钮行应该显示它自己的标签");
     }
 
     /// 编辑字段只清自己的错误——错误是单个 `Option`, 退化成「任何编辑都清」时正向用例照样能过,

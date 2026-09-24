@@ -43,6 +43,11 @@ pub(super) trait FormFields {
     fn kind(&self, field: Self::Field, s: &'static Strings) -> FieldKind;
     /// 字段对应的文本输入; 非文本行是 `None`。
     fn text_field(&mut self, field: Self::Field) -> Option<&mut dyn TextInput>;
+    /// 文本行的光标显示列, 由字段自己的输入框现算 (`visual_cursor()`); 其它行恒 `None`。
+    /// 与 [`Self::text_field`] 分开是因为这里只需要只读访问, 调用方 (`Rows::field`) 不该为了
+    /// 读一个数字去拿 `&mut` —— 这样 `Cell` 就不用再带一个容易被忘记填的 `cursor` 字段
+    /// (穷尽 `match` 保证漏填这里编译就过不去, 不用等到某个字段光标飞到别处才发现)。
+    fn cursor_for(&self, field: Self::Field) -> Option<usize>;
 }
 
 /// [`handle_key`] 处理完之后, 表单自己还要做什么。
@@ -109,15 +114,16 @@ pub(super) fn hints<M: FormFields>(form: &M, s: &'static Strings) -> Vec<Hint<'s
     hints
 }
 
-/// 字段行里由表单给出的内容。错误、锁定态与行右端的提示由 [`Rows::field`] 按字段补齐。
+/// 字段行里由表单给出的内容。错误、锁定态、光标与行右端的提示都由 [`Rows::field`] 按字段补齐——
+/// 光标**不**在这里手传 (见 [`FormFields::cursor_for`] 的文档注释): 这个结构体派生了 `Default`,
+/// 手传的话一个文本行写 `..Cell::default()` 时忘了给 `cursor` 照样编译通过, 快照又不含终端光标,
+/// 这种遗漏没有测试能咬住。
 #[derive(Default)]
 pub(super) struct Cell<'a> {
     pub label: &'a str,
     /// 已经处理好的显示文本 (掩码由调用方决定)。
     pub value: &'a str,
     pub placeholder: &'a str,
-    /// 文本行的光标显示列; 选择行 `None`。
-    pub cursor: Option<usize>,
 }
 
 /// 行右端的固定提示, 每帧拼一次。
@@ -176,7 +182,7 @@ impl<'a, M: FormFields> Rows<'a, M> {
             value: cell.value,
             placeholder: cell.placeholder,
             hint,
-            cursor: cell.cursor,
+            cursor: self.form.cursor_for(field),
             error: self.form.state().error_for(field),
             locked: self.busy || kind == FieldKind::Locked,
         };
@@ -188,7 +194,7 @@ impl<'a, M: FormFields> Rows<'a, M> {
     pub(super) fn slots(&mut self, slots: &'a ModelSlots, field_of: impl Fn(Slot) -> M::Field) {
         for slot in SLOTS {
             let placeholder = if slot == Slot::Fallback { self.s.sub_slot_unset } else { "" };
-            self.field(field_of(slot), Cell { label: slot_label(slot, self.s), value: slots.get(slot), placeholder, cursor: None });
+            self.field(field_of(slot), Cell { label: slot_label(slot, self.s), value: slots.get(slot), placeholder });
         }
     }
 

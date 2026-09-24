@@ -2,13 +2,14 @@
 """cc-router-tui 的伪终端冒烟测试 (仅 macOS / Linux)。
 
 单测用 TestBackend, 测不到「真的进备用屏幕、真的读键盘、真的退得出来」这一段。这个脚本:
-  1. 起一个假的 cc-router 后端 (16 个 command + 事件流; P5 Task 3 加了 `list_providers` /
-     `create_subscription` / `probe_custom_models` / `delete_subscription` 四个, 目前只让它们可被
-     调用, 还没有接进下面的按键序列), 在临时目录写一份 runtime.json, 记录 `update_subscription` /
-     `update_virtual_model` / `list_requests` 收到的原始请求体供事后断言;
+  1. 起一个假的 cc-router 后端 (16 个 command + 事件流, 含 `list_providers` /
+     `create_subscription` / `refresh_model_list` / `probe_custom_models` / `delete_subscription`),
+     在临时目录写一份 runtime.json, 记录 `update_subscription` / `update_virtual_model` /
+     `list_requests` / `create_subscription` / `delete_subscription` 收到的原始请求体供事后断言;
   2. 在 80x24 的伪终端里跑 TUI, 依次按
      2 / j / t / e / ? / Esc / ⏎⏎glm⏎ / q / n / Esc / y / ⏎⏎glm⏎ / s / 3 / l / J / m / s / 4 /
-     空格 / 空格 / ⏎ / ⏎ / jj / Esc / 1 / q
+     空格 / 空格 / ⏎ / ⏎ / jj / Esc / 1 /
+     2 / Esc / n / ⏎ / chatgpt / ⏎ / ⏎ / ⏎ / sk-test / Tab×3 / ⏎ / Tab×6 / ⏎ / 2 / g / d / y / q
      (2 = 订阅页; j 选中第二条 "Kimi 备用"; t = 测试连接, e = 就地启停;
      ⏎⏎glm⏎ 造一份草稿 (改 fable 槽模型) 之后先走一遍 fix round final (M9c) 加的放弃流程练习——
      q (脏页面上 q 会先问「确定放弃」) → n (选否, 草稿原样保留) → Esc (再问一次) → y (这次选是,
@@ -16,26 +17,39 @@
      `TestBackend` 单测里测过; 之后重新走一遍 ⏎⏎glm⏎ 造草稿、这次真的按 s 保存 (打一次假后端的
      `update_subscription`); 3 = 虚拟模型页, 真页面: l 从 Models 进 Members、J 把第一条订阅下移
      一位、m 切换调度模式 (Sequential -> RoundRobin, 同一份草稿), s 保存 (打一次假后端的
-     `update_virtual_model`); 4 = 实时路由页 (Task 7 起是真页面): 空格暂停、再按一次空格继续
+     `update_virtual_model`); 4 = 实时路由页 (真页面): 空格暂停、再按一次空格继续
      (`Live::toggle_pause` 是纯页面内状态, 不经 `Action`, 只能靠画面文字断言走过这条路径);
-     Task 8: ⏎ 跟随最新时目标是最后一个尝试 (haiku/示例中转, 没发 finished, 订阅 "3") ——跳到日志页
+     ⏎ 跟随最新时目标是最后一个尝试 (haiku/示例中转, 没发 finished, 订阅 "3") ——跳到日志页
      并带着这条订阅的过滤条件重新发起 `list_requests`; 日志页里再按 ⏎ 打开第一条 (成功, 带
-     effort/工具字段) 的详情弹窗、jj 往下滚两格 (露出「工具调用」小节)、Esc 关掉弹窗; 1 = 回总览);
+     effort/工具字段) 的详情弹窗、jj 往下滚两格 (露出「工具调用」小节)、Esc 关掉弹窗、1 = 回总览;
+     接着走一遍新建 + 删除的完整向导流程——2 回订阅页 (脚本前面进过一次详情, `Esc` 确保焦点回到
+     列表, `n` 只在 `Focus::List` 下生效) → n 打开向导 (等厂商列表回来) → ⏎ 打开厂商 picker →
+     输入 "chatgpt" 过滤到 OAuth 厂商 → ⏎ 选中它 (不落值, 只弹「请在桌面端添加」的提示) → ⏎ 再开
+     一次 picker (未过滤, 默认选中第一项 = 智谱) → ⏎ 选中它 (`choose_provider` 自动把焦点跳到
+     API Key, 不需要额外导航) → 打 "sk-test" → Tab 三次 (只需要两次到「下一步」按钮, 多按的会被
+     `FormState::step` 在边界夹住, 不会越界) → ⏎ 提交 (等 `create_subscription` +
+     `refresh_model_list` 都跑完, 进第二步; 自动发现预填了四个核心槽) → Tab 六次 (同样只需要五次
+     到「保存」, 多按的被夹住) → ⏎ 保存槽位 (向导关闭并重新拉一次订阅列表) → 2 回订阅页 → g 回到
+     第一条 (脚本前面用 j 选过第二条) → d 删除它 → y 确认);
   3. 断言: 退出码 0、进出过备用屏幕、几个页面的关键文字 (含就地操作的 toast 文案、确认放弃提示、
-     实时路由页的面板标题与暂停态、日志页的总数与详情弹窗内容) 都出现过、假后端真的收到了
-     `update_subscription` (fable 槽模型是选中的 "glm-4.6", 见下面 "Kimi 备用" 的 `model_cache`)、
-     `update_virtual_model` (调度模式已经从 sequential 切到 round_robin、订阅顺序被重排) 与
-     `list_requests` (pageSize=50、按订阅 "3" 过滤) 的请求体、空闲 2 秒几乎不输出 (按需重绘, 且这个
-     窗口不撞上任何 toast 的消散动效)。
+     实时路由页的面板标题与暂停态、日志页的总数与详情弹窗内容、OAuth 厂商的桌面端提示、创建 /
+     删除成功的 toast) 都出现过、假后端真的收到了 `update_subscription`(手动改槽位那次, fable 槽
+     模型是选中的 "glm-4.6", 见下面 "Kimi 备用" 的 `model_cache`)、`update_virtual_model` (调度
+     模式已经从 sequential 切到 round_robin、订阅顺序被重排)、`list_requests` (pageSize=50、按
+     订阅 "3" 过滤)、`create_subscription` (`input.model_slots.fable == "(pending)"` 第二步之前
+     还没绑真实模型、`input.source.kind == "from_template"`、`input.api_key == "sk-test"`)、
+     向导那次的 `update_subscription` (patch 只有 `model_slots` 一个键——向导不设置 effort) 与
+     `delete_subscription` (`id == "1"`, 对应删除时选中的第一条) 的请求体、空闲 2 秒几乎不输出
+     (按需重绘, 且这个窗口不撞上任何 toast 的消散动效)。
 
-  Task 7: 假后端的 SSE 在 1.5 秒发出状态变更事件之后, 紧接着发三组 `route_attempt_*` 事件
+  假后端的 SSE 在 1.5 秒发出状态变更事件之后, 紧接着发三组 `route_attempt_*` 事件
   (started(model-sonnet, "1") + finished(true); started(model-opus, "2") + finished(false);
   started(model-haiku, "3"), 不发 finished——留一条常驻的「进行中」行), 给实时路由页 (键 `4`)
   一份看得见内容的假数据。切进这一页之后按两次空格验证暂停 / 继续 (`Live::toggle_pause` 不产出
   `Cmd`, 纯页面内状态, 只能靠画面文字断言)。
 
-  Task 8: 假后端新增 `list_requests`, 固定返回三条记录 (成功, 带 effort 与工具字段 / 失败 429,
-  带 error_message / 超时) 、`total: 3`, 不管请求体里的过滤条件是什么都返回同一份——与其它假
+  假后端的 `list_requests` 固定返回三条记录 (成功, 带 effort 与工具字段 / 失败 429, 带
+  error_message / 超时) 、`total: 3`, 不管请求体里的过滤条件是什么都返回同一份——与其它假
   command 同一套「忽略参数, 返回固定数据」写法, 过滤条件本身只靠断言收到的请求体来验证。
 
 用法 (仓库根目录):
@@ -197,11 +211,19 @@ EXPECT = [
     "最近 60 秒",
     "已暂停",
     "→ 示例中转",
-    # Task 8: 从实时路由页 ⏎ 跳到日志页 (带着订阅 "3" 的过滤, 假后端固定返回 3 条) + 打开第一条
+    # 从实时路由页 ⏎ 跳到日志页 (带着订阅 "3" 的过滤, 假后端固定返回 3 条) + 打开第一条
     # (成功, 带工具字段) 的详情弹窗。
     "共 3 条",
     "请求详情",
     "工具调用",
+    # 新建订阅向导: 厂商 picker 里选中 OAuth 厂商 (ChatGPT) 只弹提示、不落值——用 `Strings` 里
+    # `wiz_desktop_only` 的实际中文文案 (不是「流程没往下走」这种间接断言)。
+    "请在桌面端添加",
+    # 创建 + 保存槽位成功的 toast (`wiz_created`); 备注名跟着厂商显示名 "智谱" 自动生成, 与已有的
+    # 三条假订阅都不重名, 不会被追加序号。
+    "已创建「智谱」",
+    # 删除第一条订阅 ("智谱主号", id "1") 成功的 toast (`toast_deleted`)。
+    "已删除「智谱主号」",
 ]
 
 
@@ -224,8 +246,12 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(None).encode()
         elif name == "update_subscription":
             # M9(b): 记下收到的 patch, 脚本事后断言 fable 槽真的是这次选中的模型。
+            # Task 8: 这个 command 现在会被打两次 (订阅页手动改槽位一次, 向导第二步保存一次),
+            # `RECORDED["update_subscription"]` 只留最后一次 (给向导那次的「patch 只有
+            # model_slots 一个键」断言用), 完整历史另存一份供订阅页那次的断言引用。
             req = json.loads(raw or b"{}")
             RECORDED["update_subscription"] = req
+            RECORDED.setdefault("update_subscription_history", []).append(req)
             body = json.dumps(DATA[name]).encode()
         elif name == "update_virtual_model":
             # 同样真的改一下内存里的条目, 好让 s 之后的 `Cmd::Fetch(VirtualModels)` 补拉看到新顺序 /
@@ -395,15 +421,38 @@ def main():
         (b"jj", 0.3),
         (b"\x1b", 0.4),  # 关掉详情弹窗
         (b"1", 0.6),
+        # 完整走一遍新建 + 删除。2 回订阅页: 脚本前面进过一次详情且成功保存后焦点仍停在那里
+        # (`Focus::Detail`, 不脏), `n` 只在 `Focus::List` 下生效, 先 Esc 一次确保焦点回到列表。
+        (b"2", 0.6),
+        (b"\x1b", 0.3),
+        (b"n", 0.8),  # 打开向导, 等厂商列表回来
+        (b"\r", 0.4),  # Provider 行 ⏎ 打开厂商 picker
+        (b"chatgpt", 0.3),  # 按 id/label 过滤到 OAuth 厂商
+        (b"\r", 0.4),  # 选中它: 不落值, 只弹「请在桌面端添加」的提示
+        (b"\r", 0.4),  # 再开一次 picker (未过滤, initial 不匹配任何项时默认选中第一项 = 智谱)
+        (b"\r", 0.4),  # 选中智谱: `choose_provider` 自动把焦点跳到 API Key
+        (b"sk-test", 0.2),
+        # 只需要两次 Tab 到「下一步」按钮 (ApiKey -> DisplayName -> Submit), 多按的会在
+        # `FormState::step` 的边界夹住, 不会越界吞掉本该给按钮的 ⏎。
+        (b"\t\t\t", 0.3),
+        (b"\r", 0.8),  # 提交: 等 create_subscription + refresh_model_list 都跑完, 进第二步
+        # 第二步同理只需要五次 Tab 到「保存」(五个槽位行 + 保存按钮), 多按的同样被夹住。
+        (b"\t\t\t\t\t\t", 0.3),
+        (b"\r", 0.8),  # 保存槽位 (向导关闭并重新拉一次订阅列表)
+        (b"2", 0.6),  # 回订阅页
+        (b"g", 0.3),  # 选中第一条 (脚本前面用 j 选过第二条 "Kimi 备用")
+        (b"d", 0.4),  # 删除它 (弹确认)
+        (b"y", 0.4),
     ):
         os.write(fd, keys)
         pump(wait)
-    # 让四条 toast (t 的「连接正常」、e 的「已停用」、订阅页 s 的「槽位已保存」、虚拟模型页 s 的
-    # 「已保存」) 彻底放完再量「空闲」: toast 一条只能显示 3s (`toast::LIFETIME_MS`) + 300ms 消散
-    # 动效, 后一条还要等前一条弹出队列才轮到它显示 (`MAX_TOASTS=4`, 四条都不会被挤掉)。M9(c) 加的
-    # 放弃流程练习 (q/n/Esc/y) 本身不产生任何 toast, 但把后两条 toast (订阅页 s / 虚拟模型页 s)
-    # 往后推迟了几秒 (多了 4 次按键 + 等待), 这里把 settle pump 从 9s 提到 11s 留够余量。
-    pump(11.0)
+    # 让七条 toast (t 的「连接正常」、e 的「已停用」、订阅页 s 的「槽位已保存」、虚拟模型页 s 的
+    # 「已保存」、厂商 picker 选中 OAuth 厂商的「请在桌面端添加」、向导创建成功的「已创建」、
+    # 删除成功的「已删除」) 彻底放完再量「空闲」: toast 一条只能显示 3s (`toast::LIFETIME_MS`) +
+    # 300ms 消散动效, 后一条还要等前一条弹出队列才轮到它显示 (`MAX_TOASTS=4`, 不会被挤掉但会排队)。
+    # M9(c) 加的放弃流程练习 (q/n/Esc/y) 本身不产生任何 toast, 只是往后推迟了几秒; 新增的向导 +
+    # 删除流程把最后三条 toast 排在了整个按键序列的尾巴上, 留够余量把 settle pump 从 11s 提到 20s。
+    pump(20.0)
     before_idle = len(out)
     pump(2.0)
     idle_bytes = len(out) - before_idle
@@ -445,7 +494,11 @@ def main():
     failures += [f"没出现过: {needle}" for needle in EXPECT if needle not in text]
 
     # M9(b): 光 toast 文案对了不能证明发给后端的 payload 也对——直接断言假后端真正收到的请求体。
-    sub_payload = RECORDED.get("update_subscription")
+    # `update_subscription` 这个 command 这次脚本里被打了两次 (这里断言的是订阅页手动改槽位那次,
+    # 也就是历史记录里第一条; 向导保存槽位那次见下面 `wizard_slots_payload`), 所以取
+    # `update_subscription_history[0]` 而不是只留最后一次的 `RECORDED["update_subscription"]`。
+    sub_history = RECORDED.get("update_subscription_history", [])
+    sub_payload = sub_history[0] if sub_history else None
     if not sub_payload:
         failures.append("假后端没有收到 update_subscription 请求")
     else:
@@ -476,6 +529,39 @@ def main():
         if sub_filter != "3":
             failures.append(f"list_requests 的 filters.subscription_id 应该是 \"3\" (⏎ 跳转日志页时带的过滤), 实际 {sub_filter!r}")
 
+    # 新建订阅向导: 第一步提交时槽位还是占位符、来源是内置厂商模板、API Key 就是打的那串——同样
+    # 直接查请求体, 不只看「进了第二步」这个间接信号。
+    create_payload = RECORDED.get("create_subscription")
+    if not create_payload:
+        failures.append("假后端没有收到 create_subscription 请求")
+    else:
+        input_ = create_payload.get("input", {})
+        fable = input_.get("model_slots", {}).get("fable")
+        if fable != "(pending)":
+            failures.append(f"create_subscription 的 model_slots.fable 应该是 \"(pending)\" (第二步之前的占位), 实际 {fable!r}")
+        source_kind = input_.get("source", {}).get("kind")
+        if source_kind != "from_template":
+            failures.append(f"create_subscription 的 source.kind 应该是 \"from_template\", 实际 {source_kind!r}")
+        if input_.get("api_key") != "sk-test":
+            failures.append(f"create_subscription 的 api_key 应该是 \"sk-test\", 实际 {input_.get('api_key')!r}")
+
+    # 向导第二步保存槽位打的是同一个 `update_subscription` command, 这里是历史记录里最后一条
+    # (`RECORDED["update_subscription"]` 只留最后一次, 与上面订阅页那次的 `sub_history[0]` 是同一
+    # 份历史的两端)。向导不设置 effort, patch 应该只有 model_slots 这一个键。
+    wizard_slots_payload = RECORDED.get("update_subscription")
+    if not wizard_slots_payload or wizard_slots_payload is sub_payload:
+        failures.append("假后端没有收到向导保存槽位那次 update_subscription 请求")
+    else:
+        patch_keys = sorted(wizard_slots_payload.get("patch", {}).keys())
+        if patch_keys != ["model_slots"]:
+            failures.append(f"向导保存槽位的 patch 应该只有 model_slots 一个键, 实际 {patch_keys}")
+
+    delete_payload = RECORDED.get("delete_subscription")
+    if not delete_payload:
+        failures.append("假后端没有收到 delete_subscription 请求")
+    elif delete_payload.get("id") != "1":
+        failures.append(f"delete_subscription 的 id 应该是 \"1\" (g 选中的第一条 \"智谱主号\"), 实际 {delete_payload.get('id')!r}")
+
     # 空闲时只有 250ms tick 带来的零星重绘 (冷却倒计时每秒变一格)。几 KB 以上说明在持续全速重画
     # (含撞上了某条 toast 还没放完的消散动效)。
     if idle_bytes > 4000:
@@ -485,6 +571,9 @@ def main():
     print(f"记录的请求体: update_subscription={sub_payload}")
     print(f"记录的请求体: update_virtual_model={vm_payload}")
     print(f"记录的请求体: list_requests={requests_payload}")
+    print(f"记录的请求体: create_subscription={create_payload}")
+    print(f"记录的请求体: update_subscription(向导保存槽位)={wizard_slots_payload}")
+    print(f"记录的请求体: delete_subscription={delete_payload}")
     if failures:
         sys.exit("冒烟失败:\n  " + "\n  ".join(failures))
     print("冒烟通过")

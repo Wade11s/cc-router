@@ -25,11 +25,20 @@ pub(super) struct BasicsForm {
     pub(super) last_auto_name: Option<String>,
     /// 上一次创建失败的原因, 挂在表单顶部。
     pub(super) note: Option<String>,
+    /// 提交刚刚被拒绝, `draw` 该在算出那一行的 `Rect` 之后播一次 `fx::field_err` 并取走它
+    /// (`Wizard::draw` 直接 `mem::take` 这个字段, 见该函数的调用点)。
+    pub(super) pending_field_err: bool,
 }
 
 impl Default for BasicsForm {
     fn default() -> Self {
-        Self { draft: BasicsDraft::default(), state: FormState::new(BasicsField::Provider), last_auto_name: None, note: None }
+        Self {
+            draft: BasicsDraft::default(),
+            state: FormState::new(BasicsField::Provider),
+            last_auto_name: None,
+            note: None,
+            pending_field_err: false,
+        }
     }
 }
 
@@ -60,6 +69,14 @@ impl FormFields for BasicsForm {
     fn text_field(&mut self, field: BasicsField) -> Option<&mut dyn TextInput> {
         self.draft.text_field(field)
     }
+
+    fn cursor_for(&self, field: BasicsField) -> Option<usize> {
+        match field {
+            BasicsField::ApiKey => Some(self.draft.api_key.visual_cursor()),
+            BasicsField::DisplayName => Some(self.draft.display_name.visual_cursor()),
+            BasicsField::Provider | BasicsField::Endpoint | BasicsField::Submit => None,
+        }
+    }
 }
 
 impl BasicsForm {
@@ -78,6 +95,7 @@ impl BasicsForm {
     /// 第二步再绑) 并进 `Creating`。
     fn submit(&mut self, phase: &mut BasicsPhase, s: &'static Strings) -> Option<Action> {
         if !self.state.validate(validate_basics(&self.draft, s)) {
+            self.pending_field_err = true;
             return None;
         }
         self.note = None;
@@ -164,8 +182,9 @@ impl BasicsForm {
     }
 
     /// 三个阶段的行结构完全一样; 请求在飞时 (`Creating` / `LoadingModels`) 全部字段画成只读、
-    /// 按钮换成对应的进行中文案。
-    pub(super) fn draw(&self, frame: &mut Frame, area: Rect, phase: &BasicsPhase, providers: &[Provider], p: &Paint) {
+    /// 按钮换成对应的进行中文案。**返回聚焦行的下标 + 矩形**, 供 `Wizard::draw` 在校验失败时播
+    /// `fx::field_err`——几何只有这里知道, `draw` 本身仍然是纯函数 (不改业务状态)。
+    pub(super) fn draw(&self, frame: &mut Frame, area: Rect, phase: &BasicsPhase, providers: &[Provider], p: &Paint) -> Option<(usize, Rect)> {
         let s = p.s;
         let busy_label = match phase {
             BasicsPhase::Editing => None,
@@ -185,22 +204,15 @@ impl BasicsForm {
         rows.note(self.note.as_deref());
         rows.field(BasicsField::Provider, Cell { label: s.wiz_f_provider, value: &provider_label, ..Cell::default() });
         rows.field(BasicsField::Endpoint, Cell { label: s.wiz_f_endpoint, value: &endpoint_label, ..Cell::default() });
-        rows.field(
-            BasicsField::ApiKey,
-            Cell { label: s.wiz_f_api_key, value: &api_key_text, cursor: Some(self.draft.api_key.visual_cursor()), ..Cell::default() },
-        );
+        rows.field(BasicsField::ApiKey, Cell { label: s.wiz_f_api_key, value: &api_key_text, ..Cell::default() });
         rows.field(
             BasicsField::DisplayName,
-            Cell {
-                label: s.wiz_f_display_name,
-                value: self.draft.display_name.value(),
-                cursor: Some(self.draft.display_name.visual_cursor()),
-                ..Cell::default()
-            },
+            Cell { label: s.wiz_f_display_name, value: self.draft.display_name.value(), ..Cell::default() },
         );
         rows.spacer();
         rows.button(BasicsField::Submit, busy_label);
         let built = rows.finish();
+        let focus_index = built.focus;
 
         let view = FormView {
             title: s.wiz_title,
@@ -210,6 +222,6 @@ impl BasicsForm {
             tick: p.tick,
             show_cursor: p.show_cursor,
         };
-        let _focus_rect = form::draw(frame, area, &view, p.theme, s);
+        form::draw(frame, area, &view, p.theme, s).map(|rect| (focus_index, rect))
     }
 }

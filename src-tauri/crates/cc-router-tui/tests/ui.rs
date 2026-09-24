@@ -741,6 +741,43 @@ fn wizard_cursor_is_hidden_while_a_popup_is_on_top() {
     assert!(!terminal.backend().cursor_visible(), "确认弹窗叠在表单上时不该显示终端光标");
 }
 
+/// 光标现在由字段自己算 (`FormFields::cursor_for`), 不再靠调用方在每个文本行的 `Cell` 字面量里
+/// 手传——漏传编译期就会失败 (穷尽 `match`), 但光标到底有没有画对了只能靠真实终端断言 (快照文本
+/// 不含终端光标)。三张表单各验一次: Basics/Custom 聚焦文本行时光标该跟着打字前进 (同一行内
+/// 移动, x 右移打字个数对应的显示宽度); Slots 全是选择/按钮行, `cursor_for` 恒 `None`, 聚焦时
+/// 不该出现任何终端光标。
+#[test]
+fn the_terminal_cursor_tracks_the_focused_text_row_on_every_form() {
+    fn cursor_after(a: &mut App, typed: &str) -> ratatui::layout::Position {
+        type_str(a, typed);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| a.draw(f, Duration::ZERO)).unwrap();
+        assert!(terminal.backend().cursor_visible(), "聚焦文本行时终端光标应该可见");
+        terminal.backend().cursor_position()
+    }
+
+    // Basics: 选完厂商焦点自动落在 ApiKey 行。
+    let mut basics = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut basics);
+    let p1 = cursor_after(&mut basics, "s");
+    let p2 = cursor_after(&mut basics, "k");
+    assert_eq!(p2.y, p1.y, "同一行继续打字, y 不该变");
+    assert_eq!(p2.x, p1.x + 1, "ASCII 字符应该让光标右移一格");
+
+    // Custom: 进来就聚焦在 ProviderName 行, 不用 focus_row。
+    let mut custom = wizard_custom(CustomProtocol::Anthropic);
+    let p1 = cursor_after(&mut custom, "中");
+    let p2 = cursor_after(&mut custom, "转");
+    assert_eq!(p2.y, p1.y, "同一行继续打字, y 不该变");
+    assert_eq!(p2.x, p1.x + 2, "CJK 字符应该让光标右移两格 (显示宽度)");
+
+    // Slots: 全是选择行 + 按钮行, 没有任何文本行, 聚焦时不该有终端光标。
+    let mut slots = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|f| slots.draw(f, Duration::ZERO)).unwrap();
+    assert!(!terminal.backend().cursor_visible(), "Slots 表单没有文本行, 不该出现终端光标");
+}
+
 /// `Tab`/`BackTab` 在所有行类型上都分别等同 `↓`/`↑`, 不只在文本行才认。
 #[test]
 fn tab_and_backtab_move_focus_on_every_row_type() {
@@ -1113,6 +1150,36 @@ fn wizard_custom_80x24() {
     focus_row(&mut a, slot_row(Slot::Fallback));
 
     insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+/// 同上, 120×40: 自定义表单是三张表单里最长的一份, 宽终端下确认它不会因为值列
+/// (`Constraint::Min(0)` 吃剩余宽度) 变宽而错位。
+#[test]
+fn wizard_custom_120x40() {
+    let mut a = wizard_custom(CustomProtocol::Anthropic);
+    fill_custom(
+        &mut a,
+        CustomFill { provider_name: Some("我的中转"), base_url: Some("https://api.example.com"), api_key: Some("abcdef"), ..Default::default() },
+    );
+    focus_row(&mut a, ZH.wiz_btn_probe);
+    let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
+    a.update(probe_action);
+
+    a.update(Action::WizardDone(Box::new(WizardResult::Probed {
+        base_url: "https://api.example.com".into(),
+        result: Ok(ProbeModelsResult::Auto {
+            models: vec![
+                ModelInfo { id: "claude-sonnet-4".into(), display_name: None },
+                ModelInfo { id: "claude-haiku-4".into(), display_name: None },
+            ],
+            models_url: "https://api.example.com/v1/models".into(),
+        }),
+    })));
+
+    pick_core_slots(&mut a, |slot| PickerChoice::Item(if slot == Slot::Haiku { "claude-haiku-4" } else { "claude-sonnet-4" }.into()));
+    focus_row(&mut a, slot_row(Slot::Fallback));
+
+    insta::assert_snapshot!(render(&mut a, 120, 40));
 }
 
 /// 80×24 下自定义表单内容区实际可用高度是 **16 行** (24 − 3 标签栏 − 1 底栏 − 2 边框 − 2 内距)。
@@ -1514,6 +1581,16 @@ fn subscriptions_120x40() {
 #[test]
 fn subscriptions_list_80x24() {
     insta::assert_snapshot!(render(&mut subs_app(false), 80, 24));
+}
+
+/// 底栏 (`Focus::List`) 在 `b 刷新余额` 后面追加了 `n 新建` / `d 删除`——120 列放得下全部提示,
+/// 直接断言两个键都出现在渲染结果里 (与 `subscriptions_120x40` 快照互为印证, 这里只关心内容
+/// 而不是逐字节布局)。
+#[test]
+fn the_subscriptions_footer_offers_new_and_delete() {
+    let out = render(&mut subs_app(false), 120, 40);
+    assert!(out.contains("n 新建"), "底栏应该有 n 新建\n{out}");
+    assert!(out.contains("d 删除"), "底栏应该有 d 删除\n{out}");
 }
 
 #[test]
@@ -2501,6 +2578,51 @@ fn idle_time_before_a_trigger_does_not_fast_forward_the_effect() {
     assert!(!a.wants_fast_frames(), "150ms 的效果 200ms 后结束");
 }
 
+/// 校验失败真的会播 `fx::field_err` (不只是移动焦点、挂错误文案)——开着动效提交一份空 API Key
+/// 的表单, 这一帧应该切到快速重绘, 播完标称时长后应该停下来。
+#[test]
+fn a_rejected_submit_plays_the_field_err_effect() {
+    let mut a = app(true);
+    settle(&mut a); // 先把启动动效播完, 不干扰下面对 field_err 的断言
+    a.update(Action::OpenWizard);
+    a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![zhipu_provider()])))));
+    select_zhipu(&mut a);
+    focus_row(&mut a, ZH.wiz_btn_next); // API Key 仍是空的
+
+    assert!(a.handle_key(key(KeyCode::Enter)).is_none(), "校验失败不该产出 Action");
+    render(&mut a, 80, 24); // 校验失败发生在 handle_key 里, 这一帧才真的画出错误行、触发动效
+    assert!(a.wants_fast_frames(), "校验失败应该播一次 field_err, 主循环该切到快速重绘");
+
+    render_with(&mut a, 80, 24, Duration::from_millis(u64::from(cc_router_tui::fx::ms::FIELD_ERR)));
+    assert!(!a.wants_fast_frames(), "超过标称时长后 field_err 应该已经播完");
+}
+
+/// `Basics → Slots` 是唯一会播 `fx::wizard_step` 的转场——`Loading → Basics` (拉厂商列表) 不算
+/// 「换步」, 不该播。
+#[test]
+fn advancing_from_basics_to_slots_plays_the_wizard_step_effect_but_loading_providers_does_not() {
+    let mut a = app(true);
+    settle(&mut a); // 先把启动动效播完
+
+    a.update(Action::OpenWizard);
+    a.update(Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![zhipu_provider()])))));
+    render(&mut a, 80, 24);
+    assert!(!a.wants_fast_frames(), "Loading → Basics 不是换步, 不该播 wizard_step");
+
+    let submit_action = submit_basics(&mut a);
+    a.update(submit_action); // 创建在飞
+    a.update(Action::WizardDone(Box::new(WizardResult::Created(Ok(CreatedSubscription { id: "sub-1".into() })))));
+    a.update(Action::WizardDone(Box::new(WizardResult::Models {
+        id: "sub-1".into(),
+        result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 0 }),
+    })));
+
+    render(&mut a, 80, 24);
+    assert!(a.wants_fast_frames(), "Basics → Slots 应该播一次 wizard_step");
+    render_with(&mut a, 80, 24, Duration::from_millis(u64::from(cc_router_tui::fx::ms::WIZARD_STEP)));
+    assert!(!a.wants_fast_frames(), "超过标称时长后 wizard_step 应该已经播完");
+}
+
 #[test]
 fn a_changed_subscription_row_flashes() {
     let mut a = loaded(true);
@@ -2774,11 +2896,23 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
     let second = render(&mut t, 80, 24);
     assert_eq!(first, second, "向导 Basics 阶段应该幂等");
 
-    // 向导第二步 (自动发现的候选已经预填四个核心槽, 聚焦在 Fable 行) 应该幂等。
+    // 向导第二步 (自动发现的候选已经预填四个核心槽, 聚焦在 Fable 行) 应该幂等——第一次 `render`
+    // 顺带取走了 `Basics → Slots` 的 `pending_step_fx`, 第二次不该再画出差异 (即便 fx 关着,
+    // `mem::take` 本身也不能让两帧不一样)。
     let mut u = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
     let first = render(&mut u, 80, 24);
     let second = render(&mut u, 80, 24);
     assert_eq!(first, second, "向导 Slots 阶段应该幂等");
+
+    // 校验失败之后的 Basics 阶段 (错误行 + `pending_field_err` 已经被第一次 `render` 取走) 也应该
+    // 幂等。
+    let mut w = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut w);
+    focus_row(&mut w, ZH.wiz_btn_next); // API Key 仍是空的
+    w.handle_key(key(KeyCode::Enter));
+    let first = render(&mut w, 80, 24);
+    let second = render(&mut w, 80, 24);
+    assert_eq!(first, second, "校验失败后的向导 Basics 阶段应该幂等");
 
     // 向导自定义单页 (已选 Anthropic 协议、正在填厂商名, 光标状态由
     // `visual_cursor()` 现算) 应该幂等。

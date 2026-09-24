@@ -28,6 +28,8 @@ pub(super) struct CustomForm {
     pub(super) last_auto_name: Option<String>,
     /// 探测失败 / 创建失败的原因, 挂在表单顶部; 谁最后发生显示谁。
     pub(super) note: Option<String>,
+    /// 同 `BasicsForm::pending_field_err`——`Probe`/`Submit` 两个按钮都可能触发校验失败。
+    pub(super) pending_field_err: bool,
 }
 
 impl FormFields for CustomForm {
@@ -60,11 +62,28 @@ impl FormFields for CustomForm {
     fn text_field(&mut self, field: CustomField) -> Option<&mut dyn TextInput> {
         self.draft.text_field(field)
     }
+
+    fn cursor_for(&self, field: CustomField) -> Option<usize> {
+        match field {
+            CustomField::ProviderName => Some(self.draft.provider_display_name.visual_cursor()),
+            CustomField::BaseUrl => Some(self.draft.base_url.visual_cursor()),
+            CustomField::MessagesPath => Some(self.draft.messages_path.visual_cursor()),
+            CustomField::ApiKey => Some(self.draft.api_key.visual_cursor()),
+            CustomField::DisplayName => Some(self.draft.display_name.visual_cursor()),
+            CustomField::Protocol | CustomField::Auth | CustomField::Probe | CustomField::Slot(_) | CustomField::Submit => None,
+        }
+    }
 }
 
 impl CustomForm {
     pub(super) fn new(protocol: CustomProtocol) -> Self {
-        Self { draft: CustomDraft::new(protocol), state: FormState::new(CustomField::ProviderName), last_auto_name: None, note: None }
+        Self {
+            draft: CustomDraft::new(protocol),
+            state: FormState::new(CustomField::ProviderName),
+            last_auto_name: None,
+            note: None,
+            pending_field_err: false,
+        }
     }
 
     /// 只在 `CustomPhase::Editing` 下被调用。探测 / 创建发出时把 `phase` 推进到对应的在飞阶段。
@@ -169,6 +188,7 @@ impl CustomForm {
     /// 会同时出现。
     fn submit_probe(&mut self, phase: &mut CustomPhase, s: &'static Strings) -> Option<Action> {
         if !self.state.validate(validate_probe(&self.draft, s)) {
+            self.pending_field_err = true;
             return None;
         }
         self.note = None;
@@ -187,6 +207,7 @@ impl CustomForm {
     /// Base URL 没再改过」的规则回传。发起时同样清掉说明行。
     fn submit(&mut self, phase: &mut CustomPhase, s: &'static Strings) -> Option<Action> {
         if !self.state.validate(validate_custom(&self.draft, s)) {
+            self.pending_field_err = true;
             return None;
         }
         self.note = None;
@@ -214,8 +235,8 @@ impl CustomForm {
     }
 
     /// 14 行固定内容, 不加空行分组 (80×24 下内容区还有富余)。`Auth` 行总是画出来, 锁定时只是
-    /// 只读——锁定与否不影响行数, 只影响焦点顺序。
-    pub(super) fn draw(&self, frame: &mut Frame, area: Rect, phase: CustomPhase, p: &Paint) {
+    /// 只读——锁定与否不影响行数, 只影响焦点顺序。**返回聚焦行的下标 + 矩形**, 同 `BasicsForm::draw`。
+    pub(super) fn draw(&self, frame: &mut Frame, area: Rect, phase: CustomPhase, p: &Paint) -> Option<(usize, Rect)> {
         let s = p.s;
         let d = &self.draft;
         let probing = phase == CustomPhase::Probing;
@@ -229,41 +250,32 @@ impl CustomForm {
         rows.field(CustomField::Protocol, Cell { label: s.wiz_f_protocol, value: protocol_label(d.protocol, s), ..Cell::default() });
         rows.field(
             CustomField::ProviderName,
-            Cell {
-                label: s.wiz_f_provider_name,
-                value: d.provider_display_name.value(),
-                cursor: Some(d.provider_display_name.visual_cursor()),
-                ..Cell::default()
-            },
+            Cell { label: s.wiz_f_provider_name, value: d.provider_display_name.value(), ..Cell::default() },
         );
         rows.field(
             CustomField::BaseUrl,
-            Cell {
-                label: s.wiz_f_base_url,
-                value: d.base_url.value(),
-                placeholder: CUSTOM_BASE_URL_PLACEHOLDER,
-                cursor: Some(d.base_url.visual_cursor()),
-            },
+            Cell { label: s.wiz_f_base_url, value: d.base_url.value(), placeholder: CUSTOM_BASE_URL_PLACEHOLDER },
         );
         rows.field(
             CustomField::MessagesPath,
-            Cell { label: s.wiz_f_messages_path, value: d.messages_path.value(), cursor: Some(d.messages_path.visual_cursor()), ..Cell::default() },
+            Cell { label: s.wiz_f_messages_path, value: d.messages_path.value(), ..Cell::default() },
         );
         rows.field(CustomField::Auth, Cell { label: s.wiz_f_auth, value: &auth_label, ..Cell::default() });
-        rows.field(CustomField::ApiKey, Cell { label: s.wiz_f_api_key, value: &api_key_text, cursor: Some(d.api_key.visual_cursor()), ..Cell::default() });
+        rows.field(CustomField::ApiKey, Cell { label: s.wiz_f_api_key, value: &api_key_text, ..Cell::default() });
         rows.field(
             CustomField::DisplayName,
-            Cell { label: s.wiz_f_display_name, value: d.display_name.value(), cursor: Some(d.display_name.visual_cursor()), ..Cell::default() },
+            Cell { label: s.wiz_f_display_name, value: d.display_name.value(), ..Cell::default() },
         );
         rows.button(CustomField::Probe, probing.then_some(s.wiz_probing));
         rows.slots(&d.slots.slots, CustomField::Slot);
         rows.button(CustomField::Submit, creating.then_some(s.wiz_creating));
         let built = rows.finish();
+        let focus_index = built.focus;
 
         // 单页没有步骤条, 标题换成专属的 `wiz_custom_title`。
         let view =
             FormView { title: s.wiz_custom_title, steps: None, rows: &built.rows, focus: built.focus, tick: p.tick, show_cursor: p.show_cursor };
-        let _focus_rect = form::draw(frame, area, &view, p.theme, s);
+        form::draw(frame, area, &view, p.theme, s).map(|rect| (focus_index, rect))
     }
 }
 
