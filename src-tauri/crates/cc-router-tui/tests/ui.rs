@@ -428,13 +428,114 @@ fn type_str(a: &mut App, text: &str) {
     }
 }
 
+/// 表单最多有多少行可聚焦 (自定义单页 14 行), 留足余量——`focus_row` 按这么多次 `↑` 保证到顶,
+/// 再最多按这么多次 `↓` 找目标行。
+const FORM_ROW_LIMIT: usize = 30;
+
+/// 当前焦点是不是停在 `label` 那一行: 字段行画成 `"▌ <标签> "` (标签列定宽, 后面至少一格空白,
+/// 所以「厂商」不会误中「厂商名」); 按钮行没有 `▌`, 聚焦时只有 `[ 标签 ]` 那一段反色——用
+/// buffer 里 `[` 那一格的 `REVERSED` 判断。按真实渲染结果判, 不依赖向导内部的字段枚举。
+fn focused_row_is(a: &mut App, label: &str) -> bool {
+    let buf = render_buffer(a, 80, 24);
+    let field = format!("▌ {label} ");
+    let button = format!("[ {label} ]");
+    (0..buf.area.height).any(|y| {
+        // 不用 `buffer_row_text`: 宽字符后面的延续格在 `TestBackend` 里是 `" "`, 拼出来是
+        // 「厂 商」, 这里按符号宽度跳过延续格, 拼回屏幕上看到的样子。
+        let mut text = String::new();
+        let mut x = 0;
+        while x < buf.area.width {
+            let sym = buf[(x, y)].symbol();
+            text.push_str(sym);
+            x += sym.width().max(1) as u16;
+        }
+        text.contains(&field)
+            || (text.contains(&button)
+                && (0..buf.area.width).any(|x| buf[(x, y)].symbol() == "[" && buf[(x, y)].style().add_modifier.contains(Modifier::REVERSED)))
+    })
+}
+
+fn assert_focus(a: &mut App, label: &str) {
+    assert!(focused_row_is(a, label), "焦点应该停在「{label}」行\n{}", render(a, 80, 24));
+}
+
+/// 把焦点挪到 `label` 那一行: 先按 `FORM_ROW_LIMIT` 次 `↑` 到顶 (焦点移动在两端夹住, 多按无害),
+/// 再逐次 `↓` 直到渲染结果里的焦点行就是它——不再靠注释数步数。找不到就 panic 并打印屏幕。
+fn focus_row(a: &mut App, label: &str) {
+    for _ in 0..FORM_ROW_LIMIT {
+        a.handle_key(key(KeyCode::Up));
+    }
+    for _ in 0..FORM_ROW_LIMIT {
+        if focused_row_is(a, label) {
+            return;
+        }
+        a.handle_key(key(KeyCode::Down));
+    }
+    panic!("按了 {FORM_ROW_LIMIT} 次 ↓ 也没找到「{label}」行\n{}", render(a, 80, 24));
+}
+
+/// 槽位行的标签 (与 `pages::subscriptions::slot_label` 同值; 那个函数不公开)。
+fn slot_row(slot: Slot) -> &'static str {
+    match slot {
+        Slot::Fable => "fable",
+        Slot::Opus => "opus",
+        Slot::Sonnet => "sonnet",
+        Slot::Haiku => "haiku",
+        Slot::Fallback => ZH.sub_slot_fallback,
+    }
+}
+
+/// 自定义表单的文本字段, `None` = 不碰这个字段 (保留预设 / 自动跟随出来的值)。
+#[derive(Default)]
+struct CustomFill<'a> {
+    provider_name: Option<&'a str>,
+    base_url: Option<&'a str>,
+    messages_path: Option<&'a str>,
+    api_key: Option<&'a str>,
+    display_name: Option<&'a str>,
+}
+
+/// 最常用的一份: 厂商名「中转站」/ `https://relay.example.com` / `sk-test`, 其余保留。
+fn relay_fill() -> CustomFill<'static> {
+    CustomFill { provider_name: Some("中转站"), base_url: Some("https://relay.example.com"), api_key: Some("sk-test"), ..Default::default() }
+}
+
+/// 按表单顺序把 `f` 里给了值的文本字段**设成**那个值 (`Ctrl+U` 清空整行再逐字输入——与用户手打
+/// 同一条按键路径, 不是直接改草稿)。厂商名先于备注名填, 所以给了 `display_name` 时它覆盖自动
+/// 跟随出来的值。
+fn fill_custom(a: &mut App, f: CustomFill) {
+    let fields = [
+        (ZH.wiz_f_provider_name, f.provider_name),
+        (ZH.wiz_f_base_url, f.base_url),
+        (ZH.wiz_f_messages_path, f.messages_path),
+        (ZH.wiz_f_api_key, f.api_key),
+        (ZH.wiz_f_display_name, f.display_name),
+    ];
+    for (label, value) in fields {
+        if let Some(value) = value {
+            focus_row(a, label);
+            a.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+            type_str(a, value);
+        }
+    }
+}
+
+/// 自定义表单: 依次在四个核心槽上 `⏎` 开 picker 并选 `choice`。
+fn pick_core_slots(a: &mut App, choice: impl Fn(Slot) -> PickerChoice) {
+    for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku] {
+        focus_row(a, slot_row(slot));
+        let open = a.handle_key(key(KeyCode::Enter)).expect("槽位行 ⏎ 应该开 picker");
+        a.update(open);
+        a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot }, choice: choice(slot) });
+    }
+}
+
 /// 填完 `Basics` (智谱 AI / `sk-test`) 并提交, 返回那次提交产出的 `Action` (调用方按需再
 /// `a.update(...)` 一次, 进 `Stage::Creating`)。P5 Task 5 起多个用例共用这段驱动路径。
 fn submit_basics(a: &mut App) -> Action {
     select_zhipu(a);
     type_str(a, "sk-test");
-    a.handle_key(key(KeyCode::Tab)); // ApiKey -> DisplayName
-    a.handle_key(key(KeyCode::Tab)); // DisplayName -> Submit
+    focus_row(a, ZH.wiz_btn_next);
     a.handle_key(key(KeyCode::Enter)).expect("填完表单提交应该产出 Action")
 }
 
@@ -493,7 +594,8 @@ fn picking_an_oauth_provider_only_explains_where_to_add_it() {
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.wiz_desktop_only), "选中 OAuth 厂商应该显示「请在桌面端添加」\n{out}");
 
-    a.handle_key(key(KeyCode::Down)); // Provider -> Endpoint (焦点没有因为选 OAuth 厂商而移动)
+    assert_focus(&mut a, ZH.wiz_f_provider); // 焦点没有因为选 OAuth 厂商而移动
+    focus_row(&mut a, ZH.wiz_f_endpoint);
     assert_eq!(
         a.handle_key(key(KeyCode::Enter)),
         Some(Action::Notify { kind: ToastKind::Info, text: ZH.wiz_pick_provider_first.to_string() }),
@@ -508,8 +610,7 @@ fn the_wizard_builds_a_create_command_with_pending_slots() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     select_zhipu(&mut a);
     type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Tab)); // ApiKey -> DisplayName
-    a.handle_key(key(KeyCode::Tab)); // DisplayName -> Submit
+    focus_row(&mut a, ZH.wiz_btn_next);
     let submit_action = a.handle_key(key(KeyCode::Enter)).expect("填完表单提交应该产出 Action");
     let cmds = a.update(submit_action);
     assert_eq!(
@@ -523,17 +624,16 @@ fn the_wizard_builds_a_create_command_with_pending_slots() {
     );
 }
 
-/// 不填 key 直接提交 → 不产出 `Cmd`, 屏幕上出现 `ZH.wiz_err_api_key` (焦点也应该跳回 `ApiKey`,
-/// 用下一次 `Ctrl+R` 依然作用在它身上间接验证)。
+/// 不填 key 直接提交 → 不产出 `Cmd`, 屏幕上出现 `ZH.wiz_err_api_key`, 焦点跳回 `ApiKey`。
 #[test]
 fn submitting_an_incomplete_form_moves_the_cursor_to_the_bad_field() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     select_zhipu(&mut a);
-    a.handle_key(key(KeyCode::Tab)); // ApiKey -> DisplayName (key 还是空的)
-    a.handle_key(key(KeyCode::Tab)); // DisplayName -> Submit
+    focus_row(&mut a, ZH.wiz_btn_next); // key 还是空的
     assert!(a.handle_key(key(KeyCode::Enter)).is_none(), "校验失败不该产出 Action");
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.wiz_err_api_key), "{out}");
+    assert_focus(&mut a, ZH.wiz_f_api_key);
 }
 
 /// 打字之后屏幕上是 `••`; `Ctrl+R` 之后是明文; 再 `Ctrl+R` 又变回掩码。
@@ -596,7 +696,7 @@ fn reselecting_the_same_provider_keeps_the_manually_chosen_endpoint() {
     select_zhipu(&mut a); // provider_id=zhipu, endpoint_id=cn (默认), 焦点在 ApiKey
 
     // 手动把接入点改成国际版。
-    a.handle_key(key(KeyCode::Up)); // ApiKey -> Endpoint
+    focus_row(&mut a, ZH.wiz_f_endpoint);
     let open_endpoint = a.handle_key(key(KeyCode::Enter)).expect("Endpoint 行 ⏎ 应该产出 Action::OpenPicker");
     a.update(open_endpoint);
     a.update(Action::PickerDone { tag: PickerTag::WizardEndpoint, choice: PickerChoice::Item("intl".into()) });
@@ -604,7 +704,7 @@ fn reselecting_the_same_provider_keeps_the_manually_chosen_endpoint() {
     assert!(out.contains("国际版"), "改接入点应该生效\n{out}");
 
     // 回到厂商行, 重新确认同一个厂商 (智谱)。
-    a.handle_key(key(KeyCode::Up)); // Endpoint -> Provider
+    focus_row(&mut a, ZH.wiz_f_provider);
     let open_provider = a.handle_key(key(KeyCode::Enter)).expect("Provider 行 ⏎ 应该产出 Action::OpenPicker");
     a.update(open_provider);
     a.update(Action::PickerDone { tag: PickerTag::WizardProvider, choice: PickerChoice::Item("zhipu".into()) });
@@ -617,15 +717,13 @@ fn reselecting_the_same_provider_keeps_the_manually_chosen_endpoint() {
 fn editing_a_field_clears_only_its_own_error() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     // 什么都不填直接提交: 第一个不合法的字段 (厂商) 报错, 焦点也被 `submit()` 拨回那个字段。
-    a.handle_key(key(KeyCode::Down)); // Provider -> Endpoint
-    a.handle_key(key(KeyCode::Down)); // Endpoint -> ApiKey
-    a.handle_key(key(KeyCode::Down)); // ApiKey -> DisplayName
-    a.handle_key(key(KeyCode::Down)); // DisplayName -> Submit
+    focus_row(&mut a, ZH.wiz_btn_next);
     assert!(a.handle_key(key(KeyCode::Enter)).is_none(), "校验失败不该产出 Action");
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.wiz_err_provider), "应该先报厂商未选\n{out}");
 
     // 选厂商修好这一项 (`submit()` 已经把焦点拨回了 Provider 行, `select_zhipu` 的前提成立)。
+    assert_focus(&mut a, ZH.wiz_f_provider);
     select_zhipu(&mut a);
     let out2 = render(&mut a, 80, 24);
     assert!(!out2.contains(ZH.wiz_err_provider), "选了厂商之后, 厂商自己的错误应该消失\n{out2}");
@@ -678,8 +776,7 @@ fn creating_swallows_escape_and_hides_the_cancel_hint() {
     let mut a = wizard_with_providers(vec![zhipu_provider()]);
     select_zhipu(&mut a);
     type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Tab)); // ApiKey -> DisplayName
-    a.handle_key(key(KeyCode::Tab)); // DisplayName -> Submit
+    focus_row(&mut a, ZH.wiz_btn_next);
     let submit_action = a.handle_key(key(KeyCode::Enter)).expect("提交应该产出 Action");
     a.update(submit_action); // 进入 Stage::Creating
 
@@ -745,9 +842,7 @@ fn loading_models_shows_the_cancel_hint_but_creating_and_saving_do_not() {
         id: "sub-1".into(),
         result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 0 }),
     }))); // Stage::Slots
-    for _ in 0..5 {
-        a.handle_key(key(KeyCode::Down));
-    }
+    focus_row(&mut a, ZH.wiz_btn_save);
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
     a.update(save_action); // Stage::Saving
     let out_saving = render(&mut a, 80, 24);
@@ -768,9 +863,7 @@ fn auto_discovered_models_prefill_every_core_slot() {
 
     // 直接跳到 Save 提交应该通过 (四个核心槽都已经填好), 证明预填是真的写进了草稿, 不只是画面
     // 巧合显示了 "glm-4.6" 这几个字。
-    for _ in 0..5 {
-        a.handle_key(key(KeyCode::Down));
-    }
+    focus_row(&mut a, ZH.wiz_btn_save);
     assert!(a.handle_key(key(KeyCode::Enter)).is_some(), "槽位已经填好, 提交应该通过校验");
 }
 
@@ -780,9 +873,7 @@ fn auto_discovered_models_prefill_every_core_slot() {
 #[test]
 fn an_empty_auto_list_leaves_the_core_slots_blank() {
     let mut a = wizard_at_slots(vec![]);
-    for _ in 0..5 {
-        a.handle_key(key(KeyCode::Down));
-    }
+    focus_row(&mut a, ZH.wiz_btn_save);
     assert!(a.handle_key(key(KeyCode::Enter)).is_none(), "空候选时槽位应该留空, 校验应该失败");
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.wiz_err_slot), "{out}");
@@ -798,9 +889,7 @@ fn a_manual_fallback_leaves_the_slots_empty_and_explains_why() {
 
     // 槽位留空: 直接跳到 Save 提交应该被 `validate_slots` 拦住, 证明四个核心槽确实是空的
     // (不是巧合没显示出候选文本)。
-    for _ in 0..5 {
-        a.handle_key(key(KeyCode::Down));
-    }
+    focus_row(&mut a, ZH.wiz_btn_save);
     assert!(a.handle_key(key(KeyCode::Enter)).is_none(), "槽位空着, 校验应该失败");
     let out2 = render(&mut a, 80, 24);
     assert!(out2.contains(ZH.wiz_err_slot), "{out2}");
@@ -822,9 +911,7 @@ fn a_failed_model_list_request_behaves_like_manual_fallback() {
 #[test]
 fn saving_sends_only_the_model_slots_patch() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
-    for _ in 0..5 {
-        a.handle_key(key(KeyCode::Down)); // Fable -> Opus -> Sonnet -> Haiku -> Fallback -> Save
-    }
+    focus_row(&mut a, ZH.wiz_btn_save);
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("填好后保存应该产出 Action");
     let cmds = a.update(save_action);
     assert_eq!(
@@ -848,9 +935,7 @@ fn saving_sends_only_the_model_slots_patch() {
 #[test]
 fn saving_is_read_only_until_the_result_comes_back() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
-    for _ in 0..5 {
-        a.handle_key(key(KeyCode::Down));
-    }
+    focus_row(&mut a, ZH.wiz_btn_save);
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
     a.update(save_action); // Stage::Saving
 
@@ -863,9 +948,7 @@ fn saving_is_read_only_until_the_result_comes_back() {
 #[test]
 fn a_successful_save_closes_the_wizard_with_a_toast() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
-    for _ in 0..5 {
-        a.handle_key(key(KeyCode::Down));
-    }
+    focus_row(&mut a, ZH.wiz_btn_save);
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
     a.update(save_action); // Stage::Saving
 
@@ -884,9 +967,7 @@ fn a_successful_save_closes_the_wizard_with_a_toast() {
 #[test]
 fn a_failed_save_returns_to_slots_and_explains_why() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
-    for _ in 0..5 {
-        a.handle_key(key(KeyCode::Down));
-    }
+    focus_row(&mut a, ZH.wiz_btn_save);
     let save_action = a.handle_key(key(KeyCode::Enter)).expect("保存应该产出 Action");
     a.update(save_action);
 
@@ -956,9 +1037,7 @@ fn the_slot_picker_prefers_real_candidates_and_falls_back_to_example_models() {
 #[test]
 fn the_fallback_slot_picker_offers_a_clear_item_first() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
-    for _ in 0..4 {
-        a.handle_key(key(KeyCode::Down)); // Fable -> Opus -> Sonnet -> Haiku -> Fallback
-    }
+    focus_row(&mut a, slot_row(Slot::Fallback));
     let action = a.handle_key(key(KeyCode::Enter)).expect("Fallback 行 ⏎ 应该打开 picker");
     let Action::OpenPicker(spec) = action else { panic!("应该是 OpenPicker, 实际 {action:?}") };
     assert_eq!(
@@ -974,7 +1053,7 @@ fn the_fallback_slot_picker_offers_a_clear_item_first() {
 #[test]
 fn picking_a_slot_model_through_the_app_writes_it_into_the_draft() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
-    a.handle_key(key(KeyCode::Down)); // Fable -> Opus
+    focus_row(&mut a, slot_row(Slot::Opus));
     let open_action = a.handle_key(key(KeyCode::Enter)).expect("Opus 行 ⏎ 应该打开 picker");
     a.update(open_action);
     a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot: Slot::Opus }, choice: PickerChoice::Custom("custom-model".into()) });
@@ -987,9 +1066,7 @@ fn picking_a_slot_model_through_the_app_writes_it_into_the_draft() {
 #[test]
 fn picking_clear_on_the_fallback_slot_writes_an_empty_string() {
     let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
-    for _ in 0..4 {
-        a.handle_key(key(KeyCode::Down)); // -> Fallback
-    }
+    focus_row(&mut a, slot_row(Slot::Fallback));
     let open_action = a.handle_key(key(KeyCode::Enter)).expect("Fallback 行 ⏎ 应该打开 picker");
     a.update(open_action);
     a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot: Slot::Fallback }, choice: PickerChoice::Item("glm-4.6".into()) });
@@ -1020,15 +1097,12 @@ fn wizard_custom_80x24() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
     // 评审 7: 备注名跟着厂商名自动生成, 不用再手填一遍——打厂商名的同时备注名就已经是
     // "我的中转" 了。
-    type_str(&mut a, "我的中转"); // ProviderName
-    a.handle_key(key(KeyCode::Tab)); // -> BaseUrl
-    type_str(&mut a, "https://api.example.com");
-    a.handle_key(key(KeyCode::Tab)); // -> MessagesPath (保留 Anthropic 预设 /v1/messages)
-    a.handle_key(key(KeyCode::Tab)); // -> Auth (保留预设 Authorization/Bearer)
-    a.handle_key(key(KeyCode::Tab)); // -> ApiKey
-    type_str(&mut a, "abcdef");
-    a.handle_key(key(KeyCode::Tab)); // -> DisplayName (已经自动跟随厂商名, 不用再打字)
-    a.handle_key(key(KeyCode::Tab)); // -> Probe
+    // 请求路径 / 鉴权保留 Anthropic 预设, 备注名已经自动跟随厂商名, 都不用碰。
+    fill_custom(
+        &mut a,
+        CustomFill { provider_name: Some("我的中转"), base_url: Some("https://api.example.com"), api_key: Some("abcdef"), ..Default::default() },
+    );
+    focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // Stage::Probing
 
@@ -1043,19 +1117,10 @@ fn wizard_custom_80x24() {
         }),
     })));
 
-    // 手动给四个核心槽选值 (探测成功不自动预填, 焦点此刻停在 Slot(Fable))。
-    for (slot, model) in [
-        (Slot::Fable, "claude-sonnet-4"),
-        (Slot::Opus, "claude-sonnet-4"),
-        (Slot::Sonnet, "claude-sonnet-4"),
-        (Slot::Haiku, "claude-haiku-4"),
-    ] {
-        let open = a.handle_key(key(KeyCode::Enter)).expect("槽位行 ⏎ 应该开 picker");
-        a.update(open);
-        a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot }, choice: PickerChoice::Item(model.into()) });
-        a.handle_key(key(KeyCode::Down));
-    }
-    // 兜底槽留空 (焦点此刻在 Fallback, 不操作它)。
+    // 手动给四个核心槽选值 (探测成功不自动预填)。
+    pick_core_slots(&mut a, |slot| PickerChoice::Item(if slot == Slot::Haiku { "claude-haiku-4" } else { "claude-sonnet-4" }.into()));
+    // 兜底槽留空 (焦点停在它上面, 不操作它)。
+    focus_row(&mut a, slot_row(Slot::Fallback));
 
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
@@ -1068,15 +1133,11 @@ fn wizard_custom_80x24() {
 #[test]
 fn the_custom_form_fits_the_minimum_terminal() {
     let mut a = wizard_custom(CustomProtocol::Gemini);
-    type_str(&mut a, "中转站"); // ProviderName
-    a.handle_key(key(KeyCode::Down)); // -> BaseUrl
-    type_str(&mut a, "https://relay.example.com");
-    a.handle_key(key(KeyCode::Down)); // -> MessagesPath (保留 Gemini 预设, 已含 {model})
-    a.handle_key(key(KeyCode::Down)); // -> ApiKey (Gemini 锁定鉴权头, Auth 行被跳过)
-    type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Down)); // -> DisplayName
-    type_str(&mut a, "中转站");
-    a.handle_key(key(KeyCode::Down)); // -> Probe
+    // Base URL 必须**替换**掉 Gemini 的非空预设: 旧写法在预设后面追加, 草稿成了两段 URL 拼接,
+    // 下面那份 `Probed` 被身份守卫 (评审 4) 当成别人的结果丢弃, 说明行根本没挂上——这条测试一度
+    // 只在量「14 行」而不是它声称的「16 行零余量」。请求路径保留 Gemini 预设 (已含 {model})。
+    fill_custom(&mut a, relay_fill());
+    focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // Stage::Probing
     // 探测失败, 挂上一条短说明 (只占 1 行: 14+1+1=16, 恰好等于可用高度)。
@@ -1086,6 +1147,7 @@ fn the_custom_form_fits_the_minimum_terminal() {
     })));
 
     let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.wiz_models_manual)("上游不支持自动发现")), "说明行应该真的挂上了\n{out}");
     assert!(!out.contains(ZH.form_more), "14 行内容 + 1 行说明 + 1 行空行 = 16 行, 应该恰好放得下 (零余量), 不该出现滚动提示\n{out}");
 }
 
@@ -1095,9 +1157,9 @@ fn the_custom_form_fits_the_minimum_terminal() {
 #[test]
 fn a_locked_protocol_skips_the_auth_row() {
     let mut a = wizard_custom(CustomProtocol::Gemini);
-    a.handle_key(key(KeyCode::Down)); // ProviderName -> BaseUrl
-    a.handle_key(key(KeyCode::Down)); // BaseUrl -> MessagesPath
-    a.handle_key(key(KeyCode::Down)); // MessagesPath -> ApiKey (跳过锁定的 Auth)
+    focus_row(&mut a, ZH.wiz_f_messages_path);
+    a.handle_key(key(KeyCode::Down)); // 这一步就是被测行为: 跳过锁定的 Auth, 不能换成 focus_row
+    assert_focus(&mut a, ZH.wiz_f_api_key);
 
     let ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
     a.handle_key(ctrl_r);
@@ -1112,20 +1174,14 @@ fn a_locked_protocol_skips_the_auth_row() {
 #[test]
 fn reselecting_the_same_protocol_does_not_reset_the_edited_fields() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    a.handle_key(key(KeyCode::Down)); // ProviderName -> BaseUrl
-    type_str(&mut a, "https://relay.example.com");
-    a.handle_key(key(KeyCode::Down)); // BaseUrl -> MessagesPath
-    type_str(&mut a, "/api/v1/messages");
-    a.handle_key(key(KeyCode::Down)); // MessagesPath -> Auth
+    fill_custom(&mut a, CustomFill { base_url: Some("https://relay.example.com"), messages_path: Some("/api/v1/messages"), ..Default::default() });
+    focus_row(&mut a, ZH.wiz_f_auth);
     let open_auth = a.handle_key(key(KeyCode::Enter)).expect("Auth 行 ⏎ 应该产出 Action::OpenPicker");
     a.update(open_auth);
     a.update(Action::PickerDone { tag: PickerTag::WizardAuth, choice: PickerChoice::Item("x-api-key".into()) });
 
     // 回到协议行, 重新确认同一个协议 (Anthropic)。
-    a.handle_key(key(KeyCode::Up)); // Auth -> MessagesPath
-    a.handle_key(key(KeyCode::Up)); // MessagesPath -> BaseUrl
-    a.handle_key(key(KeyCode::Up)); // BaseUrl -> ProviderName
-    a.handle_key(key(KeyCode::Up)); // ProviderName -> Protocol
+    focus_row(&mut a, ZH.wiz_f_protocol);
     let open_protocol = a.handle_key(key(KeyCode::Enter)).expect("Protocol 行 ⏎ 应该产出 Action::OpenPicker");
     a.update(open_protocol);
     a.update(Action::PickerDone { tag: PickerTag::WizardProtocol, choice: PickerChoice::Item(CustomProtocol::Anthropic.as_wire().into()) });
@@ -1151,18 +1207,13 @@ fn display_name_follows_the_provider_name_while_still_auto() {
 fn display_name_stops_following_after_a_manual_edit() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
     type_str(&mut a, "MyRelay"); // ProviderName, 备注名跟着自动变成 "MyRelay"
-    for _ in 0..4 {
-        a.handle_key(key(KeyCode::Down)); // ProviderName -> BaseUrl -> MessagesPath -> Auth -> ApiKey
-    }
-    a.handle_key(key(KeyCode::Down)); // ApiKey -> DisplayName
+    focus_row(&mut a, ZH.wiz_f_display_name);
     for _ in 0.."MyRelay".chars().count() {
         a.handle_key(key(KeyCode::Backspace));
     }
     type_str(&mut a, "Other"); // 手动改成别的值
 
-    for _ in 0..5 {
-        a.handle_key(key(KeyCode::Up)); // DisplayName -> ApiKey -> Auth -> MessagesPath -> BaseUrl -> ProviderName
-    }
+    focus_row(&mut a, ZH.wiz_f_provider_name);
     type_str(&mut a, "X"); // 继续编辑厂商名
 
     let out = render(&mut a, 80, 24);
@@ -1186,14 +1237,8 @@ fn display_name_auto_fill_adds_a_number_on_collision_with_an_existing_subscripti
 #[test]
 fn probing_sends_the_protocol_and_the_trimmed_base_url() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    a.handle_key(key(KeyCode::Down)); // ProviderName -> BaseUrl
-    type_str(&mut a, "  https://relay.example.com  ");
-    a.handle_key(key(KeyCode::Down)); // BaseUrl -> MessagesPath
-    a.handle_key(key(KeyCode::Down)); // MessagesPath -> Auth
-    a.handle_key(key(KeyCode::Down)); // Auth -> ApiKey
-    type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Down)); // ApiKey -> DisplayName
-    a.handle_key(key(KeyCode::Down)); // DisplayName -> Probe
+    fill_custom(&mut a, CustomFill { base_url: Some("  https://relay.example.com  "), api_key: Some("sk-test"), ..Default::default() });
+    focus_row(&mut a, ZH.wiz_btn_probe);
 
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     assert_eq!(
@@ -1214,14 +1259,8 @@ fn probing_sends_the_protocol_and_the_trimmed_base_url() {
 #[test]
 fn submitting_probe_clears_the_previous_failure_note() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    a.handle_key(key(KeyCode::Down)); // -> BaseUrl
-    type_str(&mut a, "https://relay.example.com");
-    a.handle_key(key(KeyCode::Down)); // -> MessagesPath
-    a.handle_key(key(KeyCode::Down)); // -> Auth
-    a.handle_key(key(KeyCode::Down)); // -> ApiKey
-    type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Down)); // -> DisplayName
-    a.handle_key(key(KeyCode::Down)); // -> Probe
+    fill_custom(&mut a, CustomFill { base_url: Some("https://relay.example.com"), api_key: Some("sk-test"), ..Default::default() });
+    focus_row(&mut a, ZH.wiz_btn_probe);
     let probe1 = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe1); // Stage::Probing
     a.update(Action::WizardDone(Box::new(WizardResult::Probed { base_url: "https://relay.example.com".into(), result: Err("网络错误".into()) })));
@@ -1229,7 +1268,8 @@ fn submitting_probe_clears_the_previous_failure_note() {
     assert!(out.contains(&(ZH.wiz_models_manual)("网络错误")), "先确认失败说明确实挂上了\n{out}");
 
     // `Probed` 落地后焦点被挪到 Slot(Fable) (`apply_wizard_result` 统一行为), 挪回 Probe 行重试。
-    a.handle_key(key(KeyCode::Up));
+    assert_focus(&mut a, slot_row(Slot::Fable));
+    focus_row(&mut a, ZH.wiz_btn_probe);
     let probe2 = a.handle_key(key(KeyCode::Enter));
     assert!(matches!(probe2, Some(Action::WizardRequest(_))), "重试应该发出新的 Probe 请求, 实际 {probe2:?}");
     let out2 = render(&mut a, 80, 24);
@@ -1240,23 +1280,10 @@ fn submitting_probe_clears_the_previous_failure_note() {
 #[test]
 fn submitting_create_clears_the_previous_failure_note() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    type_str(&mut a, "中转站"); // ProviderName (备注名跟着自动填)
-    a.handle_key(key(KeyCode::Down)); // -> BaseUrl
-    type_str(&mut a, "https://relay.example.com");
-    a.handle_key(key(KeyCode::Down)); // -> MessagesPath
-    a.handle_key(key(KeyCode::Down)); // -> Auth
-    a.handle_key(key(KeyCode::Down)); // -> ApiKey
-    type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Down)); // -> DisplayName
-    a.handle_key(key(KeyCode::Down)); // -> Probe
-    a.handle_key(key(KeyCode::Down)); // -> Slot(Fable)
-    for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku] {
-        let open = a.handle_key(key(KeyCode::Enter)).expect("槽位行 ⏎ 应该开 picker");
-        a.update(open);
-        a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot }, choice: PickerChoice::Custom("glm-4.6".into()) });
-        a.handle_key(key(KeyCode::Down));
-    }
-    a.handle_key(key(KeyCode::Down)); // Fallback -> Submit
+    // 备注名跟着厂商名自动填, 不碰。
+    fill_custom(&mut a, relay_fill());
+    pick_core_slots(&mut a, |_| PickerChoice::Custom("glm-4.6".into()));
+    focus_row(&mut a, ZH.wiz_btn_create);
     let submit1 = a.handle_key(key(KeyCode::Enter)).expect("创建应该产出 Action");
     a.update(submit1); // Stage::Creating
     a.update(Action::WizardDone(Box::new(WizardResult::Created(Err("上游炸了".into())))));
@@ -1275,25 +1302,11 @@ fn submitting_create_clears_the_previous_failure_note() {
 #[test]
 fn creating_a_custom_subscription_sends_real_slots_and_closes() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    type_str(&mut a, "中转站"); // ProviderName
-    a.handle_key(key(KeyCode::Down)); // -> BaseUrl
-    type_str(&mut a, "https://relay.example.com");
-    a.handle_key(key(KeyCode::Down)); // -> MessagesPath (保留默认 /v1/messages)
-    a.handle_key(key(KeyCode::Down)); // -> Auth (保留默认 Authorization/Bearer)
-    a.handle_key(key(KeyCode::Down)); // -> ApiKey
-    type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Down)); // -> DisplayName (评审 7: 已经跟着厂商名自动填成"中转站")
-    a.handle_key(key(KeyCode::Down)); // -> Probe (跳过, 不探测)
-    a.handle_key(key(KeyCode::Down)); // -> Slot(Fable)
-
-    for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku] {
-        let open = a.handle_key(key(KeyCode::Enter)).expect("槽位行 ⏎ 应该开 picker");
-        a.update(open);
-        a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot }, choice: PickerChoice::Custom("glm-4.6".into()) });
-        a.handle_key(key(KeyCode::Down));
-    }
-    // 此刻焦点在 Fallback (留空) -> Down -> Submit。
-    a.handle_key(key(KeyCode::Down));
+    // 请求路径 / 鉴权保留默认 (/v1/messages, Authorization/Bearer); 备注名 (评审 7) 已经跟着
+    // 厂商名自动填成"中转站"; 跳过探测; 兜底槽留空。
+    fill_custom(&mut a, relay_fill());
+    pick_core_slots(&mut a, |_| PickerChoice::Custom("glm-4.6".into()));
+    focus_row(&mut a, ZH.wiz_btn_create);
 
     let expected_input = CreateInput {
         display_name: "中转站".into(),
@@ -1339,23 +1352,10 @@ fn creating_a_custom_subscription_sends_real_slots_and_closes() {
 #[test]
 fn a_failed_custom_create_returns_to_custom_and_stays_operable() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    type_str(&mut a, "中转站");
-    a.handle_key(key(KeyCode::Down));
-    type_str(&mut a, "https://relay.example.com");
-    a.handle_key(key(KeyCode::Down)); // MessagesPath
-    a.handle_key(key(KeyCode::Down)); // Auth
-    a.handle_key(key(KeyCode::Down)); // ApiKey
-    type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Down)); // DisplayName (评审 7: 已经跟着厂商名自动填成"中转站")
-    a.handle_key(key(KeyCode::Down)); // Probe
-    a.handle_key(key(KeyCode::Down)); // Slot(Fable)
-    for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku] {
-        let open = a.handle_key(key(KeyCode::Enter)).expect("槽位行 ⏎ 应该开 picker");
-        a.update(open);
-        a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot }, choice: PickerChoice::Custom("glm-4.6".into()) });
-        a.handle_key(key(KeyCode::Down));
-    }
-    a.handle_key(key(KeyCode::Down)); // Fallback -> Submit
+    // 备注名 (评审 7) 已经跟着厂商名自动填成"中转站"。
+    fill_custom(&mut a, relay_fill());
+    pick_core_slots(&mut a, |_| PickerChoice::Custom("glm-4.6".into()));
+    focus_row(&mut a, ZH.wiz_btn_create);
     let submit_action = a.handle_key(key(KeyCode::Enter)).expect("创建应该产出 Action");
     a.update(submit_action); // Stage::Creating
 
@@ -1373,15 +1373,9 @@ fn a_failed_custom_create_returns_to_custom_and_stays_operable() {
 #[test]
 fn a_successful_probe_records_models_url_for_later_create() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    type_str(&mut a, "中转站");
-    a.handle_key(key(KeyCode::Down));
-    type_str(&mut a, "https://relay.example.com");
-    a.handle_key(key(KeyCode::Down)); // MessagesPath
-    a.handle_key(key(KeyCode::Down)); // Auth
-    a.handle_key(key(KeyCode::Down)); // ApiKey
-    type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Down)); // DisplayName (评审 7: 已经跟着厂商名自动填成"中转站")
-    a.handle_key(key(KeyCode::Down)); // Probe
+    // 备注名 (评审 7) 已经跟着厂商名自动填成"中转站"。
+    fill_custom(&mut a, relay_fill());
+    focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // Stage::Probing
 
@@ -1395,13 +1389,8 @@ fn a_successful_probe_records_models_url_for_later_create() {
     let out = render(&mut a, 80, 24);
     assert!(!out.contains("glm-4.6"), "探测成功不该自动预填槽位, 应该留给用户手选\n{out}");
 
-    for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku] {
-        let open = a.handle_key(key(KeyCode::Enter)).expect("槽位行 ⏎ 应该开 picker");
-        a.update(open);
-        a.update(Action::PickerDone { tag: PickerTag::WizardSlot { slot }, choice: PickerChoice::Item("glm-4.6".into()) });
-        a.handle_key(key(KeyCode::Down));
-    }
-    a.handle_key(key(KeyCode::Down)); // Fallback -> Submit
+    pick_core_slots(&mut a, |_| PickerChoice::Item("glm-4.6".into()));
+    focus_row(&mut a, ZH.wiz_btn_create);
     let submit_action = a.handle_key(key(KeyCode::Enter)).expect("创建应该产出 Action");
     let Action::WizardRequest(cmd) = submit_action else { panic!("应该是 WizardRequest") };
     let WizardCmd::Create(input) = *cmd else { panic!("应该是 Create") };
@@ -1427,11 +1416,7 @@ fn a_stale_probed_result_is_discarded_outside_probing() {
     })));
     // 候选模型不会画进任何一行的显示文字 (槽位行显示的是**已选的值**, 不是候选列表), 所以不能靠
     // `render()` 的文字断言——必须打开槽位 picker, 检查候选里有没有混进这份晚到的模型。
-    // ProviderName(1) -> BaseUrl -> MessagesPath -> Auth -> ApiKey -> DisplayName -> Probe ->
-    // Slot(Fable)(8), 共 7 次 ↓。
-    for _ in 0..7 {
-        a.handle_key(key(KeyCode::Down));
-    }
+    focus_row(&mut a, slot_row(Slot::Fable));
     let open_action = a.handle_key(key(KeyCode::Enter)).expect("Fable 行 ⏎ 应该产出 Action::OpenPicker");
     let Action::OpenPicker(spec) = open_action else { panic!("应该是 OpenPicker, 实际 {open_action:?}") };
     assert!(
@@ -1449,15 +1434,11 @@ fn a_stale_probed_result_is_discarded_outside_probing() {
 #[test]
 fn a_probed_result_for_a_different_base_url_is_discarded() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
-    type_str(&mut a, "厂商");
-    a.handle_key(key(KeyCode::Down));
-    type_str(&mut a, "https://mine.example.com");
-    a.handle_key(key(KeyCode::Down)); // MessagesPath
-    a.handle_key(key(KeyCode::Down)); // Auth
-    a.handle_key(key(KeyCode::Down)); // ApiKey
-    type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Down)); // DisplayName
-    a.handle_key(key(KeyCode::Down)); // Probe
+    fill_custom(
+        &mut a,
+        CustomFill { provider_name: Some("厂商"), base_url: Some("https://mine.example.com"), api_key: Some("sk-test"), ..Default::default() },
+    );
+    focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // Stage::Probing, 草稿 base_url = "https://mine.example.com"
 
@@ -1484,6 +1465,7 @@ fn a_probed_result_for_a_different_base_url_is_discarded() {
     })));
     assert!(cmds2.is_empty());
     // 探测成功后焦点自动落到 Slot(Fable) (`apply_wizard_result` 的 `Probed(Ok(Auto))` 分支), 不用再移动。
+    assert_focus(&mut a, slot_row(Slot::Fable));
     let open_action = a.handle_key(key(KeyCode::Enter)).expect("Fable 行 ⏎ 应该产出 Action::OpenPicker");
     let Action::OpenPicker(spec) = open_action else { panic!("应该是 OpenPicker, 实际 {open_action:?}") };
     assert!(spec.items.iter().any(|item| item.id == "mine-model"), "真正属于自己的探测结果应该被采纳\n{:?}", spec.items);
@@ -1519,15 +1501,11 @@ fn custom_stage_escape_uses_the_discard_prompt_not_the_pending_one() {
         "Custom 阶段的 Esc 确认文案应该是「放弃修改」, 不是「订阅已创建」"
     );
 
-    type_str(&mut a, "厂商");
-    a.handle_key(key(KeyCode::Down));
-    type_str(&mut a, "https://relay.example.com");
-    a.handle_key(key(KeyCode::Down)); // MessagesPath
-    a.handle_key(key(KeyCode::Down)); // Auth
-    a.handle_key(key(KeyCode::Down)); // ApiKey
-    type_str(&mut a, "sk-test");
-    a.handle_key(key(KeyCode::Down)); // DisplayName
-    a.handle_key(key(KeyCode::Down)); // Probe
+    fill_custom(
+        &mut a,
+        CustomFill { provider_name: Some("厂商"), base_url: Some("https://relay.example.com"), api_key: Some("sk-test"), ..Default::default() },
+    );
+    focus_row(&mut a, ZH.wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // Stage::Probing
 
