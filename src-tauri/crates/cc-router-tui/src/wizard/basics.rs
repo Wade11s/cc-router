@@ -1,17 +1,19 @@
 //! 内置厂商路径的第一步: 选厂商 / 选接入点 / 填 API Key / 备注名 → 下一步。
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
+use super::common::{self, Cell, FieldKind, FormFields, KeyOutcome, RowHints, Rows};
 use super::fields::{validate_basics, BasicsDraft, BasicsField};
 use super::form_state::FormState;
-use super::{edit_focused_text, follow_display_name, BasicsPhase, Paint};
+use super::text::TextInput;
+use super::{follow_display_name, BasicsPhase, Paint};
 use crate::action::{Action, WizardCmd};
 use crate::client::dto::{CreateInput, CreateSource, CustomProtocol, ModelSlots, Provider};
 use crate::i18n::Strings;
 use crate::store::Store;
-use crate::widgets::form::{self, FormBuilder, FormRow, FormView};
+use crate::widgets::form::{self, FormView};
 use crate::widgets::keybar::Hint;
 use crate::widgets::picker::{PickerChoice, PickerItem, PickerSpec, PickerTag};
 use crate::widgets::toast::ToastKind;
@@ -21,75 +23,76 @@ pub(super) struct BasicsForm {
     pub(super) state: FormState<BasicsField>,
     /// 上一次自动算出来的备注名, 见 `follow_display_name`。
     pub(super) last_auto_name: Option<String>,
-    /// `create_subscription` 失败时的原因, 挂成表单顶部的说明行。
-    pub(super) create_error: Option<String>,
+    /// 上一次创建失败的原因, 挂在表单顶部。
+    pub(super) note: Option<String>,
 }
 
 impl Default for BasicsForm {
     fn default() -> Self {
-        Self { draft: BasicsDraft::default(), state: FormState::new(BasicsField::Provider), last_auto_name: None, create_error: None }
+        Self { draft: BasicsDraft::default(), state: FormState::new(BasicsField::Provider), last_auto_name: None, note: None }
+    }
+}
+
+impl FormFields for BasicsForm {
+    type Field = BasicsField;
+
+    fn state(&self) -> &FormState<BasicsField> {
+        &self.state
+    }
+
+    fn state_mut(&mut self) -> &mut FormState<BasicsField> {
+        &mut self.state
+    }
+
+    fn order(&self) -> Vec<BasicsField> {
+        BasicsField::ALL.to_vec()
+    }
+
+    fn kind(&self, field: BasicsField, s: &'static Strings) -> FieldKind {
+        match field {
+            BasicsField::Provider | BasicsField::Endpoint => FieldKind::Pick,
+            BasicsField::ApiKey => FieldKind::Secret,
+            BasicsField::DisplayName => FieldKind::Text,
+            BasicsField::Submit => FieldKind::Button(s.wiz_btn_next),
+        }
+    }
+
+    fn text_field(&mut self, field: BasicsField) -> Option<&mut dyn TextInput> {
+        self.draft.text_field(field)
     }
 }
 
 impl BasicsForm {
     /// 只在 `BasicsPhase::Editing` 下被调用。提交成功时把 `phase` 推进到 `Creating`。
     pub(super) fn handle_key(&mut self, key: KeyEvent, phase: &mut BasicsPhase, providers: &[Provider], s: &'static Strings) -> Option<Action> {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let focus = self.state.focus;
-        match key.code {
-            KeyCode::Up | KeyCode::BackTab => {
-                self.state.step(-1, &BasicsField::ALL);
-                None
-            }
-            KeyCode::Down | KeyCode::Tab => {
-                self.state.step(1, &BasicsField::ALL);
-                None
-            }
-            KeyCode::Enter if focus == BasicsField::Provider => Some(self.provider_picker(providers, s)),
-            KeyCode::Enter if focus == BasicsField::Endpoint => Some(self.endpoint_picker(providers, s)),
-            KeyCode::Enter if matches!(focus, BasicsField::ApiKey | BasicsField::DisplayName) => {
-                self.state.step(1, &BasicsField::ALL);
-                None
-            }
-            KeyCode::Enter if focus == BasicsField::Submit => self.submit(phase, s),
-            // 必须排在下面的打字分支之前: 否则 Ctrl+R 会被 `ApiKey` 的编辑分支当成字符 'r' 吃掉。
-            KeyCode::Char('r') if ctrl && focus == BasicsField::ApiKey => {
-                self.draft.api_key.toggle_reveal();
-                None
-            }
-            // 文本行交给统一的编辑路径; 选择行没有文本字段, 其余按键 (含字符键) 一律吞掉。
-            _ => {
-                edit_focused_text(self.draft.text_field(focus), &mut self.state, key);
-                None
-            }
+        match common::handle_key(self, key, s) {
+            KeyOutcome::Handled | KeyOutcome::Edited(_) => None,
+            KeyOutcome::Activate(BasicsField::Provider) => Some(self.provider_picker(providers, s)),
+            KeyOutcome::Activate(BasicsField::Endpoint) => Some(self.endpoint_picker(providers, s)),
+            KeyOutcome::Activate(BasicsField::Submit) => self.submit(phase, s),
+            KeyOutcome::Activate(BasicsField::ApiKey | BasicsField::DisplayName) => None,
         }
     }
 
-    /// `Submit` 行 `⏎`: 校验失败把焦点移到那个字段并挂错误; 通过则打包 `WizardCmd::Create`
-    /// (槽位先放 `ModelSlots::pending()`, 第二步再绑) 并进 `Creating`。
+    /// `Submit` 行 `⏎`: 校验通过则打包 `WizardCmd::Create` (槽位先放 `ModelSlots::pending()`,
+    /// 第二步再绑) 并进 `Creating`。
     fn submit(&mut self, phase: &mut BasicsPhase, s: &'static Strings) -> Option<Action> {
-        match validate_basics(&self.draft, s) {
-            Some((field, message)) => {
-                self.state.reject(field, message);
-                None
-            }
-            None => {
-                self.state.clear_all();
-                self.create_error = None;
-                let cmd = WizardCmd::Create(CreateInput {
-                    display_name: self.draft.display_name.value().to_string(),
-                    api_key: self.draft.api_key.secret(),
-                    model_slots: ModelSlots::pending(),
-                    source: CreateSource::Builtin { provider_id: self.draft.provider_id.clone(), endpoint_id: self.draft.endpoint_id.clone() },
-                });
-                *phase = BasicsPhase::Creating;
-                Some(Action::WizardRequest(Box::new(cmd)))
-            }
+        if !self.state.validate(validate_basics(&self.draft, s)) {
+            return None;
         }
+        self.note = None;
+        let cmd = WizardCmd::Create(CreateInput {
+            display_name: self.draft.display_name.value().to_string(),
+            api_key: self.draft.api_key.secret(),
+            model_slots: ModelSlots::pending(),
+            source: CreateSource::Builtin { provider_id: self.draft.provider_id.clone(), endpoint_id: self.draft.endpoint_id.clone() },
+        });
+        *phase = BasicsPhase::Creating;
+        Some(Action::WizardRequest(Box::new(cmd)))
     }
 
     /// `Provider` 行 `⏎`: 条目是全部厂商 + 5 个自定义协议。OAuth 类厂商 (TUI 不做设备码流程)
-    /// 的 label 后面追加提示语, picker 本身没有"置灰不可选"的能力, 选中时用「可选但选了只给
+    /// 的 label 后面追加提示语, picker 本身没有「置灰不可选」的能力, 选中时用「可选但选了只给
     /// 提示」等效 (见 `Wizard::apply_provider_choice`)。
     fn provider_picker(&self, providers: &[Provider], s: &'static Strings) -> Action {
         let mut items: Vec<PickerItem> = providers
@@ -141,7 +144,7 @@ impl BasicsForm {
         if follow_display_name(&mut self.draft.display_name, &mut self.last_auto_name, &provider.display_name, store) {
             self.state.clear(BasicsField::DisplayName);
         }
-        self.state.focus = BasicsField::ApiKey;
+        self.state.focus_on(BasicsField::ApiKey);
     }
 
     pub(super) fn apply_endpoint_choice(&mut self, choice: &PickerChoice) {
@@ -157,21 +160,11 @@ impl BasicsForm {
     }
 
     pub(super) fn hints(&self, s: &'static Strings) -> Vec<Hint<'static>> {
-        let mut hints = vec![("↑↓", s.key_field)];
-        match self.state.focus {
-            BasicsField::Provider | BasicsField::Endpoint => hints.push(("⏎", s.key_pick)),
-            BasicsField::ApiKey => {
-                hints.push(("⏎", s.key_next_field));
-                hints.push(("Ctrl+R", s.key_reveal));
-            }
-            BasicsField::DisplayName => hints.push(("⏎", s.key_next_field)),
-            BasicsField::Submit => hints.push(("⏎", s.wiz_btn_next)),
-        }
-        hints
+        common::hints(self, s)
     }
 
-    /// 三个阶段的行结构完全一样; 请求在飞时 (`Creating` / `LoadingModels`) 全部字段画成
-    /// `locked`、按钮画成 `busy` 并换成对应的进行中文案。
+    /// 三个阶段的行结构完全一样; 请求在飞时 (`Creating` / `LoadingModels`) 全部字段画成只读、
+    /// 按钮换成对应的进行中文案。
     pub(super) fn draw(&self, frame: &mut Frame, area: Rect, phase: &BasicsPhase, providers: &[Provider], p: &Paint) {
         let s = p.s;
         let busy_label = match phase {
@@ -179,8 +172,6 @@ impl BasicsForm {
             BasicsPhase::Creating => Some(s.wiz_creating),
             BasicsPhase::LoadingModels { .. } => Some(s.wiz_loading_models),
         };
-        let busy = busy_label.is_some();
-
         let provider = providers.iter().find(|p| p.id == self.draft.provider_id);
         let provider_label = provider.map(|p| p.display_name.clone()).unwrap_or_default();
         let endpoint_label = provider
@@ -188,36 +179,28 @@ impl BasicsForm {
             .map(|e| e.label.clone())
             .unwrap_or_default();
         let api_key_text = self.draft.api_key.display();
-        let pick_hint = format!("⏎ {}", s.key_pick);
-        let reveal_hint = format!("Ctrl+R {}", s.key_reveal);
-        let api_key_cursor = Some(self.draft.api_key.visual_cursor());
-        let display_name_cursor = Some(self.draft.display_name.visual_cursor());
-        let field = |label, value, hint, cursor, field: BasicsField| FormRow::Field {
-            label,
-            value,
-            placeholder: "",
-            hint,
-            cursor,
-            error: self.state.error_for(field),
-            locked: busy,
-        };
+        let hints = RowHints::new(s);
 
-        let mut b = FormBuilder::new();
-        if let Some(err) = &self.create_error {
-            b.push(FormRow::Note { text: err }, false);
-            b.push(FormRow::Spacer, false);
-        }
-        for (label, value, hint, cursor, f) in [
-            (s.wiz_f_provider, provider_label.as_str(), Some(pick_hint.as_str()), None, BasicsField::Provider),
-            (s.wiz_f_endpoint, endpoint_label.as_str(), Some(pick_hint.as_str()), None, BasicsField::Endpoint),
-            (s.wiz_f_api_key, api_key_text.as_str(), Some(reveal_hint.as_str()), api_key_cursor, BasicsField::ApiKey),
-            (s.wiz_f_display_name, self.draft.display_name.value(), None, display_name_cursor, BasicsField::DisplayName),
-        ] {
-            b.push(field(label, value, hint, cursor, f), self.state.focus == f);
-        }
-        b.push(FormRow::Spacer, false);
-        b.push(FormRow::Button { label: busy_label.unwrap_or(s.wiz_btn_next), busy }, self.state.focus == BasicsField::Submit);
-        let built = b.finish();
+        let mut rows = Rows::new(self, &hints, s, busy_label.is_some());
+        rows.note(self.note.as_deref());
+        rows.field(BasicsField::Provider, Cell { label: s.wiz_f_provider, value: &provider_label, ..Cell::default() });
+        rows.field(BasicsField::Endpoint, Cell { label: s.wiz_f_endpoint, value: &endpoint_label, ..Cell::default() });
+        rows.field(
+            BasicsField::ApiKey,
+            Cell { label: s.wiz_f_api_key, value: &api_key_text, cursor: Some(self.draft.api_key.visual_cursor()), ..Cell::default() },
+        );
+        rows.field(
+            BasicsField::DisplayName,
+            Cell {
+                label: s.wiz_f_display_name,
+                value: self.draft.display_name.value(),
+                cursor: Some(self.draft.display_name.visual_cursor()),
+                ..Cell::default()
+            },
+        );
+        rows.spacer();
+        rows.button(BasicsField::Submit, busy_label);
+        let built = rows.finish();
 
         let view = FormView {
             title: s.wiz_title,

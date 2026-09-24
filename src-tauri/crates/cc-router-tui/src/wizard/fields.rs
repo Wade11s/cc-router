@@ -87,8 +87,6 @@ pub struct SlotsDraft {
     pub slots: ModelSlots,
     /// 可选的模型候选 (来自 `refresh_model_list` / `probe_custom_models`), 空 = 只能手输。
     pub models: Vec<ModelInfo>,
-    /// 自动获取失败时的原因, 画成一条说明行。
-    pub note: Option<String>,
 }
 
 /// 第二步的字段: 五个槽位行 (`Row`, 带着是哪个 `Slot`) + 保存按钮。顺序即上下键的顺序——与
@@ -122,10 +120,8 @@ pub fn validate_slots(d: &SlotsDraft, s: &'static Strings) -> Option<(Slot, &'st
     None
 }
 
-/// 自定义厂商单页 (P5 Task 6) 的草稿。与 `BasicsDraft`/`SlotsDraft` 不同, 这一页把"选协议"
-/// "填连接信息""探测模型""选槽位"全放在同一屏, 所以字段更多; `slots` 直接复用 `SlotsDraft`
-/// (含它自己的 `note`——探测失败 / 创建失败的说明行共用这一个字段, 与 `Stage::Slots` 里
-/// `ManualFallback` 与 `SaveSlots` 失败共用同一个 `note` 是同一条设计, "谁最后发生谁的文案盖住")。
+/// 自定义厂商单页的草稿。这一页把「选协议」「填连接信息」「探测模型」「选槽位」放在同一屏, 所以
+/// 字段更多; `slots` 直接复用 `SlotsDraft`。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomDraft {
     pub protocol: CustomProtocol,
@@ -172,13 +168,11 @@ impl CustomDraft {
         draft
     }
 
-    /// 换协议: 把 `base_url` / `messages_path` / 鉴权头重置成这个协议的预设, 并清掉 `probe`、
-    /// 探测到的候选模型 (`slots.models`) 与"自动获取失败"的说明行 (`slots.note`)——旧协议探测
-    /// 到的模型对新协议没有意义 (评审 5: OpenAI Responses 下探测到 `gpt-5.5`, 切到 Gemini 之后
-    /// `Fable` 的 picker 候选里还挂着 `gpt-5.5`, 选上就建出模型名对不上协议的 Gemini 订阅), 旧的
-    /// 失败说明同样过期。**已经填进槽位的值不动**(评审 5 明确: 只清候选与说明, 不清用户已经选定
-    /// 的槽位), **API Key / 备注名也不动** (桌面端同规则——用户切协议大概率是选错了重选, 不该连
-    /// 已经填好的凭据/名字都丢)。
+    /// 换协议: 把 `base_url` / `messages_path` / 鉴权头重置成这个协议的预设, 并清掉 `probe` 与
+    /// 探测到的候选模型 (`slots.models`)——旧协议探测到的模型对新协议没有意义 (OpenAI Responses
+    /// 下探测到的 `gpt-5.5` 留在 Gemini 的候选里, 选上就建出模型名对不上协议的订阅)。**已经填进
+    /// 槽位的值不动**, **API Key / 备注名也不动** (桌面端同规则——用户切协议大概率是选错了重选,
+    /// 不该连已经填好的凭据 / 名字都丢)。表单顶部的说明行由 `CustomForm` 自己清。
     pub fn apply_protocol(&mut self, protocol: CustomProtocol) {
         let preset = protocol.preset();
         self.protocol = protocol;
@@ -188,7 +182,6 @@ impl CustomDraft {
         self.auth_header_format = preset.auth_header_format;
         self.probe = None;
         self.slots.models = Vec::new();
-        self.slots.note = None;
     }
 
     /// 只有探测成功、且此后 `base_url`(trim 后) 一个字都没改过时才回传 `models_url`。与桌面端
@@ -284,6 +277,18 @@ pub fn validate_custom(d: &CustomDraft, s: &'static Strings) -> Option<(CustomFi
     validate_slots(&d.slots, s).map(|(slot, message)| (CustomField::Slot(slot), message))
 }
 
+/// 「获取模型列表」只需要能连上: Base URL (trim 后) 与 API Key 非空, 与桌面端一致, 其余字段这一步
+/// 不校验。
+pub fn validate_probe(d: &CustomDraft, s: &'static Strings) -> Option<(CustomField, &'static str)> {
+    if d.base_url.value().trim().is_empty() {
+        return Some((CustomField::BaseUrl, s.wiz_err_base_url_empty));
+    }
+    if d.api_key.is_empty() {
+        return Some((CustomField::ApiKey, s.wiz_err_api_key));
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,7 +369,7 @@ mod tests {
     fn validate_slots_ignores_the_fallback_slot() {
         let s = &crate::i18n::ZH;
 
-        let full = SlotsDraft { slots: filled_slots(), models: vec![], note: None };
+        let full = SlotsDraft { slots: filled_slots(), models: vec![] };
         assert_eq!(validate_slots(&full, s), None, "四个核心槽填了、兜底空应该通过");
 
         let missing_opus = SlotsDraft { slots: ModelSlots { opus: String::new(), ..filled_slots() }, ..full.clone() };
@@ -392,24 +397,6 @@ mod tests {
             assert_eq!(d.auth_header_format, preset.auth_header_format, "{protocol:?}");
             assert!(d.probe.is_none(), "换协议应该清空 probe ({protocol:?})");
         }
-    }
-
-    /// 评审 5: 换协议还应该清空探测到的候选模型 (`slots.models`) 与"自动获取失败"的说明行
-    /// (`slots.note`)——旧协议探测到的模型 (比如 OpenAI Responses 下的 `gpt-5.5`) 对新协议
-    /// (比如切到 Gemini) 没有意义, 留着会让用户在 Fable 的 picker 里选出模型名对不上协议的值。
-    /// **已经填进槽位的值不该被清**(与 API Key / 备注名同规则)。
-    #[test]
-    fn apply_protocol_clears_stale_candidates_and_note_but_keeps_chosen_slots() {
-        let mut d = CustomDraft::new(CustomProtocol::OpenaiResponses);
-        d.slots.models = vec![ModelInfo { id: "gpt-5.5".into(), display_name: None }];
-        d.slots.note = Some("上一次自动获取失败的原因".into());
-        d.slots.slots.fable = "gpt-5.5".into();
-
-        d.apply_protocol(CustomProtocol::Gemini);
-
-        assert!(d.slots.models.is_empty(), "换协议应该清空旧协议探测到的候选模型");
-        assert!(d.slots.note.is_none(), "换协议应该清空旧的说明行");
-        assert_eq!(d.slots.slots.fable, "gpt-5.5", "已经填进槽位的值不该被换协议清掉");
     }
 
     /// 一份填满全部字段 (含四个核心槽) 的草稿——`CustomProtocol::Anthropic` 的预设 `base_url`
@@ -471,6 +458,24 @@ mod tests {
         assert_eq!(validate_custom(&missing_slot, s), Some((CustomField::Slot(Slot::Opus), s.wiz_err_slot)), "四个核心槽任一空都应该报到那个槽");
 
         assert_eq!(validate_custom(&filled_custom_draft(CustomProtocol::Anthropic), s), None, "全填好应该通过");
+    }
+
+    /// 只校验能不能连上: Base URL 只有空白也算空; 其余字段 (厂商名 / 槽位……) 这一步不管。
+    #[test]
+    fn validate_probe_only_checks_base_url_and_api_key() {
+        let s = &crate::i18n::ZH;
+
+        let mut d = CustomDraft::new(CustomProtocol::Anthropic);
+        d.base_url.set("   ");
+        d.api_key = SecretField::new("sk-test");
+        assert_eq!(validate_probe(&d, s), Some((CustomField::BaseUrl, s.wiz_err_base_url_empty)), "只有空白的 Base URL 应该算空");
+
+        d.base_url.set("https://relay.example.com");
+        d.api_key = SecretField::default();
+        assert_eq!(validate_probe(&d, s), Some((CustomField::ApiKey, s.wiz_err_api_key)));
+
+        d.api_key = SecretField::new("sk-test");
+        assert_eq!(validate_probe(&d, s), None, "厂商名 / 备注名 / 槽位都空着也可以探测");
     }
 
     /// 探测后原样 → `Some`; 改一个字符 → `None`; 改回去 → 又是 `Some`——与桌面端

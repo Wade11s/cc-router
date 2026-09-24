@@ -16,6 +16,9 @@ use crate::secret::Secret;
 pub trait TextInput {
     /// 处理一个按键, 返回**值**是否改变 (只移动光标返回 `false`)。
     fn handle(&mut self, key: KeyEvent) -> bool;
+
+    /// 切换明文 / 掩码显示。只有 [`SecretField`] 有这个开关, 普通文本字段什么都不做。
+    fn toggle_reveal(&mut self) {}
 }
 
 /// 普通文本字段。`PartialEq` 只比较值 (光标位置不是草稿内容)。
@@ -88,10 +91,6 @@ impl SecretField {
         self.input.value().is_empty()
     }
 
-    pub fn toggle_reveal(&mut self) {
-        self.reveal = !self.reveal;
-    }
-
     pub fn visual_cursor(&self) -> usize {
         self.input.visual_cursor()
     }
@@ -116,6 +115,10 @@ impl SecretField {
 impl TextInput for SecretField {
     fn handle(&mut self, key: KeyEvent) -> bool {
         self.input.handle(key)
+    }
+
+    fn toggle_reveal(&mut self) {
+        self.reveal = !self.reveal;
     }
 }
 

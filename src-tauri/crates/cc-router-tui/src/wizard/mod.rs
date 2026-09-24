@@ -43,6 +43,7 @@ use crate::widgets::spinner_state;
 use crate::widgets::toast::ToastKind;
 
 mod basics;
+mod common;
 mod custom;
 mod fields;
 mod form_state;
@@ -51,9 +52,8 @@ mod text;
 use basics::BasicsForm;
 use custom::CustomForm;
 use fields::{default_display_name, CustomField, ProbedModels, SlotsDraft};
-use form_state::FormState;
 use slots::SlotsForm;
-use text::{TextField, TextInput};
+use text::TextField;
 
 /// 向导走到哪一步了, 以及这一步的全部数据。
 enum Stage {
@@ -236,7 +236,7 @@ impl Wizard {
                     }
                     Err(e) => {
                         *phase = BasicsPhase::Editing;
-                        form.create_error = Some((s.wiz_create_failed)(e));
+                        form.note = Some((s.wiz_create_failed)(e));
                         Vec::new()
                     }
                 },
@@ -249,7 +249,7 @@ impl Wizard {
                         }
                         Err(e) => {
                             *phase = CustomPhase::Editing;
-                            form.draft.slots.note = Some((s.wiz_create_failed)(e));
+                            form.note = Some((s.wiz_create_failed)(e));
                         }
                     }
                     Vec::new()
@@ -261,7 +261,7 @@ impl Wizard {
                 if expected != id {
                     return Vec::new();
                 }
-                let draft = match inner {
+                let (draft, note) = match inner {
                     Ok(RefreshModelsResult::Auto { models, .. }) => {
                         let mut slots = ModelSlots::default();
                         // 桌面端同规则: 有候选就预填四个核心槽为第一项; 空候选就留空, 交给
@@ -271,10 +271,10 @@ impl Wizard {
                                 slots.set(slot, first.id.clone());
                             }
                         }
-                        SlotsDraft { slots, models: models.clone(), note: None }
+                        (SlotsDraft { slots, models: models.clone() }, None)
                     }
                     Ok(RefreshModelsResult::ManualFallback { reason }) | Err(reason) => {
-                        SlotsDraft { note: Some((s.wiz_models_manual)(reason)), ..SlotsDraft::default() }
+                        (SlotsDraft::default(), Some((s.wiz_models_manual)(reason)))
                     }
                 };
                 let examples = self
@@ -284,7 +284,7 @@ impl Wizard {
                     .map(|p| p.model_discovery.example_models.clone())
                     .unwrap_or_default();
                 let name = form.draft.display_name.value().to_string();
-                self.stage = Stage::Slots { id: id.clone(), name, form: SlotsForm::new(draft, examples), saving: false };
+                self.stage = Stage::Slots { id: id.clone(), name, form: SlotsForm::new(draft, examples, note), saving: false };
                 Vec::new()
             }
             WizardResult::Probed { base_url, result: inner } => {
@@ -296,22 +296,17 @@ impl Wizard {
                 match inner {
                     Ok(ProbeModelsResult::Auto { models, models_url }) => {
                         draft.slots.models = models.clone();
-                        draft.slots.note = None;
                         // 不自动预填槽位 (与桌面端一致): 自定义中转的模型名千差万别, 猜错不如留空。
                         draft.probe = Some(ProbedModels { base_url: base_url.clone(), models_url: models_url.clone() });
+                        form.note = None;
                     }
-                    Ok(ProbeModelsResult::ManualFallback { reason }) => {
+                    Ok(ProbeModelsResult::ManualFallback { reason }) | Err(reason) => {
                         draft.slots.models = Vec::new();
                         draft.probe = None;
-                        draft.slots.note = Some((s.wiz_models_manual)(reason));
-                    }
-                    Err(e) => {
-                        draft.slots.models = Vec::new();
-                        draft.probe = None;
-                        draft.slots.note = Some((s.wiz_models_manual)(e));
+                        form.note = Some((s.wiz_models_manual)(reason));
                     }
                 }
-                form.state.focus = CustomField::Slot(Slot::Fable);
+                form.state.focus_on(CustomField::Slot(Slot::Fable));
                 *phase = CustomPhase::Editing;
                 Vec::new()
             }
@@ -327,7 +322,7 @@ impl Wizard {
                     }
                     Err(e) => {
                         *saving = false;
-                        form.draft.note = Some((s.wiz_save_failed)(e));
+                        form.note = Some((s.wiz_save_failed)(e));
                     }
                 }
                 Vec::new()
@@ -427,18 +422,6 @@ impl Wizard {
     }
 }
 
-/// 文本行按键的**唯一**编辑路径: `field` 是按焦点找到的那一格 (焦点不在文本行上时是 `None`,
-/// 按键被吞掉), 交给它处理; 值真的变了就清掉**这个字段自己**的校验错误。返回值是否改变——自定义
-/// 表单改了厂商名还要让备注名跟随。
-fn edit_focused_text<F: Copy + Eq>(field: Option<&mut dyn TextInput>, form: &mut FormState<F>, key: KeyEvent) -> bool {
-    let Some(field) = field else { return false };
-    if !field.handle(key) {
-        return false;
-    }
-    form.clear(form.focus);
-    true
-}
-
 /// 备注名跟着厂商名自动生成 (内置路径选厂商、自定义路径编辑厂商名共用): 备注名为空、**或**仍等于
 /// 上一次自动生成的值时, 重算成 `default_display_name(source)` 并记下来; 用户手改过之后不再跟随。
 /// 返回是否真的重算了 (调用方据此清掉备注名行自己的错误)。
@@ -484,7 +467,7 @@ mod tests {
     }
 
     fn slots_at(id: &str, saving: bool) -> Wizard {
-        at(Stage::Slots { id: id.into(), name: String::new(), form: SlotsForm::new(SlotsDraft::default(), Vec::new()), saving })
+        at(Stage::Slots { id: id.into(), name: String::new(), form: SlotsForm::new(SlotsDraft::default(), Vec::new(), None), saving })
     }
 
     fn custom_at(phase: CustomPhase) -> Wizard {
@@ -589,22 +572,22 @@ mod tests {
         let s = &crate::i18n::ZH;
         let mut w = basics_at(BasicsPhase::Editing);
 
-        basics(&mut w).state.focus = BasicsField::Provider;
+        basics(&mut w).state.focus_on(BasicsField::Provider);
         assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.key_pick)], "选择行应该提示 ⏎ 选择");
 
-        basics(&mut w).state.focus = BasicsField::ApiKey;
+        basics(&mut w).state.focus_on(BasicsField::ApiKey);
         assert_eq!(
             w.hints(s),
             vec![("↑↓", s.key_field), ("⏎", s.key_next_field), ("Ctrl+R", s.key_reveal)],
             "API Key 行额外带 Ctrl+R 提示"
         );
 
-        basics(&mut w).state.focus = BasicsField::DisplayName;
+        basics(&mut w).state.focus_on(BasicsField::DisplayName);
         let hints = w.hints(s);
         assert_eq!(hints, vec![("↑↓", s.key_field), ("⏎", s.key_next_field)], "备注名行是文本行, 但不该有 Ctrl+R 提示");
         assert!(!hints.iter().any(|(k, _)| *k == "Ctrl+R"), "备注名行不该出现 Ctrl+R\n{hints:?}");
 
-        basics(&mut w).state.focus = BasicsField::Submit;
+        basics(&mut w).state.focus_on(BasicsField::Submit);
         assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.wiz_btn_next)], "按钮行应该显示按钮自己的标签, 不是通用词");
     }
 
@@ -614,10 +597,10 @@ mod tests {
         let s = &crate::i18n::ZH;
         let mut w = slots_at("sub-1", false);
 
-        slots(&mut w).state.focus = SlotsField::Row(Slot::Fable);
+        slots(&mut w).state.focus_on(SlotsField::Row(Slot::Fable));
         assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.key_pick)], "槽位行应该提示 ⏎ 选择");
 
-        slots(&mut w).state.focus = SlotsField::Save;
+        slots(&mut w).state.focus_on(SlotsField::Save);
         assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.wiz_btn_save)], "保存按钮行应该显示它自己的标签");
     }
 
@@ -627,12 +610,12 @@ mod tests {
     fn editing_one_field_does_not_clear_another_fields_error() {
         let s = &crate::i18n::ZH;
         let mut w = basics_at(BasicsPhase::Editing);
-        basics(&mut w).state.error = Some((BasicsField::Provider, s.wiz_err_provider));
-        basics(&mut w).state.focus = BasicsField::DisplayName;
+        basics(&mut w).state.reject(BasicsField::Provider, s.wiz_err_provider);
+        basics(&mut w).state.focus_on(BasicsField::DisplayName);
 
         w.handle_key(key(KeyCode::Char('a')), &Store::default(), s);
 
-        assert_eq!(basics(&mut w).state.error, Some((BasicsField::Provider, s.wiz_err_provider)), "编辑备注名不该清掉厂商行的错误");
+        assert_eq!(basics(&mut w).state.error(), Some((BasicsField::Provider, s.wiz_err_provider)), "编辑备注名不该清掉厂商行的错误");
     }
 
     /// 统一编辑路径的正向用例 (两张表单各一条): 只移动光标不算编辑, 错误留着; 值真的变了才清掉
@@ -643,16 +626,16 @@ mod tests {
         let mut w = basics_at(BasicsPhase::Editing);
         basics(&mut w).state.reject(BasicsField::ApiKey, s.wiz_err_api_key);
         w.handle_key(key(KeyCode::Left), &Store::default(), s);
-        assert_eq!(basics(&mut w).state.error, Some((BasicsField::ApiKey, s.wiz_err_api_key)), "只移动光标不该清错误");
+        assert_eq!(basics(&mut w).state.error(), Some((BasicsField::ApiKey, s.wiz_err_api_key)), "只移动光标不该清错误");
         w.handle_key(key(KeyCode::Char('x')), &Store::default(), s);
-        assert_eq!(basics(&mut w).state.error, None, "给 API Key 打字应该清掉它自己的错误");
+        assert_eq!(basics(&mut w).state.error(), None, "给 API Key 打字应该清掉它自己的错误");
 
         let mut c = custom_at(CustomPhase::Editing);
         custom(&mut c).state.reject(CustomField::BaseUrl, s.wiz_err_base_url_empty);
         c.handle_key(key(KeyCode::Left), &Store::default(), s);
-        assert_eq!(custom(&mut c).state.error, Some((CustomField::BaseUrl, s.wiz_err_base_url_empty)), "只移动光标不该清错误");
+        assert_eq!(custom(&mut c).state.error(), Some((CustomField::BaseUrl, s.wiz_err_base_url_empty)), "只移动光标不该清错误");
         c.handle_key(key(KeyCode::Char('h')), &Store::default(), s);
-        assert_eq!(custom(&mut c).state.error, None, "给 Base URL 打字应该清掉它自己的错误");
+        assert_eq!(custom(&mut c).state.error(), None, "给 Base URL 打字应该清掉它自己的错误");
     }
 
     /// 同上, 槽位错误的负向用例: 给 `Fable` 挂错误, 选 `Opus` 的模型, `Fable` 的错误应该原封不动。
@@ -660,13 +643,13 @@ mod tests {
     fn selecting_one_slot_does_not_clear_another_slots_error() {
         let s = &crate::i18n::ZH;
         let mut w = slots_at("sub-1", false);
-        slots(&mut w).state.error = Some((SlotsField::Row(Slot::Fable), s.wiz_err_slot));
+        slots(&mut w).state.reject(SlotsField::Row(Slot::Fable), s.wiz_err_slot);
 
         let pick = Action::PickerDone { tag: PickerTag::WizardSlot { slot: Slot::Opus }, choice: PickerChoice::Item("glm-4.6".into()) };
         w.update(&pick, &Store::default(), s);
 
         assert_eq!(slots(&mut w).draft.slots.opus, "glm-4.6", "准备: Opus 的选值应该已经写进草稿");
-        assert_eq!(slots(&mut w).state.error, Some((SlotsField::Row(Slot::Fable), s.wiz_err_slot)), "选定 Opus 的模型不该清掉 Fable 行的错误");
+        assert_eq!(slots(&mut w).state.error(), Some((SlotsField::Row(Slot::Fable), s.wiz_err_slot)), "选定 Opus 的模型不该清掉 Fable 行的错误");
     }
 
     /// 第一步 `Esc` (有输入时) 用的是 `confirm_discard`, 不是订阅已建好之后的
@@ -702,13 +685,13 @@ mod tests {
     #[test]
     fn a_stale_provider_list_is_discarded_outside_loading() {
         let mut w = slots_at("sub-1", false);
-        slots(&mut w).state.focus = SlotsField::Save;
+        slots(&mut w).state.focus_on(SlotsField::Save);
         let action = Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![provider("late")]))));
         let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
         assert!(cmds.is_empty());
         assert!(w.providers.is_empty(), "过期的厂商列表不该被采纳\n{:?}", w.providers);
         assert!(matches!(w.stage, Stage::Slots { .. }), "阶段不该被晚到的厂商列表打回 Basics");
-        assert_eq!(slots(&mut w).state.focus, SlotsField::Save);
+        assert_eq!(slots(&mut w).state.focus(), SlotsField::Save);
     }
 
     /// `Created` 晚到: 已经在 `Slots` 或已经在等模型列表 (订阅 id 已经是真实值) 时, 不该覆盖 id,

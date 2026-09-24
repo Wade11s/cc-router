@@ -4,16 +4,31 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FormState<F> {
-    /// 当前聚焦的字段。
-    pub focus: F,
+    focus: F,
     /// 校验失败的字段与原因 (原因是 `Strings` 的字段), 画成那一行下面的 `⚠` 提示。同一时刻最多
     /// 一条——校验按顺序报第一个不合法的字段。
-    pub error: Option<(F, &'static str)>,
+    error: Option<(F, &'static str)>,
 }
 
 impl<F: Copy + Eq> FormState<F> {
     pub fn new(focus: F) -> Self {
         Self { focus, error: None }
+    }
+
+    /// 当前聚焦的字段。
+    pub fn focus(&self) -> F {
+        self.focus
+    }
+
+    /// 整张表单当前的错误。界面只按行取 ([`error_for`](Self::error_for)), 这个给测试断言用。
+    #[cfg(test)]
+    pub fn error(&self) -> Option<(F, &'static str)> {
+        self.error
+    }
+
+    /// 把焦点直接放到 `field` 上 (选完厂商跳到 API Key、探测完跳到第一个槽位这类程序化移动)。
+    pub fn focus_on(&mut self, field: F) {
+        self.focus = field;
     }
 
     /// 在 `fields` (可聚焦字段, 顺序即上下键顺序) 里移动 `delta` 格, 两端夹住、不绕回。当前焦点
@@ -33,15 +48,29 @@ impl<F: Copy + Eq> FormState<F> {
         }
     }
 
-    /// 校验通过、请求发出时整张表单不再有错误。
-    pub fn clear_all(&mut self) {
+    fn clear_all(&mut self) {
         self.error = None;
     }
 
-    /// 校验失败: 挂上错误, 并把焦点移到出错的字段 (Task 8 在这一行播 `fx::field_err`)。
+    /// 校验失败: 挂上错误, 并把焦点移到出错的字段。
     pub fn reject(&mut self, field: F, message: &'static str) {
         self.focus = field;
         self.error = Some((field, message));
+    }
+
+    /// 提交前的唯一关口: `failure` 是校验函数报的第一个不合法字段。有就 [`reject`](Self::reject)
+    /// 并返回 `false`; 没有就清掉全部错误并返回 `true` (请求即将发出)。
+    pub fn validate(&mut self, failure: Option<(F, &'static str)>) -> bool {
+        match failure {
+            Some((field, message)) => {
+                self.reject(field, message);
+                false
+            }
+            None => {
+                self.clear_all();
+                true
+            }
+        }
     }
 
     /// `field` 自己的错误 (没有 / 挂在别的字段上都是 `None`)。
@@ -101,5 +130,18 @@ mod tests {
         form.reject('c', "错");
         form.clear_all();
         assert_eq!(form.error, None);
+    }
+
+    /// 提交的关口: 有失败就挂错误并移焦点、返回假; 没有就清掉全部错误 (包括挂在别的字段上的)、
+    /// 返回真, 焦点不动。
+    #[test]
+    fn validate_rejects_the_first_failure_or_clears_every_error() {
+        let mut form = FormState::new('a');
+        assert!(!form.validate(Some(('b', "错"))));
+        assert_eq!((form.focus(), form.error()), ('b', Some(('b', "错"))));
+
+        form.focus_on('c');
+        assert!(form.validate(None));
+        assert_eq!((form.focus(), form.error()), ('c', None));
     }
 }
