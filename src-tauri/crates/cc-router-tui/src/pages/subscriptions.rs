@@ -368,7 +368,7 @@ impl Subscriptions {
     }
 
     /// `d`: 打开删除确认弹窗。`referenced_by` 为空时只有一行; 非空时追加「被 N 个虚拟模型引用」
-    /// 与虚拟模型名列表 (`、` 连接, 超过 [`MAX_REFS_SHOWN`] 个只列前几个再接
+    /// 与虚拟模型名列表 (`s.list_sep` 连接, 超过 [`MAX_REFS_SHOWN`] 个只列前几个再接
     /// `s.sub_delete_refs_more`, 参数是**剩余**个数, 不是总数)。后端 `delete_subscription`
     /// 不拒绝也不返回引用方 (静默把这条订阅从每个虚拟模型的 `subscription_ids` 里摘掉), 这份提示
     /// 只能由 TUI 在删之前从 `Subscription.referenced_by` 现拼。
@@ -376,7 +376,7 @@ impl Subscriptions {
         let mut lines = vec![(s.sub_confirm_delete)(&sub.display_name)];
         if !sub.referenced_by.is_empty() {
             lines.push((s.sub_delete_refs)(sub.referenced_by.len()));
-            let shown = sub.referenced_by.iter().take(MAX_REFS_SHOWN).cloned().collect::<Vec<_>>().join("、");
+            let shown = sub.referenced_by.iter().take(MAX_REFS_SHOWN).cloned().collect::<Vec<_>>().join(s.list_sep);
             let remaining = sub.referenced_by.len().saturating_sub(MAX_REFS_SHOWN);
             let names_line = if remaining > 0 { format!("{shown}{}", (s.sub_delete_refs_more)(remaining)) } else { shown };
             lines.push(names_line);

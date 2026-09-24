@@ -4100,6 +4100,13 @@ fn deleting_asks_first_and_lists_the_referencing_virtual_models() {
     let out = render(&mut a, 80, 24);
     assert!(out.contains("智谱主号") && out.contains("model-sonnet") && out.contains("model-opus"), "{out}");
 
+    // n → 只关掉弹窗, 什么都不产出 (不发 Delete, 没有任何 Cmd)。
+    assert_eq!(a.handle_key(key(KeyCode::Char('n'))), Some(Action::ClosePopup), "n 应该只关弹窗");
+    assert!(a.update(Action::ClosePopup).is_empty(), "n 之后不该产出任何 Cmd");
+
+    // 重新走一遍, 这次按 y → 产出 Cmd::Mutate(Delete)。
+    let action2 = a.handle_key(key(KeyCode::Char('d'))).expect("重新打开确认弹窗");
+    a.update(action2);
     assert_eq!(
         a.handle_key(key(KeyCode::Char('y'))),
         Some(Action::Confirmed(Box::new(Action::Mutate(Mutation::Delete { id: "1".into() })))),
@@ -4147,6 +4154,20 @@ fn many_referencing_virtual_models_are_truncated() {
     assert!(prompt.contains("model-fable、model-opus、model-sonnet、model-haiku"), "应该只列前 4 个\n{prompt}");
     assert!(prompt.contains(&(ZH.sub_delete_refs_more)(1)), "剩余 1 个应该折成 sub_delete_refs_more(1)\n{prompt}");
     assert!(!prompt.contains("model-fallback"), "第 5 个不该原样出现在列表里\n{prompt}");
+}
+
+/// `n` 只在 `Focus::List` 下有对应的按键分支 (打开新建向导); `Focus::Detail` 下 (没有草稿时,
+/// 顶部守卫不拦) `d`/`n` 落到那边既有的 `_ => None`, 什么都不做——与 e/t/m/b 不同, 这两个键刻意
+/// 不在 `Focus::Detail` 复制一份分支。
+#[test]
+fn n_opens_the_wizard_only_from_the_list_focus() {
+    let mut a = subs_app(false);
+    render(&mut a, 80, 24);
+    assert_eq!(a.handle_key(key(KeyCode::Char('n'))), Some(Action::OpenWizard), "List 焦点下 n 应该打开向导");
+
+    a.handle_key(key(KeyCode::Enter)); // List -> Detail{Fable}, 没有草稿
+    assert_eq!(a.handle_key(key(KeyCode::Char('d'))), None, "Detail 焦点下 d 不该有反应");
+    assert_eq!(a.handle_key(key(KeyCode::Char('n'))), None, "Detail 焦点下 n 不该有反应");
 }
 
 /// 有草稿时 `d`/`n` 一律被拒绝, 弹 `sub_save_first`——不开弹窗、不开向导 (返回值本身就是

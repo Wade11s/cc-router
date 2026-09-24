@@ -217,6 +217,9 @@ pub struct Strings {
     /// 引用方超过 4 个时, 第三行 (虚拟模型名列表) 只列前 4 个, 再接这句, 参数是剩余个数
     /// (总数减 4, 不是总数本身)。
     pub sub_delete_refs_more: fn(n: usize) -> String,
+    /// 删除确认弹窗第三行 (虚拟模型名列表) 的分隔符——刻意与详情面板「被引用」字段的 `", "`
+    /// (那处是既有代码, 不在这次改动范围内) 分开, 各自独立配置。
+    pub list_sep: &'static str,
     pub toast_deleted: fn(name: &str) -> String,
 
     // ---------- Task 6: 虚拟模型页 ----------
@@ -656,6 +659,7 @@ pub const ZH: Strings = Strings {
     sub_delete_refs: |n| format!("这条订阅被 {n} 个虚拟模型引用,删除后会自动解绑:"),
     sub_delete_refs_more: |n| format!("… 等 {n} 个"),
     toast_deleted: |name| format!("已删除「{name}」"),
+    list_sep: "、",
 
     vm_title: "虚拟模型",
     vm_mode_seq: "顺序",
