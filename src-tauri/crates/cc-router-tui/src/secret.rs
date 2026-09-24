@@ -87,9 +87,10 @@ mod tests {
         const EXPOSE_ALLOWLIST: [&str; 3] = [
             "secret.rs",     // 定义处与它自己的测试
             "client/dto.rs", // `CreateInput::to_args()` / `ProbeInput::to_args()`, 唯一把它变成线上 JSON 的地方 (Task 3)
-            // `fields::api_key_display()`: 向导 API Key 行 `Ctrl+R` 就地切换明文/掩码显示,
-            // `wizard/mod.rs::draw` 只调这一个函数, 不直接碰 `expose` (P5 Task 4)。
-            "wizard/fields.rs",
+            // `SecretField::display()`: 向导 API Key 行 `Ctrl+R` 就地切换明文/掩码显示 (P5 Task 4 起;
+            // 7R-a 随文本字段类型从 `wizard/fields.rs` 挪到这里)。`SecretField` 的输入框私有, 明文
+            // 在这个文件之外只能经 `secret()` → `expose()` 拿到, 所以这个文件是向导里唯一读明文的地方。
+            "wizard/text.rs",
         ];
 
         fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

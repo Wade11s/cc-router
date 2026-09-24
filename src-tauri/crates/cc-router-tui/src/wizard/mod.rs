@@ -35,15 +35,13 @@
 //! 不需要 Task 5 那样的第二步 `SaveSlots`)。`Stage::Creating` 被两条路径共用, `custom_draft` 是不是
 //! `Some` 就是分流判据 (两条路径互斥)。
 
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
-use tui_input::backend::crossterm::EventHandler;
-use tui_input::Input;
 
 use crate::action::{Action, Cmd, WizardCmd, WizardResult};
 use crate::client::dto::{
@@ -53,7 +51,6 @@ use crate::client::dto::{
 use crate::i18n::Strings;
 use crate::pages::subscriptions::slot_label;
 use crate::pages::DrawCtx;
-use crate::secret::Secret;
 use crate::store::Store;
 use crate::theme::Theme;
 use crate::widgets::form::{self, FormBuilder, FormRow, FormView};
@@ -63,10 +60,14 @@ use crate::widgets::spinner_state;
 use crate::widgets::toast::ToastKind;
 
 mod fields;
+mod form_state;
+mod text;
 use fields::{
-    api_key_display, default_display_name, validate_basics, validate_custom, validate_slots, BasicsDraft, BasicsField, CustomDraft,
-    CustomField, ProbedModels, SlotsDraft, SlotsField,
+    default_display_name, validate_basics, validate_custom, validate_slots, BasicsDraft, BasicsField, CustomDraft, CustomField, ProbedModels,
+    SlotsDraft, SlotsField,
 };
+use form_state::FormState;
+use text::{TextField, TextInput};
 
 /// 向导走到哪一步了。P5 Task 2 只有前两个, Task 4 加了 `Basics`/`Creating`, Task 5 加了
 /// `LoadingModels`/`Slots`/`Saving` (穷尽 `match`, 加了不接住就编译失败), Task 6 继续往里加
@@ -113,24 +114,14 @@ pub struct Wizard {
     /// `take_close_request()` 的待办标记。`App` 那一侧转发这个标记的逻辑在 `update()` 返回之后
     /// 轮询一次。
     close_request: bool,
-    /// `Stage::Basics` 的草稿。选中自定义厂商条目 / OAuth 厂商都不会碰这个字段——只有选中一个
-    /// 可用的内置厂商才会写 `provider_id`/`endpoint_id` (P5 Task 4)。
+    /// `Stage::Basics` 的草稿 (含 API Key / 备注名两个输入框本身)。选中自定义厂商条目 / OAuth
+    /// 厂商都不会碰这个字段——只有选中一个可用的内置厂商才会写 `provider_id`/`endpoint_id` (P5 Task 4)。
     draft: BasicsDraft,
-    /// 当前聚焦的字段, `Wizard::new()` 从 `BasicsField::Provider` 起步。
-    focus: BasicsField,
-    /// API Key 输入框的编辑状态 (光标位置等); `draft.api_key` 是它的 `Secret` 投影, 每次编辑
-    /// (`handle_event` 认为值真的变了) 之后同步——与 `display_name_input` 同一条道理, 见
-    /// `BasicsDraft` 的文档注释 (`tui_input::Input` 不参与 `PartialEq`, 草稿只存文本)。
-    api_key_input: Input,
-    /// 备注名输入框的编辑状态; `draft.display_name` 是它的 `String` 投影。
-    display_name_input: Input,
-    /// API Key 行是否显示明文 (`Ctrl+R` 切换, 只影响显示, 不影响 `draft.api_key` 本身)。
-    reveal_api_key: bool,
-    /// 上一次 `apply_provider_choice` 自动算出来的备注名——据此判断用户是不是已经手动改过它
-    /// (改过就不再跟着厂商切换重算), 见 `fields::default_display_name` 的调用点。
+    /// `Stage::Basics` 的焦点与校验错误, 从 `BasicsField::Provider` 起步。
+    basics_form: FormState<BasicsField>,
+    /// 上一次自动算出来的备注名——据此判断用户是不是已经手动改过它 (改过就不再跟着厂商切换 /
+    /// 厂商名编辑重算), 见 `follow_display_name`。两条路径互斥, 共用这一个字段。
     last_auto_display_name: Option<String>,
-    /// 校验失败的字段与原因; `Submit` 按下但没通过时写入, 画成那一行下面的 `⚠` 提示。
-    field_error: Option<(BasicsField, &'static str)>,
     /// `create_subscription` 失败时的原因, 挂成表单顶部的说明行 (`FormRow::Note`)。
     create_error: Option<String>,
     /// `Created(Ok(id))` 落地时记下的订阅 id, 供 `LoadModels`/`SaveSlots` 使用 (Task 5)。
@@ -138,32 +129,15 @@ pub struct Wizard {
     created_id: Option<String>,
     /// `Stage::Slots` 的草稿: 五个槽位的值 + 拉到的候选模型 + 说明行。
     slots_draft: SlotsDraft,
-    /// `Stage::Slots` 当前聚焦的字段, 从 `SlotsField::Row(Slot::Fable)` 起步。
-    slots_focus: SlotsField,
-    /// 槽位校验失败的字段与原因; `Save` 按下但没通过时写入, 与 `field_error` 同一条道理。
-    slot_error: Option<(Slot, &'static str)>,
-    /// `Stage::Custom` 的草稿; `None` 直到用户从厂商 picker 选中一个 `custom:<protocol>` 条目。
-    /// **是否处于自定义路径由它是不是 `Some` 判定**(`Stage::Creating` 的分流依据同样是这个,
-    /// `apply_slot_choice` 该写回哪一份草稿也是这个)。
+    /// `Stage::Slots` 的焦点与校验错误, 从 `SlotsField::Row(Slot::Fable)` 起步。
+    slots_form: FormState<SlotsField>,
+    /// `Stage::Custom` 的草稿 (含五个输入框本身); `None` 直到用户从厂商 picker 选中一个
+    /// `custom:<protocol>` 条目。**是否处于自定义路径由它是不是 `Some` 判定**(`Stage::Creating` 的
+    /// 分流依据同样是这个, `apply_slot_choice` 该写回哪一份草稿也是这个)。
     custom_draft: Option<CustomDraft>,
-    /// 当前聚焦的自定义表单字段; 只在 `custom_draft` 为 `Some` 时有意义, `apply_provider_choice`
-    /// 进 `Stage::Custom` 时重置成 `CustomField::ProviderName`。
-    custom_focus: CustomField,
-    /// 厂商名输入框的编辑状态, `custom_draft.provider_display_name` 是它的 `String` 投影。
-    provider_name_input: Input,
-    /// Base URL 输入框; `custom_draft.base_url` 是它的投影。
-    base_url_input: Input,
-    /// 请求路径输入框; `custom_draft.messages_path` 是它的投影。
-    messages_path_input: Input,
-    /// 自定义表单的 API Key 输入框, 与 `Basics` 的 `api_key_input` 分开——两条路径互斥, 但分开
-    /// 字段更清楚, 不必在切路径时清空共用状态。
-    custom_api_key_input: Input,
-    /// 自定义表单的备注名输入框, 理由同上。
-    custom_display_name_input: Input,
-    /// 自定义表单 API Key 行是否显示明文, 与 `reveal_api_key` 分开的理由同上。
-    reveal_custom_api_key: bool,
-    /// 自定义表单校验失败的字段与原因, 与 `field_error`/`slot_error` 同一条道理。
-    custom_field_error: Option<(CustomField, &'static str)>,
+    /// `Stage::Custom` 的焦点与校验错误; 只在 `custom_draft` 为 `Some` 时有意义,
+    /// `apply_provider_choice` 进 `Stage::Custom` 时重置成焦点在 `CustomField::ProviderName`。
+    custom_form: FormState<CustomField>,
 }
 
 // clippy::new_without_default: `App`/页面构造函数都带参数, 没有这条先例——`Wizard::new()` 恰好是
@@ -182,26 +156,14 @@ impl Wizard {
             notice: None,
             close_request: false,
             draft: BasicsDraft::default(),
-            focus: BasicsField::Provider,
-            api_key_input: Input::default(),
-            display_name_input: Input::default(),
-            reveal_api_key: false,
+            basics_form: FormState::new(BasicsField::Provider),
             last_auto_display_name: None,
-            field_error: None,
             create_error: None,
             created_id: None,
             slots_draft: SlotsDraft::default(),
-            slots_focus: SlotsField::Row(Slot::Fable),
-            slot_error: None,
+            slots_form: FormState::new(SlotsField::Row(Slot::Fable)),
             custom_draft: None,
-            custom_focus: CustomField::ProviderName,
-            provider_name_input: Input::default(),
-            base_url_input: Input::default(),
-            messages_path_input: Input::default(),
-            custom_api_key_input: Input::default(),
-            custom_display_name_input: Input::default(),
-            reveal_custom_api_key: false,
-            custom_field_error: None,
+            custom_form: FormState::new(CustomField::ProviderName),
         }
     }
 
@@ -246,45 +208,35 @@ impl Wizard {
     /// 切换明文/掩码; `Submit` 是按钮行, `⏎` 触发校验 + 提交。
     fn handle_basics_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let focus = self.basics_form.focus;
         match key.code {
             KeyCode::Up | KeyCode::BackTab => {
-                self.move_focus(-1);
+                self.basics_form.step(-1, &BasicsField::ALL);
                 None
             }
             KeyCode::Down | KeyCode::Tab => {
-                self.move_focus(1);
+                self.basics_form.step(1, &BasicsField::ALL);
                 None
             }
-            KeyCode::Enter if self.focus == BasicsField::Provider => Some(self.open_provider_picker(s)),
-            KeyCode::Enter if self.focus == BasicsField::Endpoint => Some(self.open_endpoint_picker(s)),
-            KeyCode::Enter if matches!(self.focus, BasicsField::ApiKey | BasicsField::DisplayName) => {
-                self.move_focus(1);
+            KeyCode::Enter if focus == BasicsField::Provider => Some(self.open_provider_picker(s)),
+            KeyCode::Enter if focus == BasicsField::Endpoint => Some(self.open_endpoint_picker(s)),
+            KeyCode::Enter if matches!(focus, BasicsField::ApiKey | BasicsField::DisplayName) => {
+                self.basics_form.step(1, &BasicsField::ALL);
                 None
             }
-            KeyCode::Enter if self.focus == BasicsField::Submit => self.submit(s),
-            // 必须排在下面两条打字分支之前: 否则 Ctrl+R 会被 `ApiKey` 的编辑分支当成字符 'r' 吃掉。
-            KeyCode::Char('r') if ctrl && self.focus == BasicsField::ApiKey => {
-                self.reveal_api_key = !self.reveal_api_key;
+            KeyCode::Enter if focus == BasicsField::Submit => self.submit(s),
+            // 必须排在下面的打字分支之前: 否则 Ctrl+R 会被 `ApiKey` 的编辑分支当成字符 'r' 吃掉。
+            KeyCode::Char('r') if ctrl && focus == BasicsField::ApiKey => {
+                self.draft.api_key.toggle_reveal();
                 None
             }
-            _ if self.focus == BasicsField::ApiKey => {
-                self.edit_api_key(key);
+            // 文本行交给统一的编辑路径; 选择行 (`Provider`/`Endpoint`) 没有文本字段, 其余按键
+            // (含字符键) 一律吞掉——"选择行不能直接打字"。
+            _ => {
+                edit_focused_text(self.draft.text_field(focus), &mut self.basics_form, key);
                 None
             }
-            _ if self.focus == BasicsField::DisplayName => {
-                self.edit_display_name(key);
-                None
-            }
-            // 选择行 (`Provider`/`Endpoint`) 上除了上面已经接住的 `⏎`, 其余按键 (含字符键) 一律
-            // 吞掉——"选择行不能直接打字"。
-            _ => None,
         }
-    }
-
-    fn move_focus(&mut self, delta: isize) {
-        let idx = BasicsField::ALL.iter().position(|f| *f == self.focus).unwrap_or(0);
-        let next = (idx as isize + delta).clamp(0, BasicsField::ALL.len() as isize - 1) as usize;
-        self.focus = BasicsField::ALL[next];
     }
 
     /// `Stage::Slots` 的按键表 (总规则同 `Basics`): `↑`/`↓`/`Tab`/`BackTab` 在 6 个可聚焦字段
@@ -294,53 +246,18 @@ impl Wizard {
     fn handle_slots_key(&mut self, key: KeyEvent, s: &'static Strings) -> Option<Action> {
         match key.code {
             KeyCode::Up | KeyCode::BackTab => {
-                self.move_slots_focus(-1);
+                self.slots_form.step(-1, &SlotsField::ALL);
                 None
             }
             KeyCode::Down | KeyCode::Tab => {
-                self.move_slots_focus(1);
+                self.slots_form.step(1, &SlotsField::ALL);
                 None
             }
-            KeyCode::Enter => match self.slots_focus {
+            KeyCode::Enter => match self.slots_form.focus {
                 SlotsField::Row(slot) => Some(self.open_slot_picker(slot, s)),
                 SlotsField::Save => self.submit_slots(s),
             },
             _ => None,
-        }
-    }
-
-    fn move_slots_focus(&mut self, delta: isize) {
-        let idx = SlotsField::ALL.iter().position(|f| *f == self.slots_focus).unwrap_or(0);
-        let next = (idx as isize + delta).clamp(0, SlotsField::ALL.len() as isize - 1) as usize;
-        self.slots_focus = SlotsField::ALL[next];
-    }
-
-    /// 编辑成功 (值真的变了) 就清掉**这个字段自己**的校验错误 (评审 M3)——别的字段的错误不动,
-    /// 不然改一个字段会把提交时挂在另一个字段上的提示也一并抹掉, 反而让用户以为它也修好了。
-    fn clear_field_error(&mut self, field: BasicsField) {
-        if self.field_error.is_some_and(|(f, _)| f == field) {
-            self.field_error = None;
-        }
-    }
-
-    fn edit_api_key(&mut self, key: KeyEvent) {
-        if self.api_key_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
-            self.draft.api_key = Secret::new(self.api_key_input.value());
-            self.clear_field_error(BasicsField::ApiKey);
-        }
-    }
-
-    fn edit_display_name(&mut self, key: KeyEvent) {
-        if self.display_name_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
-            self.draft.display_name = self.display_name_input.value().to_string();
-            self.clear_field_error(BasicsField::DisplayName);
-        }
-    }
-
-    /// 与 `clear_field_error` 同一条道理, 只是作用于 `Stage::Slots` 自己的槽位错误。
-    fn clear_slot_error(&mut self, slot: Slot) {
-        if self.slot_error.is_some_and(|(sl, _)| sl == slot) {
-            self.slot_error = None;
         }
     }
 
@@ -352,25 +269,27 @@ impl Wizard {
     /// 时 (理论不该发生, `Stage::Custom` 只由 `apply_provider_choice` 设置且同时写好
     /// `custom_draft`) 防御性地什么都不做。
     fn handle_custom_key(&mut self, key: KeyEvent, store: &Store, s: &'static Strings) -> Option<Action> {
-        let locked = self.custom_draft.as_ref()?.protocol.auth_locked();
+        let draft = self.custom_draft.as_mut()?;
+        let locked = draft.protocol.auth_locked();
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let focus = self.custom_form.focus;
         match key.code {
             KeyCode::Up | KeyCode::BackTab => {
-                self.move_custom_focus(-1);
+                self.custom_form.step(-1, &CustomField::all(locked));
                 None
             }
             KeyCode::Down | KeyCode::Tab => {
-                self.move_custom_focus(1);
+                self.custom_form.step(1, &CustomField::all(locked));
                 None
             }
-            KeyCode::Enter => match self.custom_focus {
+            KeyCode::Enter => match focus {
                 CustomField::Protocol => Some(self.open_protocol_picker(s)),
                 CustomField::Auth if !locked => Some(self.open_auth_picker(s)),
                 // 锁定态理论上不会被聚焦到 (`CustomField::all` 已经把它排除在导航列表之外), 但
                 // `⏎` 落在这里防御性地吞掉, 不做任何事。
                 CustomField::Auth => None,
                 CustomField::ProviderName | CustomField::BaseUrl | CustomField::MessagesPath | CustomField::ApiKey | CustomField::DisplayName => {
-                    self.move_custom_focus(1);
+                    self.custom_form.step(1, &CustomField::all(locked));
                     None
                 }
                 CustomField::Probe => self.submit_probe(s),
@@ -379,129 +298,26 @@ impl Wizard {
             },
             // 必须排在下面的打字分支之前, 同 `handle_basics_key` 的 Ctrl+R 分支——否则会被
             // `ApiKey` 的编辑分支当成字符 'r' 吃掉。
-            KeyCode::Char('r') if ctrl && self.custom_focus == CustomField::ApiKey => {
-                self.reveal_custom_api_key = !self.reveal_custom_api_key;
+            KeyCode::Char('r') if ctrl && focus == CustomField::ApiKey => {
+                draft.api_key.toggle_reveal();
                 None
             }
-            _ if self.custom_focus == CustomField::ProviderName => {
-                self.edit_custom_provider_name(key, store);
+            // 文本行交给统一的编辑路径; 选择行 (`Protocol`/`Auth`) 与按钮行 (`Probe`/`Submit`/
+            // 槽位行) 没有文本字段, 其余按键一律吞掉——"选择行不能直接打字"。**编辑 Base URL 不清
+            // `probe`**(评审裁决第 7 条)——`CustomDraft::models_url()` 自己按值比对, 编辑时提前
+            // 清空反而会丢掉"改回去又生效"这条桌面端行为; 只有换协议 (`apply_protocol_choice`) 才清。
+            _ => {
+                let changed = edit_focused_text(draft.text_field(focus), &mut self.custom_form, key);
+                // 评审 7: 备注名跟着厂商名自动生成, 与内置路径选厂商时同一个函数; 厂商名 trim 后为空
+                // 时不自动填 (刚进表单、还没打字时不该凭空冒出一个基于空字符串的默认值)。
+                if changed && focus == CustomField::ProviderName {
+                    let name = draft.provider_display_name.value().trim().to_string();
+                    if !name.is_empty() && follow_display_name(&mut draft.display_name, &mut self.last_auto_display_name, &name, store) {
+                        self.custom_form.clear(CustomField::DisplayName);
+                    }
+                }
                 None
             }
-            _ if self.custom_focus == CustomField::BaseUrl => {
-                self.edit_custom_base_url(key);
-                None
-            }
-            _ if self.custom_focus == CustomField::MessagesPath => {
-                self.edit_custom_messages_path(key);
-                None
-            }
-            _ if self.custom_focus == CustomField::ApiKey => {
-                self.edit_custom_api_key(key);
-                None
-            }
-            _ if self.custom_focus == CustomField::DisplayName => {
-                self.edit_custom_display_name(key);
-                None
-            }
-            // 选择行 (`Protocol`/`Auth`) 与按钮行 (`Probe`/`Submit`/槽位行) 上除了上面已经接住的
-            // `⏎`, 其余按键一律吞掉——"选择行不能直接打字"。
-            _ => None,
-        }
-    }
-
-    fn move_custom_focus(&mut self, delta: isize) {
-        let Some(draft) = &self.custom_draft else { return };
-        let all = CustomField::all(draft.protocol.auth_locked());
-        let idx = all.iter().position(|f| *f == self.custom_focus).unwrap_or(0);
-        let next = (idx as isize + delta).clamp(0, all.len() as isize - 1) as usize;
-        self.custom_focus = all[next];
-    }
-
-    /// 换协议之后, 若当前焦点恰好停在刚被锁定的 `Auth` 行 (少见: 焦点停在 Auth 行时重新打开
-    /// 协议 picker 并选中一个锁定协议), 挪到相邻的 `ApiKey` 行——避免焦点停在一个再也进不了
-    /// `move_custom_focus` 导航列表的字段上。
-    fn clamp_custom_focus(&mut self) {
-        let Some(draft) = &self.custom_draft else { return };
-        if self.custom_focus == CustomField::Auth && draft.protocol.auth_locked() {
-            self.custom_focus = CustomField::ApiKey;
-        }
-    }
-
-    /// 与 `clear_field_error`/`clear_slot_error` 同一条道理, 作用于 `Stage::Custom` 自己的校验
-    /// 错误。
-    fn clear_custom_field_error(&mut self, field: CustomField) {
-        if self.custom_field_error.is_some_and(|(f, _)| f == field) {
-            self.custom_field_error = None;
-        }
-    }
-
-    /// **评审 7 (拍板的一致性改动)**: 备注名跟着厂商名自动生成, 与内置路径
-    /// (`apply_provider_choice` 选厂商时) 同一条规则——备注名为空、**或**等于上一次自动生成的
-    /// 值时才跟着重算 (复用同一个 `last_auto_display_name` 字段判断; 两条路径互斥, 共用无妨);
-    /// 用户手改过备注名之后不再跟随; 厂商名 trim 后为空时不自动填 (刚进表单、还没打字时不该凭空
-    /// 冒出一个基于空字符串的默认值)。
-    fn edit_custom_provider_name(&mut self, key: KeyEvent, store: &Store) {
-        let Some(changed) = self.provider_name_input.handle_event(&Event::Key(key)) else { return };
-        if !changed.value {
-            return;
-        }
-        let name = self.provider_name_input.value().to_string();
-        if let Some(draft) = &mut self.custom_draft {
-            draft.provider_display_name = name.clone();
-        }
-        self.clear_custom_field_error(CustomField::ProviderName);
-
-        let still_auto = self
-            .custom_draft
-            .as_ref()
-            .is_some_and(|d| d.display_name.is_empty() || self.last_auto_display_name.as_deref() == Some(d.display_name.as_str()));
-        if still_auto && !name.trim().is_empty() {
-            let generated = default_display_name(name.trim(), store);
-            if let Some(draft) = &mut self.custom_draft {
-                draft.display_name = generated.clone();
-            }
-            self.custom_display_name_input = Input::new(generated.clone());
-            self.last_auto_display_name = Some(generated);
-            self.clear_custom_field_error(CustomField::DisplayName);
-        }
-    }
-
-    /// 编辑 Base URL **不清 `probe`**(评审裁决第 7 条)——`CustomDraft::models_url()` 自己按值
-    /// 比对, 编辑时提前清空反而会丢掉"改回去又生效"这条桌面端行为; 只有换协议
-    /// (`apply_protocol_choice`) 才清。
-    fn edit_custom_base_url(&mut self, key: KeyEvent) {
-        if self.base_url_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
-            if let Some(draft) = &mut self.custom_draft {
-                draft.base_url = self.base_url_input.value().to_string();
-            }
-            self.clear_custom_field_error(CustomField::BaseUrl);
-        }
-    }
-
-    fn edit_custom_messages_path(&mut self, key: KeyEvent) {
-        if self.messages_path_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
-            if let Some(draft) = &mut self.custom_draft {
-                draft.messages_path = self.messages_path_input.value().to_string();
-            }
-            self.clear_custom_field_error(CustomField::MessagesPath);
-        }
-    }
-
-    fn edit_custom_api_key(&mut self, key: KeyEvent) {
-        if self.custom_api_key_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
-            if let Some(draft) = &mut self.custom_draft {
-                draft.api_key = Secret::new(self.custom_api_key_input.value());
-            }
-            self.clear_custom_field_error(CustomField::ApiKey);
-        }
-    }
-
-    fn edit_custom_display_name(&mut self, key: KeyEvent) {
-        if self.custom_display_name_input.handle_event(&Event::Key(key)).is_some_and(|changed| changed.value) {
-            if let Some(draft) = &mut self.custom_draft {
-                draft.display_name = self.custom_display_name_input.value().to_string();
-            }
-            self.clear_custom_field_error(CustomField::DisplayName);
         }
     }
 
@@ -558,9 +374,9 @@ impl Wizard {
         })
     }
 
-    /// 换协议: 重置连接相关字段的草稿与对应的 `Input`(与草稿保持同步, 见 `provider_name_input`
-    /// 等字段的文档注释), 清掉这三个字段自己的校验错误 (评审 M3 同一条道理——被 `apply_protocol`
-    /// 重写的字段等同于被"编辑"过), 再 `clamp_custom_focus` 防止焦点悬空。**重选同一个协议
+    /// 换协议: 重置连接相关字段的草稿 (`CustomDraft::apply_protocol`, 输入框就在草稿里, 不用另外
+    /// 同步), 清掉这三个字段自己的校验错误 (评审 M3 同一条道理——被 `apply_protocol`
+    /// 重写的字段等同于被"编辑"过), 再把停在刚锁定的 `Auth` 行上的焦点挪开防止悬空。**重选同一个协议
     /// (评审 1, 仿 Task 4 评审 M2 在厂商行修过的同一类问题) 什么都不重算, 连 `probe` 都不清**——
     /// 否则用户在 Anthropic 下手动把 Base URL / 请求路径 / 鉴权都改成中转站的真实值之后, 回到
     /// 协议行看一眼、又按了一次 `⏎`(picker 默认高亮当前项, 很容易无意中确认同一项), 这些手填的
@@ -574,12 +390,14 @@ impl Wizard {
             return;
         }
         draft.apply_protocol(protocol);
-        self.base_url_input = Input::new(draft.base_url.clone());
-        self.messages_path_input = Input::new(draft.messages_path.clone());
-        self.clear_custom_field_error(CustomField::BaseUrl);
-        self.clear_custom_field_error(CustomField::MessagesPath);
-        self.clear_custom_field_error(CustomField::Auth);
-        self.clamp_custom_focus();
+        self.custom_form.clear(CustomField::BaseUrl);
+        self.custom_form.clear(CustomField::MessagesPath);
+        self.custom_form.clear(CustomField::Auth);
+        // 焦点恰好停在刚被锁定的 `Auth` 行时 (少见: 焦点停在 Auth 行时重新打开协议 picker 并选中
+        // 一个锁定协议), 挪到相邻的 `ApiKey` 行——避免焦点停在一个再也进不了导航列表的字段上。
+        if self.custom_form.focus == CustomField::Auth && protocol.auth_locked() {
+            self.custom_form.focus = CustomField::ApiKey;
+        }
     }
 
     fn apply_auth_choice(&mut self, choice: &PickerChoice) {
@@ -589,7 +407,7 @@ impl Wizard {
             draft.auth_header_name = (*header).to_string();
             draft.auth_header_format = *format;
         }
-        self.clear_custom_field_error(CustomField::Auth);
+        self.custom_form.clear(CustomField::Auth);
     }
 
     /// `Probe` 行 `⏎`: 只校验 `base_url` 非空 + API Key 非空 (与桌面端一致, 其余字段这一步不
@@ -598,24 +416,22 @@ impl Wizard {
     /// 屏幕上会同时显示"上一次探测失败的原因"和"正在获取模型列表…"两条互相矛盾的文案。
     fn submit_probe(&mut self, s: &'static Strings) -> Option<Action> {
         let draft = self.custom_draft.as_ref()?;
-        if draft.base_url.trim().is_empty() {
-            self.custom_focus = CustomField::BaseUrl;
-            self.custom_field_error = Some((CustomField::BaseUrl, s.wiz_err_base_url_empty));
+        if draft.base_url.value().trim().is_empty() {
+            self.custom_form.reject(CustomField::BaseUrl, s.wiz_err_base_url_empty);
             return None;
         }
         if draft.api_key.is_empty() {
-            self.custom_focus = CustomField::ApiKey;
-            self.custom_field_error = Some((CustomField::ApiKey, s.wiz_err_api_key));
+            self.custom_form.reject(CustomField::ApiKey, s.wiz_err_api_key);
             return None;
         }
         let cmd = WizardCmd::Probe(ProbeInput {
-            base_url: draft.base_url.trim().to_string(),
+            base_url: draft.base_url.value().trim().to_string(),
             auth_header_name: draft.auth_header_name.clone(),
             auth_header_format: draft.auth_header_format,
-            api_key: draft.api_key.clone(),
+            api_key: draft.api_key.secret(),
             protocol: draft.protocol,
         });
-        self.custom_field_error = None;
+        self.custom_form.clear_all();
         if let Some(draft) = &mut self.custom_draft {
             draft.slots.note = None;
         }
@@ -632,26 +448,25 @@ impl Wizard {
         let draft = self.custom_draft.as_ref()?;
         match validate_custom(draft, s) {
             Some((field, message)) => {
-                self.custom_focus = field;
-                self.custom_field_error = Some((field, message));
+                self.custom_form.reject(field, message);
                 None
             }
             None => {
                 let cmd = WizardCmd::Create(CreateInput {
-                    display_name: draft.display_name.clone(),
-                    api_key: draft.api_key.clone(),
+                    display_name: draft.display_name.value().to_string(),
+                    api_key: draft.api_key.secret(),
                     model_slots: draft.slots.slots.clone(),
                     source: CreateSource::Custom(Box::new(CustomSource {
-                        provider_display_name: draft.provider_display_name.clone(),
-                        base_url: draft.base_url.trim().to_string(),
-                        messages_path: draft.messages_path.trim().to_string(),
+                        provider_display_name: draft.provider_display_name.value().to_string(),
+                        base_url: draft.base_url.value().trim().to_string(),
+                        messages_path: draft.messages_path.value().trim().to_string(),
                         auth_header_name: draft.auth_header_name.clone(),
                         auth_header_format: draft.auth_header_format,
                         protocol: draft.protocol,
                         models_url: draft.models_url().map(str::to_string),
                     })),
                 });
-                self.custom_field_error = None;
+                self.custom_form.clear_all();
                 if let Some(draft) = &mut self.custom_draft {
                     draft.slots.note = None;
                 }
@@ -756,27 +571,18 @@ impl Wizard {
     /// 厂商 (评审 M2) 什么都不重算**——接入点/备注名/焦点原样保留, 否则用户手动把接入点从默认值
     /// 改成别的、又不小心在厂商行按了 `⏎` 确认同一个厂商, 接入点会被悄悄弹回默认值, 用户毫无
     /// 察觉。选中自定义条目 (P5 Task 6) → 构造一份全新 `CustomDraft`(`CustomDraft::new` 已经按
-    /// 协议预设填好连接字段), 重置对应的 `Input`, 焦点落在 `ProviderName`, 进 `Stage::Custom`。
+    /// 协议预设填好连接字段, 输入框就在草稿里), 焦点落在 `ProviderName`、错误清空, 进 `Stage::Custom`。
     /// 选中 OAuth 厂商 → 不设值, 只弹 `wiz_desktop_only`。
     fn apply_provider_choice(&mut self, choice: &PickerChoice, store: &Store, s: &'static Strings) {
         // `allow_custom: false`: picker 理论上不会产出 `Custom`, 防御性地忽略。
         let PickerChoice::Item(id) = choice else { return };
         if let Some(wire) = id.strip_prefix("custom:") {
             let Some(protocol) = CustomProtocol::ALL.iter().find(|p| p.as_wire() == wire).copied() else { return };
-            let draft = CustomDraft::new(protocol);
-            self.provider_name_input = Input::default();
-            self.base_url_input = Input::new(draft.base_url.clone());
-            self.messages_path_input = Input::new(draft.messages_path.clone());
-            self.custom_api_key_input = Input::default();
-            self.custom_display_name_input = Input::default();
-            self.reveal_custom_api_key = false;
-            self.custom_field_error = None;
             // 全新的自定义草稿: 上一次 (可能是内置路径留下的) 自动生成备注名的记录不该带过来,
-            // 否则 `edit_custom_provider_name` 第一次判断"是否还处于自动跟随"时可能被 stale 值
-            // 干扰 (评审 7)。
+            // 否则编辑厂商名时第一次判断"是否还处于自动跟随"可能被 stale 值干扰 (评审 7)。
             self.last_auto_display_name = None;
-            self.custom_draft = Some(draft);
-            self.custom_focus = CustomField::ProviderName;
+            self.custom_draft = Some(CustomDraft::new(protocol));
+            self.custom_form = FormState::new(CustomField::ProviderName);
             self.stage = Stage::Custom;
             return;
         }
@@ -786,36 +592,30 @@ impl Wizard {
             return;
         }
         // 把后面要用的字段先拷成拥有所有权的值——`provider` 借用着 `self.providers`, 下面几行都
-        // 要调 `&mut self` 的方法 (`clear_field_error` 等), 两者不能同时活着。
+        // 要改 `self` 的其它字段, 两者不能同时活着。
         let provider_id = provider.id.clone();
         let provider_display_name = provider.display_name.clone();
         let default_endpoint_id = provider.default_endpoint().map(|e| e.id.clone()).unwrap_or_default();
 
         // 选中了一个合法的内置厂商 (不管是不是重选同一个), 这个字段本身就算通过了, 先清错误
         // (评审 M3)。
-        self.clear_field_error(BasicsField::Provider);
+        self.basics_form.clear(BasicsField::Provider);
         if provider_id == self.draft.provider_id {
             return; // M2: 重选同一个厂商, 接入点/备注名/焦点都不动。
         }
         self.draft.provider_id = provider_id;
         self.draft.endpoint_id = default_endpoint_id;
-        self.clear_field_error(BasicsField::Endpoint);
-        let still_auto =
-            self.draft.display_name.is_empty() || self.last_auto_display_name.as_deref() == Some(self.draft.display_name.as_str());
-        if still_auto {
-            let name = default_display_name(&provider_display_name, store);
-            self.draft.display_name = name.clone();
-            self.display_name_input = Input::new(name.clone());
-            self.last_auto_display_name = Some(name);
-            self.clear_field_error(BasicsField::DisplayName);
+        self.basics_form.clear(BasicsField::Endpoint);
+        if follow_display_name(&mut self.draft.display_name, &mut self.last_auto_display_name, &provider_display_name, store) {
+            self.basics_form.clear(BasicsField::DisplayName);
         }
-        self.focus = BasicsField::ApiKey;
+        self.basics_form.focus = BasicsField::ApiKey;
     }
 
     fn apply_endpoint_choice(&mut self, choice: &PickerChoice) {
         if let PickerChoice::Item(id) = choice {
             self.draft.endpoint_id = id.clone();
-            self.clear_field_error(BasicsField::Endpoint);
+            self.basics_form.clear(BasicsField::Endpoint);
         }
     }
 
@@ -833,10 +633,10 @@ impl Wizard {
         };
         if let Some(draft) = &mut self.custom_draft {
             draft.slots.slots.set(slot, value);
-            self.clear_custom_field_error(CustomField::Slot(slot));
+            self.custom_form.clear(CustomField::Slot(slot));
         } else {
             self.slots_draft.slots.set(slot, value);
-            self.clear_slot_error(slot);
+            self.slots_form.clear(SlotsField::Row(slot));
         }
     }
 
@@ -846,16 +646,15 @@ impl Wizard {
     fn submit(&mut self, s: &'static Strings) -> Option<Action> {
         match validate_basics(&self.draft, s) {
             Some((field, message)) => {
-                self.focus = field;
-                self.field_error = Some((field, message));
+                self.basics_form.reject(field, message);
                 None
             }
             None => {
-                self.field_error = None;
+                self.basics_form.clear_all();
                 self.create_error = None;
                 let cmd = WizardCmd::Create(CreateInput {
-                    display_name: self.draft.display_name.clone(),
-                    api_key: self.draft.api_key.clone(),
+                    display_name: self.draft.display_name.value().to_string(),
+                    api_key: self.draft.api_key.secret(),
                     model_slots: ModelSlots::pending(),
                     source: CreateSource::Builtin { provider_id: self.draft.provider_id.clone(), endpoint_id: self.draft.endpoint_id.clone() },
                 });
@@ -871,12 +670,11 @@ impl Wizard {
     fn submit_slots(&mut self, s: &'static Strings) -> Option<Action> {
         match validate_slots(&self.slots_draft, s) {
             Some((slot, message)) => {
-                self.slots_focus = SlotsField::Row(slot);
-                self.slot_error = Some((slot, message));
+                self.slots_form.reject(SlotsField::Row(slot), message);
                 None
             }
             None => {
-                self.slot_error = None;
+                self.slots_form.clear_all();
                 self.slots_draft.note = None;
                 // `created_id` 在 `Stage::Slots` 期间恒为 `Some` (由 `apply_wizard_result` 的
                 // `Created(Ok)` 分支保证); `None` 时防御性地什么都不做, 不 panic。
@@ -963,7 +761,7 @@ impl Wizard {
                 if self.custom_draft.is_some() {
                     match inner {
                         Ok(_created) => {
-                            let name = self.custom_draft.as_ref().map(|d| d.display_name.clone()).unwrap_or_default();
+                            let name = self.custom_draft.as_ref().map(|d| d.display_name.value().to_string()).unwrap_or_default();
                             self.notice = Some((ToastKind::Success, (s.wiz_created)(&name)));
                             self.close_request = true;
                         }
@@ -1009,7 +807,7 @@ impl Wizard {
                             }
                         }
                         self.slots_draft = SlotsDraft { slots, models: models.clone(), note: None };
-                        self.slots_focus = SlotsField::Row(Slot::Fable);
+                        self.slots_form.focus = SlotsField::Row(Slot::Fable);
                         self.stage = Stage::Slots;
                         Vec::new()
                     }
@@ -1025,7 +823,7 @@ impl Wizard {
                 // 评审 4: 只读请求自证身份——`Probing` 期间表单只读, 草稿当前 (trim 后) 的
                 // `base_url` 就是这次请求发出时的值; 与结果带回来的 `base_url` 不一致, 必然是
                 // 另一个向导实例的晚到探测结果, 整个丢弃。
-                if draft.base_url.trim() != base_url.as_str() {
+                if draft.base_url.value().trim() != base_url.as_str() {
                     return Vec::new();
                 }
                 match inner {
@@ -1049,7 +847,7 @@ impl Wizard {
                         draft.slots.note = Some((s.wiz_models_manual)(e));
                     }
                 }
-                self.custom_focus = CustomField::Slot(Slot::Fable);
+                self.custom_form.focus = CustomField::Slot(Slot::Fable);
                 self.stage = Stage::Custom;
                 Vec::new()
             }
@@ -1059,7 +857,7 @@ impl Wizard {
                 }
                 match inner {
                     Ok(()) => {
-                        self.notice = Some((ToastKind::Success, (s.wiz_created)(&self.draft.display_name)));
+                        self.notice = Some((ToastKind::Success, (s.wiz_created)(self.draft.display_name.value())));
                         self.close_request = true;
                     }
                     Err(e) => {
@@ -1076,7 +874,7 @@ impl Wizard {
     /// 进 `Stage::Slots`, 只是说明文案的措辞由调用方算好传进来。
     fn enter_slots_with_note(&mut self, note: String) -> Vec<Cmd> {
         self.slots_draft = SlotsDraft { note: Some(note), ..SlotsDraft::default() };
-        self.slots_focus = SlotsField::Row(Slot::Fable);
+        self.slots_form.focus = SlotsField::Row(Slot::Fable);
         self.stage = Stage::Slots;
         Vec::new()
     }
@@ -1144,21 +942,20 @@ impl Wizard {
 
         let provider_label = self.provider_label();
         let endpoint_label = self.endpoint_label();
-        let api_key_text = api_key_display(&self.draft.api_key, self.reveal_api_key);
+        let api_key_text = self.draft.api_key.display();
         let pick_hint = format!("⏎ {}", s.key_pick);
         let reveal_hint = format!("Ctrl+R {}", s.key_reveal);
         // 弹窗叠在表单上面时终端光标该不该显示由 `FormView::show_cursor` 统一把关 (Task 5 起收在
         // `form::draw` 这一个关口), 这里恢复成无条件给值。
-        let api_key_cursor = Some(self.api_key_input.visual_cursor());
-        let display_name_cursor = Some(self.display_name_input.visual_cursor());
-        let field_error = |field: BasicsField| self.field_error.and_then(|(f, msg)| (f == field).then_some(msg));
+        let api_key_cursor = Some(self.draft.api_key.visual_cursor());
+        let display_name_cursor = Some(self.draft.display_name.visual_cursor());
         let field = |label, value, hint, cursor, field: BasicsField| FormRow::Field {
             label,
             value,
             placeholder: "",
             hint,
             cursor,
-            error: field_error(field),
+            error: self.basics_form.error_for(field),
             locked: busy,
         };
 
@@ -1171,15 +968,15 @@ impl Wizard {
             (s.wiz_f_provider, provider_label.as_str(), Some(pick_hint.as_str()), None, BasicsField::Provider),
             (s.wiz_f_endpoint, endpoint_label.as_str(), Some(pick_hint.as_str()), None, BasicsField::Endpoint),
             (s.wiz_f_api_key, api_key_text.as_str(), Some(reveal_hint.as_str()), api_key_cursor, BasicsField::ApiKey),
-            (s.wiz_f_display_name, self.draft.display_name.as_str(), None, display_name_cursor, BasicsField::DisplayName),
+            (s.wiz_f_display_name, self.draft.display_name.value(), None, display_name_cursor, BasicsField::DisplayName),
         ] {
-            b.push(field(label, value, hint, cursor, f), self.focus == f);
+            b.push(field(label, value, hint, cursor, f), self.basics_form.focus == f);
         }
         b.push(FormRow::Spacer, false);
         // `Creating` 文案是 `wiz_creating`; `LoadingModels` (已经拿到 id, 在等
         // `refresh_model_list`) 换成 `wiz_loading_models`。
         let creating_label = if matches!(self.stage, Stage::LoadingModels) { s.wiz_loading_models } else { s.wiz_creating };
-        b.push(FormRow::Button { label: if busy { creating_label } else { s.wiz_btn_next }, busy }, self.focus == BasicsField::Submit);
+        b.push(FormRow::Button { label: if busy { creating_label } else { s.wiz_btn_next }, busy }, self.basics_form.focus == BasicsField::Submit);
         let built = b.finish();
 
         let view = FormView {
@@ -1200,7 +997,6 @@ impl Wizard {
     fn draw_slots(&self, frame: &mut Frame, area: Rect, theme: &Theme, s: &'static Strings, tick: u64, popup_open: bool) {
         let busy = matches!(self.stage, Stage::Saving);
         let pick_hint = format!("⏎ {}", s.key_pick);
-        let slot_error = |slot: Slot| self.slot_error.and_then(|(sl, msg)| (sl == slot).then_some(msg));
 
         let mut b = FormBuilder::new();
         if let Some(note) = &self.slots_draft.note {
@@ -1219,14 +1015,14 @@ impl Wizard {
                     placeholder,
                     hint: Some(&pick_hint),
                     cursor: None,
-                    error: slot_error(slot),
+                    error: self.slots_form.error_for(SlotsField::Row(slot)),
                     locked: busy,
                 },
-                self.slots_focus == SlotsField::Row(slot),
+                self.slots_form.focus == SlotsField::Row(slot),
             );
         }
         b.push(FormRow::Spacer, false);
-        b.push(FormRow::Button { label: if busy { s.wiz_saving } else { s.wiz_btn_save }, busy }, self.slots_focus == SlotsField::Save);
+        b.push(FormRow::Button { label: if busy { s.wiz_saving } else { s.wiz_btn_save }, busy }, self.slots_form.focus == SlotsField::Save);
         let built = b.finish();
 
         let view = FormView {
@@ -1245,7 +1041,7 @@ impl Wizard {
     /// 槽位 / [创建]) —— 与两步向导的 `draw_basics`/`draw_slots` 不同, 这里**没有 Spacer**(简报
     /// 80×24 布局逐行紧跟, 14 行内容在 20 行内容区还有富余, 不需要用空行分组)。`Auth` 行**总是
     /// 画出来**(哪怕锁定), 只是这时 `locked: true`——锁定与否不影响行数, 只影响
-    /// `CustomField::all` 的焦点导航列表 (见 `move_custom_focus`)。`custom_draft` 是 `None` 时
+    /// `CustomField::all` 的焦点导航列表 (见 `handle_custom_key`)。`custom_draft` 是 `None` 时
     /// (不该发生) 什么都不画。
     fn draw_custom(&self, frame: &mut Frame, area: Rect, theme: &Theme, s: &'static Strings, tick: u64, popup_open: bool) {
         let Some(draft) = &self.custom_draft else { return };
@@ -1256,18 +1052,18 @@ impl Wizard {
 
         let protocol_label = Self::custom_protocol_label(draft.protocol, s);
         let auth_label = format!("{} · {}", draft.auth_header_name, Self::auth_format_label(draft.auth_header_format));
-        let api_key_text = api_key_display(&draft.api_key, self.reveal_custom_api_key);
+        let api_key_text = draft.api_key.display();
         let pick_hint = format!("⏎ {}", s.key_pick);
         let reveal_hint = format!("Ctrl+R {}", s.key_reveal);
         // 弹窗叠在表单上面时终端光标该不该显示由 `FormView::show_cursor` 统一把关, 这里恢复成
         // 无条件给值 (同 `draw_basics`)。
-        let provider_name_cursor = Some(self.provider_name_input.visual_cursor());
-        let base_url_cursor = Some(self.base_url_input.visual_cursor());
-        let messages_path_cursor = Some(self.messages_path_input.visual_cursor());
-        let api_key_cursor = Some(self.custom_api_key_input.visual_cursor());
-        let display_name_cursor = Some(self.custom_display_name_input.visual_cursor());
-        let field_error = |field: CustomField| self.custom_field_error.and_then(|(f, msg)| (f == field).then_some(msg));
-        let focused = |field: CustomField| self.custom_focus == field;
+        let provider_name_cursor = Some(draft.provider_display_name.visual_cursor());
+        let base_url_cursor = Some(draft.base_url.visual_cursor());
+        let messages_path_cursor = Some(draft.messages_path.visual_cursor());
+        let api_key_cursor = Some(draft.api_key.visual_cursor());
+        let display_name_cursor = Some(draft.display_name.visual_cursor());
+        let field_error = |field: CustomField| self.custom_form.error_for(field);
+        let focused = |field: CustomField| self.custom_form.focus == field;
         // 除 `Auth` 外全部字段行的共同形状 (`Auth` 的 `hint`/`locked` 另外看锁定态, 单独拼)。
         let field = |label, value, placeholder, hint, cursor, field: CustomField| FormRow::Field {
             label,
@@ -1286,15 +1082,15 @@ impl Wizard {
         }
         b.push(field(s.wiz_f_protocol, protocol_label, "", Some(&pick_hint), None, CustomField::Protocol), focused(CustomField::Protocol));
         b.push(
-            field(s.wiz_f_provider_name, &draft.provider_display_name, "", None, provider_name_cursor, CustomField::ProviderName),
+            field(s.wiz_f_provider_name, draft.provider_display_name.value(), "", None, provider_name_cursor, CustomField::ProviderName),
             focused(CustomField::ProviderName),
         );
         b.push(
-            field(s.wiz_f_base_url, &draft.base_url, CUSTOM_BASE_URL_PLACEHOLDER, None, base_url_cursor, CustomField::BaseUrl),
+            field(s.wiz_f_base_url, draft.base_url.value(), CUSTOM_BASE_URL_PLACEHOLDER, None, base_url_cursor, CustomField::BaseUrl),
             focused(CustomField::BaseUrl),
         );
         b.push(
-            field(s.wiz_f_messages_path, &draft.messages_path, "", None, messages_path_cursor, CustomField::MessagesPath),
+            field(s.wiz_f_messages_path, draft.messages_path.value(), "", None, messages_path_cursor, CustomField::MessagesPath),
             focused(CustomField::MessagesPath),
         );
         b.push(
@@ -1311,7 +1107,7 @@ impl Wizard {
         );
         b.push(field(s.wiz_f_api_key, &api_key_text, "", Some(&reveal_hint), api_key_cursor, CustomField::ApiKey), focused(CustomField::ApiKey));
         b.push(
-            field(s.wiz_f_display_name, &draft.display_name, "", None, display_name_cursor, CustomField::DisplayName),
+            field(s.wiz_f_display_name, draft.display_name.value(), "", None, display_name_cursor, CustomField::DisplayName),
             focused(CustomField::DisplayName),
         );
         b.push(FormRow::Button { label: if probing { s.wiz_probing } else { s.wiz_btn_probe }, busy: probing }, focused(CustomField::Probe));
@@ -1380,7 +1176,7 @@ impl Wizard {
             Stage::Loading | Stage::LoadFailed(_) | Stage::Creating | Stage::LoadingModels | Stage::Saving | Stage::Probing => Vec::new(),
             Stage::Basics => {
                 let mut hints = vec![("↑↓", s.key_field)];
-                match self.focus {
+                match self.basics_form.focus {
                     BasicsField::Provider | BasicsField::Endpoint => hints.push(("⏎", s.key_pick)),
                     BasicsField::ApiKey => {
                         hints.push(("⏎", s.key_next_field));
@@ -1393,7 +1189,7 @@ impl Wizard {
             }
             Stage::Slots => {
                 let mut hints = vec![("↑↓", s.key_field)];
-                match self.slots_focus {
+                match self.slots_form.focus {
                     SlotsField::Row(_) => hints.push(("⏎", s.key_pick)),
                     SlotsField::Save => hints.push(("⏎", s.wiz_btn_save)),
                 }
@@ -1402,7 +1198,7 @@ impl Wizard {
             Stage::Custom => {
                 let mut hints = vec![("↑↓", s.key_field)];
                 let locked = self.custom_draft.as_ref().map(|d| d.protocol.auth_locked()).unwrap_or(false);
-                match self.custom_focus {
+                match self.custom_form.focus {
                     CustomField::Protocol => hints.push(("⏎", s.key_pick)),
                     CustomField::Auth if !locked => hints.push(("⏎", s.key_pick)),
                     CustomField::Auth => {} // 锁定态理论不会被聚焦到, 防御性地不给提示。
@@ -1441,7 +1237,7 @@ impl Wizard {
         match &self.stage {
             Stage::Loading | Stage::LoadFailed(_) => false,
             Stage::Basics => {
-                !self.draft.provider_id.is_empty() || !self.draft.api_key.is_empty() || !self.draft.display_name.trim().is_empty()
+                !self.draft.provider_id.is_empty() || !self.draft.api_key.is_empty() || !self.draft.display_name.value().trim().is_empty()
             }
             Stage::Creating | Stage::LoadingModels | Stage::Slots | Stage::Saving | Stage::Custom | Stage::Probing => true,
         }
@@ -1471,6 +1267,34 @@ impl Wizard {
     pub fn request_notice_for_test(&mut self, kind: ToastKind, text: impl Into<String>) {
         self.notice = Some((kind, text.into()));
     }
+}
+
+/// 文本行按键的**唯一**编辑路径 (内置 / 自定义两张表单共用): `field` 是按焦点找到的那一格
+/// (`BasicsDraft::text_field` / `CustomDraft::text_field`, 焦点不在文本行上时是 `None`, 按键被吞掉),
+/// 交给它处理; 值真的变了就清掉**这个字段自己**的校验错误 (评审 M3, 见 `FormState::clear`)。返回
+/// 值是否改变——自定义表单改了厂商名还要让备注名跟随。
+fn edit_focused_text<F: Copy + Eq>(field: Option<&mut dyn TextInput>, form: &mut FormState<F>, key: KeyEvent) -> bool {
+    let Some(field) = field else { return false };
+    if !field.handle(key) {
+        return false;
+    }
+    form.clear(form.focus);
+    true
+}
+
+/// 备注名跟着厂商名自动生成——内置路径 (`apply_provider_choice` 选中厂商) 与自定义路径 (编辑厂商
+/// 名, 评审 7 拍板的一致性改动) 共用这一个函数: 备注名为空、**或**仍等于上一次自动生成的值时,
+/// 重算成 `default_display_name(source)` 并记下来; 用户手改过之后不再跟随。返回是否真的重算了
+/// (调用方据此清掉备注名行自己的错误)。
+fn follow_display_name(display_name: &mut TextField, last_auto: &mut Option<String>, source: &str, store: &Store) -> bool {
+    let still_auto = display_name.value().is_empty() || last_auto.as_deref() == Some(display_name.value());
+    if !still_auto {
+        return false;
+    }
+    let generated = default_display_name(source, store);
+    display_name.set(generated.clone());
+    *last_auto = Some(generated);
+    true
 }
 
 #[cfg(test)]
@@ -1576,22 +1400,22 @@ mod tests {
         let mut w = Wizard::new();
         w.stage = Stage::Basics;
 
-        w.focus = BasicsField::Provider;
+        w.basics_form.focus = BasicsField::Provider;
         assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.key_pick)], "选择行应该提示 ⏎ 选择");
 
-        w.focus = BasicsField::ApiKey;
+        w.basics_form.focus = BasicsField::ApiKey;
         assert_eq!(
             w.hints(s),
             vec![("↑↓", s.key_field), ("⏎", s.key_next_field), ("Ctrl+R", s.key_reveal)],
             "API Key 行额外带 Ctrl+R 提示"
         );
 
-        w.focus = BasicsField::DisplayName;
+        w.basics_form.focus = BasicsField::DisplayName;
         let hints = w.hints(s);
         assert_eq!(hints, vec![("↑↓", s.key_field), ("⏎", s.key_next_field)], "备注名行是文本行, 但不该有 Ctrl+R 提示");
         assert!(!hints.iter().any(|(k, _)| *k == "Ctrl+R"), "备注名行不该出现 Ctrl+R\n{hints:?}");
 
-        w.focus = BasicsField::Submit;
+        w.basics_form.focus = BasicsField::Submit;
         assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.wiz_btn_next)], "按钮行应该显示按钮自己的标签, 不是通用词");
     }
 
@@ -1602,27 +1426,50 @@ mod tests {
         let mut w = Wizard::new();
         w.stage = Stage::Slots;
 
-        w.slots_focus = SlotsField::Row(Slot::Fable);
+        w.slots_form.focus = SlotsField::Row(Slot::Fable);
         assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.key_pick)], "槽位行应该提示 ⏎ 选择");
 
-        w.slots_focus = SlotsField::Save;
+        w.slots_form.focus = SlotsField::Save;
         assert_eq!(w.hints(s), vec![("↑↓", s.key_field), ("⏎", s.wiz_btn_save)], "保存按钮行应该显示它自己的标签");
     }
 
     /// P5 Task 5 前置项 3: 编辑字段只清自己的错误——负向用例 (Task 4 只有正向: 编辑同一个字段清
-    /// 掉自己的错误; `field_error` 是单个 `Option`, 退化成"任何编辑都清"时那条正向测试照样能过,
+    /// 掉自己的错误; 错误是单个 `Option`, 退化成"任何编辑都清"时那条正向测试照样能过,
     /// 必须补一条编辑别的字段、断言原字段错误还在的用例才咬得住这个回归)。
     #[test]
     fn editing_one_field_does_not_clear_another_fields_error() {
         let s = &crate::i18n::ZH;
         let mut w = Wizard::new();
         w.stage = Stage::Basics;
-        w.field_error = Some((BasicsField::Provider, s.wiz_err_provider));
-        w.focus = BasicsField::DisplayName;
+        w.basics_form.error = Some((BasicsField::Provider, s.wiz_err_provider));
+        w.basics_form.focus = BasicsField::DisplayName;
 
         w.handle_key(key(KeyCode::Char('a')), &Store::default(), s);
 
-        assert_eq!(w.field_error, Some((BasicsField::Provider, s.wiz_err_provider)), "编辑备注名不该清掉厂商行的错误");
+        assert_eq!(w.basics_form.error, Some((BasicsField::Provider, s.wiz_err_provider)), "编辑备注名不该清掉厂商行的错误");
+    }
+
+    /// 7R-a: 统一编辑路径的正向用例 (两张表单各一条)——只移动光标不算编辑, 错误留着; 值真的变了
+    /// 才清掉这个字段自己的错误。
+    #[test]
+    fn editing_a_text_field_clears_its_own_error_only_when_the_value_changes() {
+        let s = &crate::i18n::ZH;
+        let mut w = Wizard::new();
+        w.stage = Stage::Basics;
+        w.basics_form.reject(BasicsField::ApiKey, s.wiz_err_api_key);
+        w.handle_key(key(KeyCode::Left), &Store::default(), s);
+        assert_eq!(w.basics_form.error, Some((BasicsField::ApiKey, s.wiz_err_api_key)), "只移动光标不该清错误");
+        w.handle_key(key(KeyCode::Char('x')), &Store::default(), s);
+        assert_eq!(w.basics_form.error, None, "给 API Key 打字应该清掉它自己的错误");
+
+        let mut c = Wizard::new();
+        c.stage = Stage::Custom;
+        c.custom_draft = Some(CustomDraft::new(CustomProtocol::Anthropic));
+        c.custom_form.reject(CustomField::BaseUrl, s.wiz_err_base_url_empty);
+        c.handle_key(key(KeyCode::Left), &Store::default(), s);
+        assert_eq!(c.custom_form.error, Some((CustomField::BaseUrl, s.wiz_err_base_url_empty)), "只移动光标不该清错误");
+        c.handle_key(key(KeyCode::Char('h')), &Store::default(), s);
+        assert_eq!(c.custom_form.error, None, "给 Base URL 打字应该清掉它自己的错误");
     }
 
     /// 同上, `Stage::Slots` 里槽位错误的负向用例: 给 `Fable` 挂错误, 选 `Opus` 的模型, `Fable`
@@ -1632,11 +1479,11 @@ mod tests {
         let s = &crate::i18n::ZH;
         let mut w = Wizard::new();
         w.stage = Stage::Slots;
-        w.slot_error = Some((Slot::Fable, s.wiz_err_slot));
+        w.slots_form.error = Some((SlotsField::Row(Slot::Fable), s.wiz_err_slot));
 
         w.apply_slot_choice(Slot::Opus, &PickerChoice::Item("glm-4.6".into()));
 
-        assert_eq!(w.slot_error, Some((Slot::Fable, s.wiz_err_slot)), "选定 Opus 的模型不该清掉 Fable 行的错误");
+        assert_eq!(w.slots_form.error, Some((SlotsField::Row(Slot::Fable), s.wiz_err_slot)), "选定 Opus 的模型不该清掉 Fable 行的错误");
     }
 
     /// Item 3: `Stage::Basics` 下 `Esc` (有输入时) 用的是 `confirm_discard`, 不是
@@ -1678,7 +1525,7 @@ mod tests {
     fn a_stale_provider_list_is_discarded_outside_loading() {
         let mut w = Wizard::new();
         w.stage = Stage::Slots;
-        w.slots_focus = SlotsField::Save;
+        w.slots_form.focus = SlotsField::Save;
         let action = Action::WizardDone(Box::new(WizardResult::Providers(Ok(vec![provider("late")]))));
         let cmds = w.update(&action, &Store::default(), &crate::i18n::ZH);
         assert!(cmds.is_empty());

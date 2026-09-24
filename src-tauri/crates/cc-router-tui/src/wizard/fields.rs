@@ -1,20 +1,29 @@
 //! 两条路径各自的字段、校验与预填。与 `mod.rs` 分开是因为这些是**纯数据与纯函数**: 给定
 //! 一份草稿, 算出要画哪些行、哪些字段不合法。没有 `Frame`, 没有 `Cmd`, 好测。
 
+use super::text::{SecretField, TextField, TextInput};
 use crate::client::dto::{AuthHeaderFormat, CustomProtocol, ModelInfo, ModelSlots, Slot};
 use crate::i18n::Strings;
-use crate::secret::Secret;
 use crate::store::Store;
 
-/// 内置路径第一步的草稿。
+/// 内置路径第一步的草稿。文本字段直接持有输入框 (`TextField`/`SecretField`, 值只存这一份)。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BasicsDraft {
     pub provider_id: String,
     pub endpoint_id: String,
-    pub api_key: Secret,
-    /// `tui_input::Input` 不参与 `PartialEq` (与 `PickerState` 同一条道理), 所以备注名的文本
-    /// 存在这里, 输入框本身由 `Wizard` 持有。
-    pub display_name: String,
+    pub api_key: SecretField,
+    pub display_name: TextField,
+}
+
+impl BasicsDraft {
+    /// 焦点所在的文本字段; 选择行 / 按钮行没有。
+    pub fn text_field(&mut self, field: BasicsField) -> Option<&mut dyn TextInput> {
+        match field {
+            BasicsField::ApiKey => Some(&mut self.api_key),
+            BasicsField::DisplayName => Some(&mut self.display_name),
+            BasicsField::Provider | BasicsField::Endpoint | BasicsField::Submit => None,
+        }
+    }
 }
 
 /// 第一步的字段。顺序即上下键的顺序。
@@ -45,7 +54,7 @@ pub fn validate_basics(d: &BasicsDraft, s: &'static Strings) -> Option<(BasicsFi
     if d.api_key.is_empty() {
         return Some((BasicsField::ApiKey, s.wiz_err_api_key));
     }
-    if d.display_name.trim().is_empty() {
+    if d.display_name.value().trim().is_empty() {
         return Some((BasicsField::DisplayName, s.wiz_err_display_name));
     }
     None
@@ -71,23 +80,6 @@ pub fn default_display_name(provider_name: &str, store: &Store) -> String {
     }
 }
 
-/// 界面上要显示 API Key 时的**唯一**明文出口 (`Ctrl+R` 就地切换)。`reveal` 为假返回掩码,
-/// 为真返回明文——`wizard/mod.rs::draw` 只调这一个函数, 不直接碰 `Secret::expose`
-/// (`secret.rs::EXPOSE_ALLOWLIST` 的源码扫描测试盯着这一点)。
-///
-/// **刻意不用 `Secret::masked()`**（评审 I1）: 那个版本为了不泄露真实长度, 封顶在 `MASK_CAP`
-/// (24) 个点; 但这里的光标 / 横向滚动是按**明文**的 `Input::visual_cursor()` 算的 (`wizard/mod.rs
-/// ::draw_basics`), 一旦掩码文本比明文短, 光标就会飞到掩码串右边的空白里——64 字符以上的 key
-/// (Anthropic 的约 108 字符) 掩码后甚至一个点都不剩, 看起来像没填, 用户会以为粘贴失败再粘一次,
-/// 内容被拼成两份。这里要的是"挡住肉眼"而不是"隐藏长度"(表单正在编辑一条还没保存的 key, 长度
-/// 泄露不是这个场景的威胁模型), 所以逐字给一个点、不封顶, 让掩码文本与明文逐字对齐, 光标/滚动
-/// 天然正确。`Secret::masked()` 本身不改——它留给"不可编辑的只读展示"这个未来场景, 那里不涉及
-/// 光标对齐, 封顶避免泄露长度是对的。
-pub fn api_key_display(key: &Secret, reveal: bool) -> String {
-    let plain = key.expose();
-    if reveal { plain.to_string() } else { "•".repeat(plain.chars().count()) }
-}
-
 /// 第二步 (绑定模型) 的草稿。与订阅页的 `Draft<Subscription>` 不同: 向导是从零填, 没有"与 Store
 /// 比对相等就丢弃"的问题, 所以直接放一份 `ModelSlots`。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -100,7 +92,7 @@ pub struct SlotsDraft {
 }
 
 /// 第二步的字段: 五个槽位行 (`Row`, 带着是哪个 `Slot`) + 保存按钮。顺序即上下键的顺序——与
-/// `BasicsField` 同一套 `ALL` + `move_focus` 写法。
+/// `BasicsField` 同一套 `ALL` + `FormState::step` 写法。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotsField {
     Row(Slot),
@@ -137,15 +129,15 @@ pub fn validate_slots(d: &SlotsDraft, s: &'static Strings) -> Option<(Slot, &'st
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomDraft {
     pub protocol: CustomProtocol,
-    pub provider_display_name: String,
-    pub base_url: String,
-    pub messages_path: String,
+    pub provider_display_name: TextField,
+    pub base_url: TextField,
+    pub messages_path: TextField,
     /// 锁定协议下恒等于 `protocol.preset()` 的那一对; Anthropic 下是 `ANTHROPIC_AUTH_PRESETS`
     /// 里选的那一对。
     pub auth_header_name: String,
     pub auth_header_format: AuthHeaderFormat,
-    pub api_key: Secret,
-    pub display_name: String,
+    pub api_key: SecretField,
+    pub display_name: TextField,
     pub slots: SlotsDraft,
     /// 上一次**成功**探测的结果: 那一刻的 `base_url` 与后端回的 `models_url`。换协议、探测失败
     /// 都要清空 (`apply_protocol`); **编辑 `base_url` 本身不清**——`models_url()` 自己按值比对,
@@ -166,13 +158,13 @@ impl CustomDraft {
     pub fn new(protocol: CustomProtocol) -> Self {
         let mut draft = CustomDraft {
             protocol,
-            provider_display_name: String::new(),
-            base_url: String::new(),
-            messages_path: String::new(),
+            provider_display_name: TextField::default(),
+            base_url: TextField::default(),
+            messages_path: TextField::default(),
             auth_header_name: String::new(),
             auth_header_format: AuthHeaderFormat::Bearer,
-            api_key: Secret::default(),
-            display_name: String::new(),
+            api_key: SecretField::default(),
+            display_name: TextField::default(),
             slots: SlotsDraft::default(),
             probe: None,
         };
@@ -190,8 +182,8 @@ impl CustomDraft {
     pub fn apply_protocol(&mut self, protocol: CustomProtocol) {
         let preset = protocol.preset();
         self.protocol = protocol;
-        self.base_url = preset.base_url.to_string();
-        self.messages_path = preset.messages_path.to_string();
+        self.base_url.set(preset.base_url);
+        self.messages_path.set(preset.messages_path);
         self.auth_header_name = preset.auth_header_name.to_string();
         self.auth_header_format = preset.auth_header_format;
         self.probe = None;
@@ -205,8 +197,20 @@ impl CustomDraft {
     /// 一遍*当前*的 `base_url` 参与比较, 用户中途多打的首尾空白不该算"改过"。
     pub fn models_url(&self) -> Option<&str> {
         match &self.probe {
-            Some(p) if p.base_url == self.base_url.trim() => Some(p.models_url.as_str()),
+            Some(p) if p.base_url == self.base_url.value().trim() => Some(p.models_url.as_str()),
             _ => None,
+        }
+    }
+
+    /// 焦点所在的文本字段; 选择行 / 按钮行 / 槽位行没有。
+    pub fn text_field(&mut self, field: CustomField) -> Option<&mut dyn TextInput> {
+        match field {
+            CustomField::ProviderName => Some(&mut self.provider_display_name),
+            CustomField::BaseUrl => Some(&mut self.base_url),
+            CustomField::MessagesPath => Some(&mut self.messages_path),
+            CustomField::ApiKey => Some(&mut self.api_key),
+            CustomField::DisplayName => Some(&mut self.display_name),
+            CustomField::Protocol | CustomField::Auth | CustomField::Probe | CustomField::Slot(_) | CustomField::Submit => None,
         }
     }
 }
@@ -254,17 +258,17 @@ impl CustomField {
 /// 这里直接校验 trim 后的值, 校验通过 ⇔ 提交时真正发出去的值也合法), 与后端自己对这些字段的
 /// 校验口径一致 (评审确认: 不是 bug, 不要为了跟桌面端字面一致而改回去)。
 pub fn validate_custom(d: &CustomDraft, s: &'static Strings) -> Option<(CustomField, &'static str)> {
-    if d.provider_display_name.trim().is_empty() {
+    if d.provider_display_name.value().trim().is_empty() {
         return Some((CustomField::ProviderName, s.wiz_err_provider_name));
     }
-    let base_url = d.base_url.trim();
+    let base_url = d.base_url.value().trim();
     if base_url.is_empty() {
         return Some((CustomField::BaseUrl, s.wiz_err_base_url_empty));
     }
     if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
         return Some((CustomField::BaseUrl, s.wiz_err_base_url_scheme));
     }
-    let messages_path = d.messages_path.trim();
+    let messages_path = d.messages_path.value().trim();
     if !messages_path.starts_with('/') {
         return Some((CustomField::MessagesPath, s.wiz_err_messages_path));
     }
@@ -274,7 +278,7 @@ pub fn validate_custom(d: &CustomDraft, s: &'static Strings) -> Option<(CustomFi
     if d.api_key.is_empty() {
         return Some((CustomField::ApiKey, s.wiz_err_api_key));
     }
-    if d.display_name.trim().is_empty() {
+    if d.display_name.value().trim().is_empty() {
         return Some((CustomField::DisplayName, s.wiz_err_display_name));
     }
     validate_slots(&d.slots, s).map(|(slot, message)| (CustomField::Slot(slot), message))
@@ -288,8 +292,8 @@ mod tests {
         BasicsDraft {
             provider_id: "zhipu".into(),
             endpoint_id: "default".into(),
-            api_key: Secret::new("sk-test"),
-            display_name: "智谱 AI".into(),
+            api_key: SecretField::new("sk-test"),
+            display_name: TextField::new("智谱 AI"),
         }
     }
 
@@ -300,13 +304,13 @@ mod tests {
         let empty = BasicsDraft::default();
         assert_eq!(validate_basics(&empty, s), Some((BasicsField::Provider, s.wiz_err_provider)), "全空应该先报厂商");
 
-        let missing_key = BasicsDraft { api_key: Secret::default(), ..filled_draft() };
+        let missing_key = BasicsDraft { api_key: SecretField::default(), ..filled_draft() };
         assert_eq!(validate_basics(&missing_key, s), Some((BasicsField::ApiKey, s.wiz_err_api_key)), "只缺 key 应该报 ApiKey, 不是别的字段");
 
         assert_eq!(validate_basics(&filled_draft(), s), None, "都填了应该通过");
 
         // 备注名全是空白也算空 (trim 之后判断)。
-        let blank_name = BasicsDraft { display_name: "   ".into(), ..filled_draft() };
+        let blank_name = BasicsDraft { display_name: TextField::new("   "), ..filled_draft() };
         assert_eq!(validate_basics(&blank_name, s), Some((BasicsField::DisplayName, s.wiz_err_display_name)));
     }
 
@@ -352,26 +356,6 @@ mod tests {
         assert_eq!(default_display_name("智谱 AI", &two_taken), "智谱 AI 3");
     }
 
-    #[test]
-    fn api_key_display_masks_unless_revealed() {
-        let key = Secret::new("sk-test");
-        assert_eq!(api_key_display(&key, false), "•".repeat(7));
-        assert_eq!(api_key_display(&key, true), "sk-test");
-    }
-
-    /// I1: 掩码不能封顶在 `Secret::MASK_CAP` (24) —— 否则超长 key (Anthropic 实测约 108 字符)
-    /// 掩码后比明文短, 靠明文 `visual_cursor()` 算的光标会飞到掩码串右边的空白里, 64 字符以上
-    /// 甚至会显示成空字符串。
-    #[test]
-    fn api_key_display_masks_without_a_length_cap() {
-        let long_key = "x".repeat(108);
-        let key = Secret::new(long_key.clone());
-        let masked = api_key_display(&key, false);
-        assert_eq!(masked.chars().count(), 108, "掩码应该逐字对应明文长度, 不能封顶");
-        assert_ne!(masked, key.masked(), "这里不该复用 Secret::masked() 的封顶版本");
-        assert_eq!(api_key_display(&key, true), long_key);
-    }
-
     fn filled_slots() -> ModelSlots {
         ModelSlots { fable: "glm-4.6".into(), opus: "glm-4.6".into(), sonnet: "glm-4.6".into(), haiku: "glm-4.6".into(), fallback: String::new() }
     }
@@ -402,8 +386,8 @@ mod tests {
             d.apply_protocol(protocol);
 
             let preset = protocol.preset();
-            assert_eq!(d.base_url, preset.base_url, "{protocol:?}");
-            assert_eq!(d.messages_path, preset.messages_path, "{protocol:?}");
+            assert_eq!(d.base_url.value(), preset.base_url, "{protocol:?}");
+            assert_eq!(d.messages_path.value(), preset.messages_path, "{protocol:?}");
             assert_eq!(d.auth_header_name, preset.auth_header_name, "{protocol:?}");
             assert_eq!(d.auth_header_format, preset.auth_header_format, "{protocol:?}");
             assert!(d.probe.is_none(), "换协议应该清空 probe ({protocol:?})");
@@ -432,12 +416,12 @@ mod tests {
     /// 是空串, 这里补一个真实值, 其它协议的预设本来就是非空 https 地址, 原样保留。
     fn filled_custom_draft(protocol: CustomProtocol) -> CustomDraft {
         let mut d = CustomDraft::new(protocol);
-        d.provider_display_name = "中转站".into();
-        if d.base_url.is_empty() {
-            d.base_url = "https://relay.example.com".into();
+        d.provider_display_name.set("中转站");
+        if d.base_url.value().is_empty() {
+            d.base_url.set("https://relay.example.com");
         }
-        d.api_key = Secret::new("sk-test");
-        d.display_name = "中转站".into();
+        d.api_key = SecretField::new("sk-test");
+        d.display_name.set("中转站");
         d.slots.slots = filled_slots();
         d
     }
@@ -453,15 +437,15 @@ mod tests {
         assert_eq!(validate_custom(&empty, s), Some((CustomField::ProviderName, s.wiz_err_provider_name)), "全空应该先报厂商名");
 
         let mut bad_scheme = filled_custom_draft(CustomProtocol::Anthropic);
-        bad_scheme.base_url = "api.example.com".into();
+        bad_scheme.base_url.set("api.example.com");
         assert_eq!(validate_custom(&bad_scheme, s), Some((CustomField::BaseUrl, s.wiz_err_base_url_scheme)), "base_url 缺 scheme 应该报这一条");
 
         let mut bad_path = filled_custom_draft(CustomProtocol::Anthropic);
-        bad_path.messages_path = "v1/messages".into();
+        bad_path.messages_path.set("v1/messages");
         assert_eq!(validate_custom(&bad_path, s), Some((CustomField::MessagesPath, s.wiz_err_messages_path)), "请求路径不带前导 / 应该报这一条");
 
         let mut gemini_missing_placeholder = filled_custom_draft(CustomProtocol::Gemini);
-        gemini_missing_placeholder.messages_path = "/v1beta/models/generateContent".into();
+        gemini_missing_placeholder.messages_path.set("/v1beta/models/generateContent");
         assert_eq!(
             validate_custom(&gemini_missing_placeholder, s),
             Some((CustomField::MessagesPath, s.wiz_err_gemini_placeholder)),
@@ -471,15 +455,15 @@ mod tests {
         // 变异验证目标: 这一条如果被误改成对 GeminiInteractions 也要求占位符, 这里就会失败——
         // `requires_model_placeholder()` 只对 `Gemini` 返回真。
         let mut gemini_interactions_same_path = filled_custom_draft(CustomProtocol::GeminiInteractions);
-        gemini_interactions_same_path.messages_path = "/v1beta/models/generateContent".into();
+        gemini_interactions_same_path.messages_path.set("/v1beta/models/generateContent");
         assert_eq!(validate_custom(&gemini_interactions_same_path, s), None, "GeminiInteractions 不要求占位符, 同样的路径应该通过");
 
         let mut missing_key = filled_custom_draft(CustomProtocol::Anthropic);
-        missing_key.api_key = Secret::default();
+        missing_key.api_key = SecretField::default();
         assert_eq!(validate_custom(&missing_key, s), Some((CustomField::ApiKey, s.wiz_err_api_key)));
 
         let mut missing_name = filled_custom_draft(CustomProtocol::Anthropic);
-        missing_name.display_name = "   ".into();
+        missing_name.display_name.set("   ");
         assert_eq!(validate_custom(&missing_name, s), Some((CustomField::DisplayName, s.wiz_err_display_name)));
 
         let mut missing_slot = filled_custom_draft(CustomProtocol::Anthropic);
@@ -494,15 +478,15 @@ mod tests {
     #[test]
     fn models_url_is_only_sent_back_when_the_base_url_is_unchanged() {
         let mut d = CustomDraft::new(CustomProtocol::Anthropic);
-        d.base_url = "https://relay.example.com".into();
+        d.base_url.set("https://relay.example.com");
         d.probe =
             Some(ProbedModels { base_url: "https://relay.example.com".into(), models_url: "https://relay.example.com/v1/models".into() });
         assert_eq!(d.models_url(), Some("https://relay.example.com/v1/models"), "探测后原样应该回传");
 
-        d.base_url = "https://relay.example.com/changed".into();
+        d.base_url.set("https://relay.example.com/changed");
         assert_eq!(d.models_url(), None, "改了一个字符应该不再回传");
 
-        d.base_url = "https://relay.example.com".into();
+        d.base_url.set("https://relay.example.com");
         assert_eq!(d.models_url(), Some("https://relay.example.com/v1/models"), "改回去应该又生效");
     }
 }
