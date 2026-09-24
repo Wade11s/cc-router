@@ -87,12 +87,47 @@ impl FormRow<'_> {
     }
 }
 
+/// 一边 push 行、一边声明「这一行是不是焦点」, 焦点下标由它记下——调用方不再维护「字段 → 行下标」
+/// 映射表, 也不用为前置的说明行 / 空行手算偏移 (以前三张表单各有一张映射表加一个偏移常量, 增删
+/// 一行漏改映射, 焦点标记就画错行而编译器不报错)。
+#[derive(Default)]
+pub struct FormBuilder<'a> {
+    rows: Vec<FormRow<'a>>,
+    focus: Option<usize>,
+}
+
+/// [`FormBuilder::finish`] 的产物: 交给 [`FormView`] 的 `rows` / `focus`。
+pub struct FormRows<'a> {
+    pub rows: Vec<FormRow<'a>>,
+    /// 聚焦行的下标; 没有任何一行声明为焦点时是 0 (与旧映射表「总有一个下标」的行为一致)。
+    pub focus: usize,
+}
+
+impl<'a> FormBuilder<'a> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 追加一行。`focused` 为真时记下它的下标——只认**第一个**声明为焦点的行 (一张表单同一时刻
+    /// 只有一个焦点, 调用方按 `字段 == 焦点` 传, 不会出现两个真)。
+    pub fn push(&mut self, row: FormRow<'a>, focused: bool) {
+        if focused && self.focus.is_none() {
+            self.focus = Some(self.rows.len());
+        }
+        self.rows.push(row);
+    }
+
+    pub fn finish(self) -> FormRows<'a> {
+        FormRows { focus: self.focus.unwrap_or(0), rows: self.rows }
+    }
+}
+
 pub struct FormView<'a> {
     pub title: &'a str,
     /// 步骤指示条: `(当前步下标, 全部步骤名)`。`None` = 不画 (自定义单页)。
     pub steps: Option<(usize, &'a [&'a str])>,
     pub rows: &'a [FormRow<'a>],
-    /// 聚焦的行在 `rows` 里的下标。
+    /// 聚焦的行在 `rows` 里的下标 (由 [`FormBuilder`] 产出)。
     pub focus: usize,
     /// 画 throbber 用 (与「重连中」同一套 `widgets::spinner_state`)。
     pub tick: u64,
@@ -114,9 +149,12 @@ pub struct FormView<'a> {
 /// 需要滚动时保守地给顶部/底部提示行各留一行 (哪怕最终只有一侧真的截断)——换一次能一步算清楚的
 /// 起点, 不用先画一遍猜、猜错了再回头重算。
 ///
-/// **返回聚焦行的矩形** (焦点行自己比可用高度还高时是 `None`——理论上不会发生: 表单里最高的可
-/// 聚焦行是"字段 + 错误"两行, 只要可用高度 ≥ 2 就不会触发)。调用方 (向导) 拿它播 `fx::field_err`
-/// (Task 8) ——几何只有 `draw` 知道, 而校验失败时焦点一定就在出错的那一行, 所以一个矩形就够。
+/// **返回聚焦行的矩形**, 聚焦行没画出来时是 `None`: 需要滚动、而内容区连「上下两条提示行 + 一
+/// 整行」都放不下 (`inner.height < 3`, 这时整块内容一行都不画——以前会把可用高度硬抬到 1, 连同
+/// 提示行一起画出内容区之外), 或者焦点行自己比可用高度还高 (表单里最高的可聚焦行是"字段 + 错误"
+/// 两行)。80×24 起两种情况都不会发生 (内容区可用高度至少 16 行)。调用方 (向导) 拿它播
+/// `fx::field_err` (Task 8) ——几何只有 `draw` 知道, 而校验失败时焦点一定就在出错的那一行, 所以
+/// 一个矩形就够。
 pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'static Strings) -> Option<Rect> {
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
@@ -138,7 +176,10 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'
         // 全部放得下: 不滚动、不留提示行, 从第一行画起——与旧行为完全一致。
         (0usize, inner.height)
     } else {
-        let usable = inner.height.saturating_sub(2).max(1);
+        let usable = inner.height.saturating_sub(2);
+        if usable == 0 {
+            return None;
+        }
         let focus_idx = view.focus.min(heights.len().saturating_sub(1));
         let focus_bottom: u16 = heights[..=focus_idx].iter().sum();
         let start_height = focus_bottom.saturating_sub(usable);
@@ -541,6 +582,64 @@ mod tests {
         let out = terminal.backend().to_string();
         assert!(out.contains("[ 创建 ]"), "聚焦的创建按钮应该被滚动进可视区域\n{out}");
         assert!(focus_rect.is_some(), "聚焦行现在应该可见, 应该返回它的矩形\n{out}");
+    }
+
+    /// 7R-a: 前置说明行 + 空行之后, `FormBuilder` 记下的焦点下标仍然指向声明为焦点的那一行
+    /// (以前靠调用方手加「有说明行就 +2」的偏移), 画出来 `▌` 也落在那一行上。
+    #[test]
+    fn the_builder_tracks_the_focus_index_past_leading_note_rows() {
+        let mut b = FormBuilder::new();
+        b.push(FormRow::Note { text: "上一次失败的原因" }, false);
+        b.push(FormRow::Spacer, false);
+        b.push(field("厂商", "智谱"), false);
+        b.push(field("接入点", "国内版"), true);
+        b.push(FormRow::Spacer, false);
+        b.push(FormRow::Button { label: "下一步", busy: false }, false);
+        let built = b.finish();
+        assert_eq!(built.focus, 3, "说明行 + 空行占了下标 0/1, 焦点行是下标 3");
+
+        let view = FormView { title: "T", steps: None, rows: &built.rows, focus: built.focus, tick: 0, show_cursor: true };
+        let out = render(&view, 50, 14);
+        let endpoint_line = out.lines().find(|l| l.contains("国内版")).expect(&out);
+        assert!(endpoint_line.contains('▌'), "焦点标记应该画在接入点行\n{out}");
+        let provider_line = out.lines().find(|l| l.contains("智谱")).expect(&out);
+        assert!(!provider_line.contains('▌'), "{out}");
+    }
+
+    /// 只认第一个声明为焦点的行; 一行都没声明时焦点下标是 0。
+    #[test]
+    fn the_builder_keeps_the_first_focus_and_defaults_to_zero() {
+        let mut b = FormBuilder::new();
+        b.push(field("a", "1"), false);
+        b.push(field("b", "2"), true);
+        b.push(field("c", "3"), true);
+        assert_eq!(b.finish().focus, 1);
+
+        let mut none = FormBuilder::new();
+        none.push(field("a", "1"), false);
+        none.push(field("b", "2"), false);
+        assert_eq!(none.finish().focus, 0);
+    }
+
+    /// 需要滚动、而内容区连「两条提示行 + 一整行」都放不下时 (`inner.height` = 2), 一行内容都不画、
+    /// 返回 `None`——以前会把可用高度硬抬到 1, 连同提示行画出内容区之外, 还返回 `Some`。
+    #[test]
+    fn a_content_area_too_short_to_scroll_draws_nothing_and_returns_none() {
+        let labels = ["行0", "行1", "行2", "行3"];
+        let rows: Vec<FormRow> = labels.iter().map(|l| field(l, "值")).collect();
+        let view = FormView { title: "T", steps: None, rows: &rows, focus: 0, tick: 0, show_cursor: true };
+        let theme = Theme::new(ColorMode::TrueColor);
+        // 高 6: 上下边框 2 + 上下内距 2, 内容区剩 2 行。
+        let mut terminal = Terminal::new(TestBackend::new(50, 6)).unwrap();
+        let mut focus_rect = Some(Rect::default());
+        terminal
+            .draw(|frame| {
+                focus_rect = draw(frame, frame.area(), &view, &theme, &ZH);
+            })
+            .unwrap();
+        let out = terminal.backend().to_string();
+        assert!(focus_rect.is_none(), "焦点行没画出来, 应该返回 None\n{out}");
+        assert!(!out.contains("行0") && !out.contains(ZH.form_more), "内容区放不下时不该画任何行\n{out}");
     }
 
     /// P5 Task 5 前置项 1: `show_cursor: false` 时哪怕聚焦行带着 `cursor`, 画完之后终端光标也

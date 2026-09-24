@@ -56,7 +56,7 @@ use crate::pages::DrawCtx;
 use crate::secret::Secret;
 use crate::store::Store;
 use crate::theme::Theme;
-use crate::widgets::form::{self, FormRow, FormView};
+use crate::widgets::form::{self, FormBuilder, FormRow, FormView};
 use crate::widgets::keybar::Hint;
 use crate::widgets::picker::{PickerChoice, PickerItem, PickerSpec, PickerTag};
 use crate::widgets::spinner_state;
@@ -1152,68 +1152,44 @@ impl Wizard {
         let api_key_cursor = Some(self.api_key_input.visual_cursor());
         let display_name_cursor = Some(self.display_name_input.visual_cursor());
         let field_error = |field: BasicsField| self.field_error.and_then(|(f, msg)| (f == field).then_some(msg));
+        let field = |label, value, hint, cursor, field: BasicsField| FormRow::Field {
+            label,
+            value,
+            placeholder: "",
+            hint,
+            cursor,
+            error: field_error(field),
+            locked: busy,
+        };
 
-        let mut rows: Vec<FormRow> = Vec::new();
+        let mut b = FormBuilder::new();
         if let Some(err) = &self.create_error {
-            rows.push(FormRow::Note { text: err });
-            rows.push(FormRow::Spacer);
+            b.push(FormRow::Note { text: err }, false);
+            b.push(FormRow::Spacer, false);
         }
-        rows.push(FormRow::Field {
-            label: s.wiz_f_provider,
-            value: &provider_label,
-            placeholder: "",
-            hint: Some(&pick_hint),
-            cursor: None,
-            error: field_error(BasicsField::Provider),
-            locked: busy,
-        });
-        rows.push(FormRow::Field {
-            label: s.wiz_f_endpoint,
-            value: &endpoint_label,
-            placeholder: "",
-            hint: Some(&pick_hint),
-            cursor: None,
-            error: field_error(BasicsField::Endpoint),
-            locked: busy,
-        });
-        rows.push(FormRow::Field {
-            label: s.wiz_f_api_key,
-            value: &api_key_text,
-            placeholder: "",
-            hint: Some(&reveal_hint),
-            cursor: api_key_cursor,
-            error: field_error(BasicsField::ApiKey),
-            locked: busy,
-        });
-        rows.push(FormRow::Field {
-            label: s.wiz_f_display_name,
-            value: &self.draft.display_name,
-            placeholder: "",
-            hint: None,
-            cursor: display_name_cursor,
-            error: field_error(BasicsField::DisplayName),
-            locked: busy,
-        });
-        rows.push(FormRow::Spacer);
+        for (label, value, hint, cursor, f) in [
+            (s.wiz_f_provider, provider_label.as_str(), Some(pick_hint.as_str()), None, BasicsField::Provider),
+            (s.wiz_f_endpoint, endpoint_label.as_str(), Some(pick_hint.as_str()), None, BasicsField::Endpoint),
+            (s.wiz_f_api_key, api_key_text.as_str(), Some(reveal_hint.as_str()), api_key_cursor, BasicsField::ApiKey),
+            (s.wiz_f_display_name, self.draft.display_name.as_str(), None, display_name_cursor, BasicsField::DisplayName),
+        ] {
+            b.push(field(label, value, hint, cursor, f), self.focus == f);
+        }
+        b.push(FormRow::Spacer, false);
         // `Creating` 文案是 `wiz_creating`; `LoadingModels` (已经拿到 id, 在等
         // `refresh_model_list`) 换成 `wiz_loading_models`。
         let creating_label = if matches!(self.stage, Stage::LoadingModels) { s.wiz_loading_models } else { s.wiz_creating };
-        rows.push(FormRow::Button { label: if busy { creating_label } else { s.wiz_btn_next }, busy });
+        b.push(FormRow::Button { label: if busy { creating_label } else { s.wiz_btn_next }, busy }, self.focus == BasicsField::Submit);
+        let built = b.finish();
 
-        // 有说明行时整体后移 2 行 (Note + Spacer); Submit 前面还有一个 Spacer (下标 4), 按钮排在
-        // 它后面 (下标 5)。
-        let offset = if self.create_error.is_some() { 2 } else { 0 };
-        let focus = offset
-            + match self.focus {
-                BasicsField::Provider => 0,
-                BasicsField::Endpoint => 1,
-                BasicsField::ApiKey => 2,
-                BasicsField::DisplayName => 3,
-                BasicsField::Submit => 5,
-            };
-
-        let view =
-            FormView { title: s.wiz_title, steps: Some((0, s.wiz_steps.as_slice())), rows: &rows, focus, tick, show_cursor: !popup_open };
+        let view = FormView {
+            title: s.wiz_title,
+            steps: Some((0, s.wiz_steps.as_slice())),
+            rows: &built.rows,
+            focus: built.focus,
+            tick,
+            show_cursor: !popup_open,
+        };
         // Task 8 会用这个返回值播 fx::field_err (校验失败时焦点一定落在出错的那一行)。
         let _focus_rect = form::draw(frame, area, &view, theme, s);
     }
@@ -1226,44 +1202,41 @@ impl Wizard {
         let pick_hint = format!("⏎ {}", s.key_pick);
         let slot_error = |slot: Slot| self.slot_error.and_then(|(sl, msg)| (sl == slot).then_some(msg));
 
-        let mut rows: Vec<FormRow> = Vec::new();
+        let mut b = FormBuilder::new();
         if let Some(note) = &self.slots_draft.note {
-            rows.push(FormRow::Note { text: note });
-            rows.push(FormRow::Spacer);
+            b.push(FormRow::Note { text: note }, false);
+            b.push(FormRow::Spacer, false);
         }
         for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku, Slot::Fallback] {
             // 兜底槽留空时画成灰字「(未配置)」(`s.sub_slot_unset`, 复用订阅详情页的字段); 四个
             // 核心槽留空时没有专门的占位提示——没填就是没填, `validate_slots` 在保存时会拦住并
             // 指到这一行。
             let placeholder = if slot == Slot::Fallback { s.sub_slot_unset } else { "" };
-            rows.push(FormRow::Field {
-                label: slot_label(slot, s),
-                value: self.slots_draft.slots.get(slot),
-                placeholder,
-                hint: Some(&pick_hint),
-                cursor: None,
-                error: slot_error(slot),
-                locked: busy,
-            });
+            b.push(
+                FormRow::Field {
+                    label: slot_label(slot, s),
+                    value: self.slots_draft.slots.get(slot),
+                    placeholder,
+                    hint: Some(&pick_hint),
+                    cursor: None,
+                    error: slot_error(slot),
+                    locked: busy,
+                },
+                self.slots_focus == SlotsField::Row(slot),
+            );
         }
-        rows.push(FormRow::Spacer);
-        rows.push(FormRow::Button { label: if busy { s.wiz_saving } else { s.wiz_btn_save }, busy });
+        b.push(FormRow::Spacer, false);
+        b.push(FormRow::Button { label: if busy { s.wiz_saving } else { s.wiz_btn_save }, busy }, self.slots_focus == SlotsField::Save);
+        let built = b.finish();
 
-        // 说明行同 `draw_basics` 的 `create_error`: 有就整体后移 2 行。5 个槽位行占下标 0..4,
-        // Spacer 占 5, 按钮占 6。
-        let offset = if self.slots_draft.note.is_some() { 2 } else { 0 };
-        let focus = offset
-            + match self.slots_focus {
-                SlotsField::Row(Slot::Fable) => 0,
-                SlotsField::Row(Slot::Opus) => 1,
-                SlotsField::Row(Slot::Sonnet) => 2,
-                SlotsField::Row(Slot::Haiku) => 3,
-                SlotsField::Row(Slot::Fallback) => 4,
-                SlotsField::Save => 6,
-            };
-
-        let view =
-            FormView { title: s.wiz_title, steps: Some((1, s.wiz_steps.as_slice())), rows: &rows, focus, tick, show_cursor: !popup_open };
+        let view = FormView {
+            title: s.wiz_title,
+            steps: Some((1, s.wiz_steps.as_slice())),
+            rows: &built.rows,
+            focus: built.focus,
+            tick,
+            show_cursor: !popup_open,
+        };
         let _focus_rect = form::draw(frame, area, &view, theme, s);
     }
 
@@ -1294,116 +1267,69 @@ impl Wizard {
         let api_key_cursor = Some(self.custom_api_key_input.visual_cursor());
         let display_name_cursor = Some(self.custom_display_name_input.visual_cursor());
         let field_error = |field: CustomField| self.custom_field_error.and_then(|(f, msg)| (f == field).then_some(msg));
+        let focused = |field: CustomField| self.custom_focus == field;
+        // 除 `Auth` 外全部字段行的共同形状 (`Auth` 的 `hint`/`locked` 另外看锁定态, 单独拼)。
+        let field = |label, value, placeholder, hint, cursor, field: CustomField| FormRow::Field {
+            label,
+            value,
+            placeholder,
+            hint,
+            cursor,
+            error: field_error(field),
+            locked: locked_form,
+        };
 
-        let mut rows: Vec<FormRow> = Vec::new();
+        let mut b = FormBuilder::new();
         if let Some(note) = &draft.slots.note {
-            rows.push(FormRow::Note { text: note });
-            rows.push(FormRow::Spacer);
+            b.push(FormRow::Note { text: note }, false);
+            b.push(FormRow::Spacer, false);
         }
-        rows.push(FormRow::Field {
-            label: s.wiz_f_protocol,
-            value: protocol_label,
-            placeholder: "",
-            hint: Some(&pick_hint),
-            cursor: None,
-            error: field_error(CustomField::Protocol),
-            locked: locked_form,
-        });
-        rows.push(FormRow::Field {
-            label: s.wiz_f_provider_name,
-            value: &draft.provider_display_name,
-            placeholder: "",
-            hint: None,
-            cursor: provider_name_cursor,
-            error: field_error(CustomField::ProviderName),
-            locked: locked_form,
-        });
-        rows.push(FormRow::Field {
-            label: s.wiz_f_base_url,
-            value: &draft.base_url,
-            placeholder: CUSTOM_BASE_URL_PLACEHOLDER,
-            hint: None,
-            cursor: base_url_cursor,
-            error: field_error(CustomField::BaseUrl),
-            locked: locked_form,
-        });
-        rows.push(FormRow::Field {
-            label: s.wiz_f_messages_path,
-            value: &draft.messages_path,
-            placeholder: "",
-            hint: None,
-            cursor: messages_path_cursor,
-            error: field_error(CustomField::MessagesPath),
-            locked: locked_form,
-        });
-        rows.push(FormRow::Field {
-            label: s.wiz_f_auth,
-            value: &auth_label,
-            placeholder: "",
-            hint: (!locked_auth).then_some(pick_hint.as_str()),
-            cursor: None,
-            error: field_error(CustomField::Auth),
-            locked: locked_form || locked_auth,
-        });
-        rows.push(FormRow::Field {
-            label: s.wiz_f_api_key,
-            value: &api_key_text,
-            placeholder: "",
-            hint: Some(&reveal_hint),
-            cursor: api_key_cursor,
-            error: field_error(CustomField::ApiKey),
-            locked: locked_form,
-        });
-        rows.push(FormRow::Field {
-            label: s.wiz_f_display_name,
-            value: &draft.display_name,
-            placeholder: "",
-            hint: None,
-            cursor: display_name_cursor,
-            error: field_error(CustomField::DisplayName),
-            locked: locked_form,
-        });
-        rows.push(FormRow::Button { label: if probing { s.wiz_probing } else { s.wiz_btn_probe }, busy: probing });
+        b.push(field(s.wiz_f_protocol, protocol_label, "", Some(&pick_hint), None, CustomField::Protocol), focused(CustomField::Protocol));
+        b.push(
+            field(s.wiz_f_provider_name, &draft.provider_display_name, "", None, provider_name_cursor, CustomField::ProviderName),
+            focused(CustomField::ProviderName),
+        );
+        b.push(
+            field(s.wiz_f_base_url, &draft.base_url, CUSTOM_BASE_URL_PLACEHOLDER, None, base_url_cursor, CustomField::BaseUrl),
+            focused(CustomField::BaseUrl),
+        );
+        b.push(
+            field(s.wiz_f_messages_path, &draft.messages_path, "", None, messages_path_cursor, CustomField::MessagesPath),
+            focused(CustomField::MessagesPath),
+        );
+        b.push(
+            FormRow::Field {
+                label: s.wiz_f_auth,
+                value: &auth_label,
+                placeholder: "",
+                hint: (!locked_auth).then_some(pick_hint.as_str()),
+                cursor: None,
+                error: field_error(CustomField::Auth),
+                locked: locked_form || locked_auth,
+            },
+            focused(CustomField::Auth),
+        );
+        b.push(field(s.wiz_f_api_key, &api_key_text, "", Some(&reveal_hint), api_key_cursor, CustomField::ApiKey), focused(CustomField::ApiKey));
+        b.push(
+            field(s.wiz_f_display_name, &draft.display_name, "", None, display_name_cursor, CustomField::DisplayName),
+            focused(CustomField::DisplayName),
+        );
+        b.push(FormRow::Button { label: if probing { s.wiz_probing } else { s.wiz_btn_probe }, busy: probing }, focused(CustomField::Probe));
         for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku, Slot::Fallback] {
             // 兜底槽留空时画成灰字「(未配置)」, 与 `draw_slots` 同规则。
             let placeholder = if slot == Slot::Fallback { s.sub_slot_unset } else { "" };
-            rows.push(FormRow::Field {
-                label: slot_label(slot, s),
-                value: draft.slots.slots.get(slot),
-                placeholder,
-                hint: Some(&pick_hint),
-                cursor: None,
-                error: field_error(CustomField::Slot(slot)),
-                locked: locked_form,
-            });
+            b.push(
+                field(slot_label(slot, s), draft.slots.slots.get(slot), placeholder, Some(&pick_hint), None, CustomField::Slot(slot)),
+                focused(CustomField::Slot(slot)),
+            );
         }
-        rows.push(FormRow::Button { label: if creating { s.wiz_creating } else { s.wiz_btn_create }, busy: creating });
-
-        // 有说明行时整体后移 2 行, 同 `draw_basics`/`draw_slots`。基础 14 行下标: 协议 0 / 厂商名
-        // 1 / Base URL 2 / 请求路径 3 / 鉴权 4 / API Key 5 / 备注名 6 / 探测按钮 7 / 5 个槽位
-        // 8..12 / 创建按钮 13。
-        let offset = if draft.slots.note.is_some() { 2 } else { 0 };
-        let focus = offset
-            + match self.custom_focus {
-                CustomField::Protocol => 0,
-                CustomField::ProviderName => 1,
-                CustomField::BaseUrl => 2,
-                CustomField::MessagesPath => 3,
-                CustomField::Auth => 4,
-                CustomField::ApiKey => 5,
-                CustomField::DisplayName => 6,
-                CustomField::Probe => 7,
-                CustomField::Slot(Slot::Fable) => 8,
-                CustomField::Slot(Slot::Opus) => 9,
-                CustomField::Slot(Slot::Sonnet) => 10,
-                CustomField::Slot(Slot::Haiku) => 11,
-                CustomField::Slot(Slot::Fallback) => 12,
-                CustomField::Submit => 13,
-            };
+        b.push(FormRow::Button { label: if creating { s.wiz_creating } else { s.wiz_btn_create }, busy: creating }, focused(CustomField::Submit));
+        let built = b.finish();
 
         // 自定义单页没有 Task 4/5 那样的两步步骤条 (`steps: None`, `FormView.steps` 的文档注释里
         // "自定义单页" 说的就是这里), 标题换成专属的 `wiz_custom_title`。
-        let view = FormView { title: s.wiz_custom_title, steps: None, rows: &rows, focus, tick, show_cursor: !popup_open };
+        let view =
+            FormView { title: s.wiz_custom_title, steps: None, rows: &built.rows, focus: built.focus, tick, show_cursor: !popup_open };
         let _focus_rect = form::draw(frame, area, &view, theme, s);
     }
 
