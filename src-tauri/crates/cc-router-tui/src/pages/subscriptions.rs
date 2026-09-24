@@ -60,6 +60,9 @@ const LAST_ERROR_ROWS: u16 = 4;
 const LAST_ACTION_ROWS: u16 = 3;
 /// `PageUp` / `PageDown` 在第一帧画出来之前没有真实的可视行数可用, 先给个不至于原地不动的默认值。
 const DEFAULT_PAGE_ROWS: usize = 10;
+/// P5 Task 7: 删除确认弹窗里最多直接列出的引用方 (虚拟模型) 个数, 超出的部分折成
+/// `s.sub_delete_refs_more`——确认弹窗最宽只有 `screen - 4`, 不控制长度会被硬切。
+const MAX_REFS_SHOWN: usize = 4;
 
 /// 详情面板的一行: 大多数是普通文本, 限额行要嵌一个真正的 `LineGauge` widget (不是文本能表示
 /// 的), 「上次操作」/「最近错误」这类自由文本可能超宽折成好几行 (`Wrapped`)。`height` 在构造
@@ -364,6 +367,23 @@ impl Subscriptions {
         }))
     }
 
+    /// `d`: 打开删除确认弹窗。`referenced_by` 为空时只有一行; 非空时追加「被 N 个虚拟模型引用」
+    /// 与虚拟模型名列表 (`、` 连接, 超过 [`MAX_REFS_SHOWN`] 个只列前几个再接
+    /// `s.sub_delete_refs_more`, 参数是**剩余**个数, 不是总数)。后端 `delete_subscription`
+    /// 不拒绝也不返回引用方 (静默把这条订阅从每个虚拟模型的 `subscription_ids` 里摘掉), 这份提示
+    /// 只能由 TUI 在删之前从 `Subscription.referenced_by` 现拼。
+    fn confirm_delete_action(sub: &Subscription, s: &'static Strings) -> Action {
+        let mut lines = vec![(s.sub_confirm_delete)(&sub.display_name)];
+        if !sub.referenced_by.is_empty() {
+            lines.push((s.sub_delete_refs)(sub.referenced_by.len()));
+            let shown = sub.referenced_by.iter().take(MAX_REFS_SHOWN).cloned().collect::<Vec<_>>().join("、");
+            let remaining = sub.referenced_by.len().saturating_sub(MAX_REFS_SHOWN);
+            let names_line = if remaining > 0 { format!("{shown}{}", (s.sub_delete_refs_more)(remaining)) } else { shown };
+            lines.push(names_line);
+        }
+        Action::OpenConfirm { prompt: lines.join("\n"), on_yes: Box::new(Action::Mutate(Mutation::Delete { id: sub.id.clone() })) }
+    }
+
     /// 每次 `draw` / `handle_key` 都要调用: 把 `selected_id` 解析成当前列表里的下标。
     /// 首次有数据 (`selected_id` 还是 `None`) 选第一条; id 还在列表里就跟着它走 (哪怕挪了位置);
     /// id 不在了就落到 `last_index` 钳制到新列表长度后的位置。列表为空返回 `None`。
@@ -578,12 +598,14 @@ impl Component for Subscriptions {
         let subs = store.subscriptions();
         let idx = self.resolve_selection(subs);
 
-        // 有草稿时 e/t/m/b 一律拒绝 (不管当前 focus——草稿只可能在 `Detail` 焦点下存在, 但这条
+        // 有草稿时 e/t/m/b/d/n 一律拒绝 (不管当前 focus——草稿只可能在 `Detail` 焦点下存在, 但这条
         // 判断不依赖那个不变式), 避免重拉覆盖编辑基线的困惑。D2/D3 (fix round P3b) 起
         // `draft.get().is_some()` 与 `is_dirty()` 恒等价 (零编辑/改回原值都不留草稿, 由
         // `Draft::edit`/`Draft::sync` 保证), 这里直接查草稿是否存在——与虚拟模型页 V5 的左栏
-        // `*` 标记同一种判定方式, 两个页面对这条不变式的依赖保持一致。
-        if self.draft.get().is_some() && matches!(key.code, KeyCode::Char('e' | 't' | 'm' | 'b')) {
+        // `*` 标记同一种判定方式, 两个页面对这条不变式的依赖保持一致。P5 Task 7: `d`(删除)/
+        // `n`(新建向导) 加进这条守卫——两者都只在 `Focus::List` 下才有对应的按键分支 (见下),
+        // 但守卫放在 focus 分派之前, 草稿存在时哪怕当前焦点在 `Detail` 也一样拒绝。
+        if self.draft.get().is_some() && matches!(key.code, KeyCode::Char('e' | 't' | 'm' | 'b' | 'd' | 'n')) {
             return Some(Action::Notify { kind: ToastKind::Info, text: s.sub_save_first.to_string() });
         }
 
@@ -625,6 +647,11 @@ impl Component for Subscriptions {
                 KeyCode::Char('t') => idx.map(|i| Action::Mutate(Mutation::TestConnection { id: subs[i].id.clone() })),
                 KeyCode::Char('m') => idx.map(|i| Action::Mutate(Mutation::RefreshModels { id: subs[i].id.clone() })),
                 KeyCode::Char('b') => idx.map(|i| Action::Mutate(Mutation::RefreshBalance { id: subs[i].id.clone() })),
+                // P5 Task 7: 只在 `Focus::List` 生效 (与 e/t/m/b 不同, 这两个键在 `Focus::Detail`
+                // 下没有对应分支, 落到那边的 `_ => None`)。没有选中项时 `d` 什么都不做; `n` 不依赖
+                // 选中项 (打开的是新建向导, 不是对现有订阅的操作)。
+                KeyCode::Char('d') => idx.map(|i| Self::confirm_delete_action(&subs[i], s)),
+                KeyCode::Char('n') => Some(Action::OpenWizard),
                 _ => None,
             },
             Focus::Detail { slot } => match key.code {
@@ -1026,6 +1053,7 @@ fn detail_rows(
             Mutation::RefreshModels { .. } => s.sub_busy_models,
             Mutation::RefreshBalance { .. } => s.sub_busy_balance,
             Mutation::UpdateSlots { .. } => s.sub_busy_saving,
+            Mutation::Delete { .. } => s.sub_busy_deleting,
             // 这个订阅页的 busy 查询按 `BusyKey::Subscription` 取, `UpdateVirtualModel` 只会出现在
             // `BusyKey::VirtualModel` 下, 永远不会真的落到这一分支——但 `match m` 穷尽
             // `Mutation` 的全部变体 (编译器不知道调用方已经按 key 过滤过), 补一个不会触发的分支。

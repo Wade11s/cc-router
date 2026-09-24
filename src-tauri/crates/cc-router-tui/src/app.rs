@@ -436,6 +436,7 @@ impl App {
             Ok(MutationOutcome::Balance(RefreshBalanceResult::Unsupported)) => (ToastKind::Info, self.s.sub_balance_unsupported.to_string()),
             Ok(MutationOutcome::SlotsSaved) => (ToastKind::Success, (self.s.toast_slots_saved)(&name)),
             Ok(MutationOutcome::VirtualModelSaved) => (ToastKind::Success, (self.s.toast_vm_saved)(&name)),
+            Ok(MutationOutcome::Deleted) => (ToastKind::Success, (self.s.toast_deleted)(&name)),
             Err(message) => (ToastKind::Error, (self.s.toast_mutation_failed)(&name, message)),
         };
         self.push_toast(Toast::new(kind, text.clone()));

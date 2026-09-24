@@ -4077,6 +4077,119 @@ fn subscriptions_dirty_80x24() {
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
+// ---------- P5 Task 7: 删除订阅 + `n` 新建向导的触发点 ----------
+
+/// 按 `d` 应该先弹确认, 列出引用它的两个虚拟模型 (`detail_subs()` 的"智谱主号",
+/// `referenced_by = ["model-sonnet", "model-opus"]`)。`y` 应该真的产出 `Cmd::Mutate(Delete)`。
+#[test]
+fn deleting_asks_first_and_lists_the_referencing_virtual_models() {
+    let mut a = subs_app(false); // 默认选中 "1" 智谱主号
+    render(&mut a, 80, 24);
+
+    let expected_prompt =
+        format!("{}\n{}\n{}", (ZH.sub_confirm_delete)("智谱主号"), (ZH.sub_delete_refs)(2), "model-sonnet、model-opus");
+    let action = a.handle_key(key(KeyCode::Char('d')));
+    assert_eq!(
+        action,
+        Some(Action::OpenConfirm {
+            prompt: expected_prompt,
+            on_yes: Box::new(Action::Mutate(Mutation::Delete { id: "1".into() })),
+        })
+    );
+    a.update(action.unwrap());
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains("智谱主号") && out.contains("model-sonnet") && out.contains("model-opus"), "{out}");
+
+    assert_eq!(
+        a.handle_key(key(KeyCode::Char('y'))),
+        Some(Action::Confirmed(Box::new(Action::Mutate(Mutation::Delete { id: "1".into() })))),
+        "y 应该产出 Confirmed(Mutate(Delete))"
+    );
+    let cmds = a.update(Action::Confirmed(Box::new(Action::Mutate(Mutation::Delete { id: "1".into() }))));
+    assert_eq!(cmds, vec![Cmd::Mutate(Box::new(Mutation::Delete { id: "1".into() }))], "确认后应该真的发出删除请求");
+}
+
+/// 没有任何虚拟模型引用的订阅 ("3" 示例中转, `detail_subs()` 里没设置 `referenced_by`, 默认空) 上
+/// 按 `d`, prompt 应该只有一行 (没有第二 / 三行)。
+#[test]
+fn deleting_a_subscription_nothing_references_shows_a_one_line_prompt() {
+    let mut a = subs_app(false);
+    render(&mut a, 80, 24);
+    a.handle_key(key(KeyCode::Char('j')));
+    a.handle_key(key(KeyCode::Char('j'))); // -> "3" 示例中转
+
+    let action = a.handle_key(key(KeyCode::Char('d')));
+    assert_eq!(
+        action,
+        Some(Action::OpenConfirm {
+            prompt: (ZH.sub_confirm_delete)("示例中转"),
+            on_yes: Box::new(Action::Mutate(Mutation::Delete { id: "3".into() })),
+        }),
+        "没有引用方时 prompt 不该有第二 / 三行"
+    );
+}
+
+/// 引用方超过 4 个时, 第三行只列前 4 个再接 `sub_delete_refs_more`; 参数是**剩余**个数 (5 - 4 = 1),
+/// 不是总数。
+#[test]
+fn many_referencing_virtual_models_are_truncated() {
+    let mut a = app(false);
+    a.update(Action::Connected { app_version: VERSION.into() });
+    a.update(Action::SwitchTab(Tab::Subscriptions));
+    let mut popular = sub("1", "热门订阅", SubscriptionState::Healthy);
+    popular.referenced_by =
+        vec!["model-fable".into(), "model-opus".into(), "model-sonnet".into(), "model-haiku".into(), "model-fallback".into()];
+    a.update(subs_done(1, vec![popular]));
+    render(&mut a, 80, 24);
+
+    let action = a.handle_key(key(KeyCode::Char('d'))).expect("应该产出确认弹窗");
+    let Action::OpenConfirm { prompt, .. } = action else { panic!("{action:?}") };
+    assert!(prompt.contains("model-fable、model-opus、model-sonnet、model-haiku"), "应该只列前 4 个\n{prompt}");
+    assert!(prompt.contains(&(ZH.sub_delete_refs_more)(1)), "剩余 1 个应该折成 sub_delete_refs_more(1)\n{prompt}");
+    assert!(!prompt.contains("model-fallback"), "第 5 个不该原样出现在列表里\n{prompt}");
+}
+
+/// 有草稿时 `d`/`n` 一律被拒绝, 弹 `sub_save_first`——不开弹窗、不开向导 (返回值本身就是
+/// `Notify`, 不是 `OpenConfirm`/`OpenWizard`, `handle_key` 又是纯函数, 没有调用方去
+/// `App::update` 它就不会产生任何副作用)。
+#[test]
+fn delete_and_new_are_refused_while_the_page_has_a_draft() {
+    let mut a = subs_app(false);
+    render(&mut a, 80, 24);
+    a.handle_key(key(KeyCode::Enter));
+    a.handle_key(key(KeyCode::Enter));
+    a.update(Action::PickerDone { tag: PickerTag::SlotModel { sub_id: "1".into(), slot: Slot::Fable }, choice: PickerChoice::Item("m3".into()) });
+
+    for code in [KeyCode::Char('d'), KeyCode::Char('n')] {
+        assert_eq!(
+            a.handle_key(key(code)),
+            Some(Action::Notify { kind: ToastKind::Info, text: ZH.sub_save_first.into() }),
+            "{code:?} 应该被拒绝, 不该是 OpenConfirm/OpenWizard"
+        );
+    }
+}
+
+/// 删除成功: toast 文案是 `toast_deleted(名字)`, 并且按 `refetch()` 补一次 `Fetch::Subscriptions`。
+#[test]
+fn a_successful_delete_toasts_and_refetches() {
+    let mut a = subs_app(false); // "1" 智谱主号
+    let mutation = Mutation::Delete { id: "1".into() };
+    assert_eq!(a.update(Action::Mutate(mutation.clone())), vec![Cmd::Mutate(Box::new(mutation.clone()))]);
+    let cmds = a.update(Action::MutationDone { mutation, barrier: 0, result: Ok(MutationOutcome::Deleted) });
+    assert_eq!(cmds, vec![Cmd::Fetch(Fetch::Subscriptions)], "无论成败都该按 refetch() 追加一次订阅列表刷新");
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.toast_deleted)("智谱主号")), "{out}");
+}
+
+#[test]
+fn delete_confirm_80x24() {
+    let mut a = subs_app(false);
+    render(&mut a, 80, 24);
+    let action = a.handle_key(key(KeyCode::Char('d'))).expect("应该产出确认弹窗");
+    a.update(action);
+    insta::assert_snapshot!("delete_confirm_80x24", render(&mut a, 80, 24));
+}
+
 // ---------- 虚拟模型页 (Task 6) ----------
 
 /// 定位左栏「这个虚拟模型」所在的列表行——不能只 `find(|l| l.contains(name))`: 右栏边框的

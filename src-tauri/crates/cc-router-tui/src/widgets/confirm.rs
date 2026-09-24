@@ -1,8 +1,11 @@
 //! 「是 / 否」确认弹窗。`y`/`Y` 是, `n`/`N`/`Esc`/`⏎` 否 (默认 N), 其余按键被吞掉 (键盘路由在
 //! `App::handle_key` 里, 这里只画)。
+//!
+//! **支持多行 prompt**(P5 Task 7 起, 删除订阅需要列出引用它的虚拟模型): 按 `'\n'` 拆行, 宽度取
+//! 最宽一行 + 8, 高度是 `行数 + 4`——单行时仍然是 5, 既有的单行调用点字节不变。
 
 use ratatui::layout::{Constraint, Rect};
-use ratatui::text::Line;
+use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, BorderType, Padding, Paragraph};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
@@ -15,9 +18,23 @@ use crate::theme::Theme;
 const MIN_WIDTH: u16 = 30;
 /// 弹窗与屏幕两侧边缘至少留的空隙 (合计, 不是单边)。
 const SCREEN_MARGIN: u16 = 4;
+/// 单行提示的高度 (行数 1 + 4)。
 const HEIGHT: u16 = 5;
 
-/// 居中, 宽 = 提示显示宽度 + 8, 夹在 `MIN_WIDTH..=screen.width - SCREEN_MARGIN` 之间, 高固定 5。
+/// `prompt` 里最宽一行的显示宽度 (按 `'\n'` 拆行)。
+fn widest_line(prompt: &str) -> u16 {
+    prompt.lines().map(|l| l.width()).max().unwrap_or(0) as u16
+}
+
+/// 弹窗高度 = 行数 + 4, 用 [`HEIGHT`] (单行的既有高度 5) 当基准往上加——单行 (含空字符串,
+/// `lines()` 产出 0 行) 时钳到 1 行, 加 0, 恰好等于既有的 5, 不用另外重复一份 "+4"。
+fn height_for(prompt: &str) -> u16 {
+    let extra_lines = prompt.lines().count().max(1) as u16 - 1;
+    HEIGHT + extra_lines
+}
+
+/// 居中, 宽 = 最宽一行的显示宽度 + 8, 夹在 `MIN_WIDTH..=screen.width - SCREEN_MARGIN` 之间,
+/// 高 = 行数 + 4 (单行时是 5, 与旧版字节不变)。
 ///
 /// `screen.width < MIN_WIDTH + SCREEN_MARGIN` (34) 时, `screen.width - SCREEN_MARGIN` 会小于
 /// `MIN_WIDTH`——`clamp(MIN_WIDTH, 那个更小的上界)` 违反 `min <= max` 会直接 panic (Fix round D)。
@@ -26,8 +43,8 @@ const HEIGHT: u16 = 5;
 /// 这里只是让函数本身对任意输入都是全函数 (total function), 不依赖调用方守规矩。
 pub fn area(screen: Rect, prompt: &str) -> Rect {
     let upper = screen.width.saturating_sub(SCREEN_MARGIN).max(MIN_WIDTH);
-    let width = (prompt.width() as u16 + 8).clamp(MIN_WIDTH, upper);
-    screen.centered(Constraint::Length(width), Constraint::Length(HEIGHT))
+    let width = (widest_line(prompt) + 8).clamp(MIN_WIDTH, upper);
+    screen.centered(Constraint::Length(width), Constraint::Length(height_for(prompt)))
 }
 
 pub fn draw(frame: &mut Frame, area: Rect, state: &ConfirmState, theme: &Theme, s: &Strings) {
@@ -38,7 +55,8 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &ConfirmState, theme: &Theme, 
         .title_bottom(Line::from(format!(" {} ", s.confirm_keys)).right_aligned())
         .padding(Padding::new(2, 2, 1, 1));
     super::clear_popup_area(frame, area);
-    frame.render_widget(Paragraph::new(state.prompt.as_str()).block(block), area);
+    let text = Text::from(state.prompt.lines().map(Line::from).collect::<Vec<_>>());
+    frame.render_widget(Paragraph::new(text).block(block), area);
 }
 
 #[cfg(test)]
@@ -63,6 +81,23 @@ mod tests {
         // 中等长度的提示 (30 + 8 = 38) 落在 30..=76 区间内, 应该正好等于「宽度+8」, 不被夹到任一端。
         let mid = area(screen, &"x".repeat(30));
         assert_eq!(mid.width, 38, "没有触顶或触底时, 宽度应该正好是提示宽度 + 8");
+    }
+
+    /// P5 Task 7: 多行 prompt (删除确认列出引用它的虚拟模型) 应该把高度撑到「行数 + 4」, 宽度按
+    /// 最宽一行算——单行仍然是既有的 5, 不能因为这次改动悄悄变了 (既有快照全部字节不变)。
+    #[test]
+    fn a_multi_line_prompt_grows_the_popup() {
+        let screen = Rect::new(0, 0, 80, 24);
+
+        let one_line = area(screen, "短提示");
+        assert_eq!(one_line.height, 5, "单行应该维持既有的高度 5");
+
+        let three_lines = area(screen, "第一行\n第二行更长一些\n第三行");
+        assert_eq!(three_lines.height, 7, "3 行应该是 7 = 3 + 4");
+        // 宽度按最宽一行算: "第二行更长一些" 比其它两行都宽, 应该由它决定宽度, 不是取最后一行
+        // 或者整个字符串 (含换行符) 的宽度。
+        let widest_only = area(screen, "第二行更长一些");
+        assert_eq!(three_lines.width, widest_only.width, "宽度应该由最宽一行决定");
     }
 
     /// Fix round D: `screen.width < MIN_WIDTH + SCREEN_MARGIN` (34) 时旧版会在 `clamp` 里 panic

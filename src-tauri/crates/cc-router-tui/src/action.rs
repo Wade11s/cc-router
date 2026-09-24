@@ -110,6 +110,10 @@ pub enum Mutation {
     UpdateSlots { id: String, model_slots: ModelSlots, slot_efforts: SlotEfforts },
     /// 保存一个虚拟模型的调度模式 + 订阅列表 (Task 6)。
     UpdateVirtualModel { name: String, mode: RoutingMode, subscription_ids: Vec<String> },
+    /// 删除一条订阅 (P5 Task 7)。`delete_subscription` 不拒绝被虚拟模型引用的订阅, 静默把它从
+    /// 每个虚拟模型的 `subscription_ids` 里摘掉——「列出引用方」只能由 TUI 在删之前从
+    /// `Subscription.referenced_by` 读, 见 `pages/subscriptions.rs` 的确认文案拼接。
+    Delete { id: String },
 }
 
 /// 忙碌表 (`App::busy`) 判重用的键。订阅相关的就地操作 (含 `UpdateSlots`) 产生 `Subscription`
@@ -129,7 +133,8 @@ impl Mutation {
             | Mutation::TestConnection { id }
             | Mutation::RefreshModels { id }
             | Mutation::RefreshBalance { id }
-            | Mutation::UpdateSlots { id, .. } => BusyKey::Subscription(id.clone()),
+            | Mutation::UpdateSlots { id, .. }
+            | Mutation::Delete { id } => BusyKey::Subscription(id.clone()),
             Mutation::UpdateVirtualModel { name, .. } => BusyKey::VirtualModel(name.clone()),
         }
     }
@@ -157,6 +162,7 @@ pub enum MutationOutcome {
     Balance(RefreshBalanceResult),
     SlotsSaved,
     VirtualModelSaved,
+    Deleted,
 }
 
 /// 向导要发的请求。**与 [`Mutation`] 刻意分开**: 它们没有订阅 id (创建的那一刻还没有), 不进忙碌表,
@@ -323,6 +329,7 @@ mod tests {
             Mutation::RefreshModels { id: "1".into() },
             Mutation::RefreshBalance { id: "1".into() },
             Mutation::UpdateSlots { id: "1".into(), model_slots: slots(), slot_efforts: SlotEfforts::default() },
+            Mutation::Delete { id: "1".into() },
         ];
         for m in subscription_scoped {
             assert_eq!(m.busy_key(), BusyKey::Subscription("1".into()), "{m:?} 应该产出 Subscription 忙碌键");

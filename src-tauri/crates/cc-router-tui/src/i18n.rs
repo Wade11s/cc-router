@@ -191,6 +191,8 @@ pub struct Strings {
     /// `Mutation::UpdateSlots` (Task 5 起从订阅详情页发起) 的进行中文案; 与四个既有就地操作用同一套
     /// 「状态行后追加 busy 文案」机制。
     pub sub_busy_saving: &'static str,
+    /// `Mutation::Delete` (P5 Task 7) 的进行中文案, 同一套机制。
+    pub sub_busy_deleting: &'static str,
     /// Task 5: 草稿里跟 `Store` 当前值不同的槽位行末尾追加的 muted 提示。
     pub sub_slot_modified: &'static str,
     /// 有草稿时按 e/t/m/b 的拒绝提示 (避免重拉覆盖编辑基线)。
@@ -206,6 +208,16 @@ pub struct Strings {
     /// 草稿的按键 (含再按一次 `s`) 时的提示——避免飞行中的编辑被落地的保存结果悄悄冲掉 (D1 的
     /// 姊妹问题: D1 保证了草稿不会被冲掉, 但没有在编辑发生的那一刻就告诉用户"现在编辑不安全")。
     pub saving_in_progress: &'static str,
+
+    // ---------- P5 Task 7: 删除订阅 ----------
+    /// 删除确认弹窗的正文, 参数是订阅备注名; `referenced_by` 为空时单行只有这一句。
+    pub sub_confirm_delete: fn(name: &str) -> String,
+    /// `referenced_by` 非空时追加的第二行, 参数是引用它的虚拟模型个数。
+    pub sub_delete_refs: fn(n: usize) -> String,
+    /// 引用方超过 4 个时, 第三行 (虚拟模型名列表) 只列前 4 个, 再接这句, 参数是剩余个数
+    /// (总数减 4, 不是总数本身)。
+    pub sub_delete_refs_more: fn(n: usize) -> String,
+    pub toast_deleted: fn(name: &str) -> String,
 
     // ---------- Task 6: 虚拟模型页 ----------
     pub vm_title: &'static str,
@@ -631,6 +643,7 @@ pub const ZH: Strings = Strings {
     sub_busy_models: "正在获取模型…",
     sub_busy_balance: "正在查询余额…",
     sub_busy_saving: "正在保存…",
+    sub_busy_deleting: "正在删除…",
     sub_slot_modified: "已修改",
     sub_save_first: "先按 s 保存或 Esc 放弃当前修改",
     sub_effort_na_fallback: "兜底槽没有思考档位",
@@ -638,6 +651,11 @@ pub const ZH: Strings = Strings {
     sub_model_required: "模型不能为空",
     sub_gone: "这条订阅已不存在",
     saving_in_progress: "正在保存,请稍候",
+
+    sub_confirm_delete: |name| format!("删除订阅「{name}」?"),
+    sub_delete_refs: |n| format!("这条订阅被 {n} 个虚拟模型引用,删除后会自动解绑:"),
+    sub_delete_refs_more: |n| format!("… 等 {n} 个"),
+    toast_deleted: |name| format!("已删除「{name}」"),
 
     vm_title: "虚拟模型",
     vm_mode_seq: "顺序",

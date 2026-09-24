@@ -127,6 +127,10 @@ async fn call_mutation(client: &Client, mutation: &Mutation) -> Result<MutationO
             client.call::<()>(commands::UPDATE_VIRTUAL_MODEL, json!({ "name": name, "input": input })).await?;
             Ok(MutationOutcome::VirtualModelSaved)
         }
+        Mutation::Delete { id } => {
+            client.call::<()>(commands::DELETE_SUBSCRIPTION, json!({ "id": id })).await?;
+            Ok(MutationOutcome::Deleted)
+        }
     }
 }
 
@@ -734,8 +738,10 @@ mod tests {
         assert_eq!(rx.recv().await, Some(Action::Connected { app_version: "9.9.9-test".into() }));
     }
 
-    /// 四种就地操作各自打对了 command、带对了 JSON 键名 (`id` / `enabled`, 与后端 `#[tauri::command]`
-    /// 的参数名同名, camelCase 下与蛇形写法一致), 并且把响应体正确包进对应的 `MutationOutcome`。
+    /// 五种就地操作 (含 P5 Task 7 的删除) 各自打对了 command、带对了 JSON 键名 (`id` / `enabled`,
+    /// 与后端 `#[tauri::command]` 的参数名同名, camelCase 下与蛇形写法一致), 并且把响应体正确包进
+    /// 对应的 `MutationOutcome`。删除的真后端签名是 `AppResult<()>`, 响应体是 JSON `null`
+    /// (与 `set_subscription_enabled` 同一套约定)。
     #[tokio::test]
     async fn a_mutation_calls_the_right_command_and_reports_back() {
         let server = MockServer::start().await;
@@ -763,6 +769,12 @@ mod tests {
             .and(path("/ui/api/cmd/refresh_subscription_balance"))
             .and(body_json(json!({"id": "1"})))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"kind": "unsupported"})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/ui/api/cmd/delete_subscription"))
+            .and(body_json(json!({"id": "1"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!(null)))
             .mount(&server)
             .await;
 
@@ -807,13 +819,23 @@ mod tests {
             })
         );
 
-        spawn_mutation(client, tx, Mutation::RefreshBalance { id: "1".into() });
+        spawn_mutation(client.clone(), tx.clone(), Mutation::RefreshBalance { id: "1".into() });
         assert_eq!(
             rx.recv().await,
             Some(Action::MutationDone {
                 mutation: Mutation::RefreshBalance { id: "1".into() },
                 barrier: 0,
                 result: Ok(MutationOutcome::Balance(RefreshBalanceResult::Unsupported)),
+            })
+        );
+
+        spawn_mutation(client, tx, Mutation::Delete { id: "1".into() });
+        assert_eq!(
+            rx.recv().await,
+            Some(Action::MutationDone {
+                mutation: Mutation::Delete { id: "1".into() },
+                barrier: 0,
+                result: Ok(MutationOutcome::Deleted),
             })
         );
     }
