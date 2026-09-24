@@ -100,7 +100,8 @@ impl BasicsForm {
         }
         self.note = None;
         let cmd = WizardCmd::Create(CreateInput {
-            display_name: self.draft.display_name.value().to_string(),
+            // 校验按 trim 后判空, 发出去的也是 trim 后的值——校验什么就发送什么。
+            display_name: self.draft.display_name.value().trim().to_string(),
             api_key: self.draft.api_key.secret(),
             model_slots: ModelSlots::pending(),
             source: CreateSource::Builtin { provider_id: self.draft.provider_id.clone(), endpoint_id: self.draft.endpoint_id.clone() },

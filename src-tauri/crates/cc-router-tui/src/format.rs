@@ -3,6 +3,9 @@
 use chrono::{DateTime, FixedOffset, Local, TimeZone};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::client::dto::Slot;
+use crate::i18n::Strings;
+
 /// 显示时间用的时区。生产 `Local` (系统时区, 按每个时间戳自己的偏移算, 夏令时正确); 测试用 `Fixed`,
 /// 快照不随机器时区变化。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +169,19 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
         out.push(line);
     }
     out
+}
+
+/// `Slot` 的显示名: 四个主槽用英文原名 (与后端 `ModelSlots` 的字段名一致), `Fallback` 用现有的
+/// `s.sub_slot_fallback` (中文「兜底」)。订阅详情页与向导 (槽位行、槽位选择器标题) 共用——两处对
+/// 「槽位怎么叫」必须是同一个答案; 放在这里而不是任何一方的模块里, 免得一方依赖另一方。
+pub(crate) fn slot_label(slot: Slot, s: &'static Strings) -> &'static str {
+    match slot {
+        Slot::Fable => "fable",
+        Slot::Opus => "opus",
+        Slot::Sonnet => "sonnet",
+        Slot::Haiku => "haiku",
+        Slot::Fallback => s.sub_slot_fallback,
+    }
 }
 
 #[cfg(test)]

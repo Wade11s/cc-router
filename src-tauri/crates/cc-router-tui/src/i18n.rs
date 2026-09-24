@@ -145,6 +145,9 @@ pub struct Strings {
     pub toast_load_failed: fn(reason: &str) -> String,
     /// 断线时按 e/t/m/b 的提示。
     pub toast_offline: &'static str,
+    /// 同一条订阅 (或同一个虚拟模型) 上一个就地操作还没回来时又发起一个——比如测试连接在飞时确认
+    /// 删除。
+    pub toast_busy: fn(name: &str) -> String,
     pub toast_enabled: fn(name: &str) -> String,
     pub toast_disabled: fn(name: &str) -> String,
     /// `model` 为 `None` 时 (网络错误等测不出具体 model) 只显示前半句。
@@ -585,6 +588,7 @@ pub const ZH: Strings = Strings {
     toast_reconnected: "已重新连接",
     toast_load_failed: |reason| format!("加载失败：{reason}"),
     toast_offline: "未连接,暂时无法操作",
+    toast_busy: |name| format!("{name}：上一个操作还没完成,请稍候"),
     toast_enabled: |name| format!("已启用 {name}"),
     toast_disabled: |name| format!("已停用 {name}"),
     toast_test_ok: |name, model| match model {

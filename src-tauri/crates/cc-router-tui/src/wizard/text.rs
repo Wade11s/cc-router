@@ -2,8 +2,8 @@
 //! 草稿与输入框各存一份的话, 每次程序化地改草稿 (选厂商时自动填备注名、换协议时重置 Base URL……)
 //! 都得记得重建输入框, 漏一处, 下一次按键就会拿输入框里的旧值把草稿盖回去。
 //!
-//! `SecretField` 的明文只在本文件里读 (字段私有, 外面只能拿到 `Secret` 或掩码后的显示文本), 所以
-//! 本文件在 `secret.rs::EXPOSE_ALLOWLIST` 里。
+//! `SecretField` 的明文只在本文件里读 (输入框私有, 外面只能拿到 `Secret` 或掩码后的显示文本)。
+//! 显示直接读输入框, 不经 `Secret` 的明文出口, 所以本文件不在 `secret.rs::EXPOSE_ALLOWLIST` 里。
 
 use ratatui::crossterm::event::{Event, KeyEvent};
 use tui_input::backend::crossterm::EventHandler;
@@ -81,13 +81,14 @@ impl SecretField {
         Self { input: TextField::new(value), reveal: false }
     }
 
-    /// 发请求时用的值——按需生成, 草稿里不另存一份。
+    /// 发请求时用的值: 去掉首尾空白 (粘贴常带进来, 不该落库), 按需生成, 草稿里不另存一份。
     pub fn secret(&self) -> Secret {
-        Secret::new(self.input.value())
+        Secret::new(self.input.value().trim())
     }
 
+    /// 与 [`SecretField::secret`] 同一个口径: 只有空白也算空——校验什么就发送什么。
     pub fn is_empty(&self) -> bool {
-        self.input.value().is_empty()
+        self.input.value().trim().is_empty()
     }
 
     pub fn visual_cursor(&self) -> usize {
@@ -96,17 +97,15 @@ impl SecretField {
 
     /// 界面上显示 API Key 的**唯一**出口: 没按 `Ctrl+R` 时是掩码, 按了是明文。
     ///
-    /// **刻意不用 `Secret::masked()`**: 那个版本为了不泄露真实长度, 封顶在 `MASK_CAP`
-    /// (24) 个点; 但表单的光标 / 横向滚动是按**明文**的 `visual_cursor()` 算的 (`widgets::form`),
-    /// 一旦掩码文本比明文短, 光标就会飞到掩码串右边的空白里——64 字符以上的 key (Anthropic 的约
-    /// 108 字符) 掩码后甚至一个点都不剩, 看起来像没填, 用户会以为粘贴失败再粘一次, 内容被拼成两份。
-    /// 这里要的是"挡住肉眼"而不是"隐藏长度"(表单正在编辑一条还没保存的 key, 长度泄露不是这个场景
-    /// 的威胁模型), 所以逐字给一个点、不封顶, 让掩码文本与明文逐字对齐, 光标/滚动天然正确。
-    /// `Secret::masked()` 本身不改——它留给"不可编辑的只读展示"这个未来场景, 那里不涉及光标对齐,
-    /// 封顶避免泄露长度是对的。
+    /// 显示的是**输入框里的原样文本** (含首尾空白), 不是 `secret()` 那份 trim 过的值: 表单的光标 /
+    /// 横向滚动按输入框的 `visual_cursor()` 算 (`widgets::form`), 显示文本必须与它逐字对齐。
+    ///
+    /// **掩码逐字一个点、不封顶**: 一旦掩码文本比明文短, 光标就会飞到掩码串右边的空白里——超长
+    /// key (Anthropic 的约 108 字符) 封顶后看起来像没填, 用户会以为粘贴失败再粘一次, 内容被拼成
+    /// 两份。这里要的是「挡住肉眼」而不是「隐藏长度」(表单正在编辑一条还没保存的 key, 长度泄露不是
+    /// 这个场景的威胁模型)。
     pub fn display(&self) -> String {
-        let secret = self.secret();
-        let plain = secret.expose();
+        let plain = self.input.value();
         if self.reveal { plain.to_string() } else { "•".repeat(plain.chars().count()) }
     }
 }
@@ -187,16 +186,14 @@ mod tests {
         assert_eq!(key_field.display(), "•".repeat(7));
     }
 
-    /// 掩码不能封顶在 `Secret::MASK_CAP` (24) —— 否则超长 key (Anthropic 实测约 108 字符)
-    /// 掩码后比明文短, 靠明文 `visual_cursor()` 算的光标会飞到掩码串右边的空白里, 64 字符以上
-    /// 甚至会显示成空字符串。
+    /// 掩码不能封顶 —— 否则超长 key (Anthropic 实测约 108 字符) 掩码后比明文短, 靠明文
+    /// `visual_cursor()` 算的光标会飞到掩码串右边的空白里。
     #[test]
     fn secret_field_display_masks_without_a_length_cap() {
         let long_key = "x".repeat(108);
         let mut field = SecretField::new(long_key.clone());
         let masked = field.display();
         assert_eq!(masked.chars().count(), 108, "掩码应该逐字对应明文长度, 不能封顶");
-        assert_ne!(masked, field.secret().masked(), "这里不该复用 Secret::masked() 的封顶版本");
         field.toggle_reveal();
         assert_eq!(field.display(), long_key);
     }
@@ -209,6 +206,20 @@ mod tests {
         let out = format!("{field:?}");
         assert!(!out.contains("sk-"), "{out}");
         assert!(out.contains("9 chars"), "{out}");
+    }
+
+    /// 发出去的值与判空都按 trim 后的口径 (粘贴带进来的首尾空白不该落库); 显示仍是输入框原样,
+    /// 否则掩码与光标对不齐。
+    #[test]
+    fn secret_field_sends_and_validates_the_trimmed_value_but_displays_the_raw_one() {
+        let mut field = SecretField::new("  sk-test\t");
+        assert_eq!(field.secret(), Secret::new("sk-test"));
+        assert!(!field.is_empty());
+        assert_eq!(field.display().chars().count(), 10, "掩码应该逐字对应输入框里的原样文本");
+        field.toggle_reveal();
+        assert_eq!(field.display(), "  sk-test\t");
+
+        assert!(SecretField::new("   ").is_empty(), "只有空白也算空");
     }
 
     #[test]

@@ -247,8 +247,8 @@ class Handler(BaseHTTPRequestHandler):
                     s["enabled"] = req.get("enabled", s["enabled"])
             body = json.dumps(None).encode()
         elif name == "update_subscription":
-            # M9(b): 记下收到的 patch, 脚本事后断言 fable 槽真的是这次选中的模型。
-            # Task 8: 这个 command 现在会被打两次 (订阅页手动改槽位一次, 向导第二步保存一次),
+            # 记下收到的 patch, 脚本事后断言 fable 槽真的是这次选中的模型。
+            # 这个 command 会被打两次 (订阅页手动改槽位一次, 向导第二步保存一次),
             # `RECORDED["update_subscription"]` 只留最后一次 (给向导那次的「patch 只有
             # model_slots 一个键」断言用), 完整历史另存一份供订阅页那次的断言引用。
             req = json.loads(raw or b"{}")
@@ -507,8 +507,8 @@ def main():
     # 「已保存」、厂商 picker 选中 OAuth 厂商的「请在桌面端添加」、向导创建成功的「已创建」、
     # 删除成功的「已删除」) 彻底放完再量「空闲」: toast 一条只能显示 3s (`toast::LIFETIME_MS`) +
     # 300ms 消散动效, 后一条还要等前一条弹出队列才轮到它显示 (`MAX_TOASTS=4`, 不会被挤掉但会排队)。
-    # M9(c) 加的放弃流程练习 (q/n/Esc/y) 本身不产生任何 toast, 只是往后推迟了几秒; 新增的向导 +
-    # 删除流程把最后三条 toast 排在了整个按键序列的尾巴上, 留够余量把 settle pump 从 11s 提到 20s。
+    # 放弃流程练习 (q/n/Esc/y) 本身不产生任何 toast, 只是往后推迟了几秒; 向导 + 删除流程把最后
+    # 三条 toast 排在了整个按键序列的尾巴上, 所以 settle pump 要留到 20s。
     pump(20.0)
     before_idle = len(out)
     pump(2.0)

@@ -213,11 +213,12 @@ impl CustomForm {
         self.note = None;
         let draft = &self.draft;
         let cmd = WizardCmd::Create(CreateInput {
-            display_name: draft.display_name.value().to_string(),
+            // 校验按 trim 后判空, 发出去的也是 trim 后的值——校验什么就发送什么。
+            display_name: draft.display_name.value().trim().to_string(),
             api_key: draft.api_key.secret(),
             model_slots: draft.slots.slots.clone(),
             source: CreateSource::Custom(Box::new(CustomSource {
-                provider_display_name: draft.provider_display_name.value().to_string(),
+                provider_display_name: draft.provider_display_name.value().trim().to_string(),
                 base_url: draft.base_url.value().trim().to_string(),
                 messages_path: draft.messages_path.value().trim().to_string(),
                 auth_header_name: draft.auth_header_name.clone(),

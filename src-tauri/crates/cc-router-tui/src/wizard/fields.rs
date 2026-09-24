@@ -227,7 +227,7 @@ pub enum CustomField {
 impl CustomField {
     /// 焦点导航顺序。`auth_locked` 为真时 `Auth` 被剔除在外 (↑↓ 跳过它)——这一行仍然会被画出来
     /// (锁定态, muted), 只是键盘导航永远不会落到它上面; `⏎` 在它身上的时候 (理论上不该发生,
-    /// 见 `wizard::mod::handle_custom_key`) 也什么都不做。
+    /// 见 `wizard::common::handle_key` 的 `FieldKind::Locked` 分支) 也什么都不做。
     pub fn all(auth_locked: bool) -> Vec<CustomField> {
         let mut fields = vec![CustomField::Protocol, CustomField::ProviderName, CustomField::BaseUrl, CustomField::MessagesPath];
         if !auth_locked {

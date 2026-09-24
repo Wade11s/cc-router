@@ -342,9 +342,17 @@ impl App {
         self.store.subscription(id).map(|s| s.display_name.clone()).unwrap_or_else(|| id.to_string())
     }
 
-    /// `Action::Mutate` 落地成真正要发的 `Cmd`: 同一订阅已经有操作在跑 → 丢弃; 断线 → 弹 toast
-    /// 拒绝; 余额刷新在不支持的 provider 上 → 就地回答, 不发请求。三条判定都不进忙碌表, 只有真的
-    /// 要发的那条才 `insert`。
+    /// 忙碌键对应的显示名: 订阅用备注名, 虚拟模型用它自己的名字。
+    fn busy_key_name(&self, key: &BusyKey) -> String {
+        match key {
+            BusyKey::Subscription(id) => self.subscription_name(id),
+            BusyKey::VirtualModel(vm_name) => vm_name.clone(),
+        }
+    }
+
+    /// `Action::Mutate` 落地成真正要发的 `Cmd`: 同一订阅已经有操作在跑 → 弹 toast 拒绝; 断线 → 弹
+    /// toast 拒绝; 余额刷新在不支持的 provider 上 → 就地回答, 不发请求。三条判定都不进忙碌表, 只有
+    /// 真的要发的那条才 `insert`。
     fn start_mutation(&mut self, m: Mutation) -> Vec<Cmd> {
         let key = m.busy_key();
         // 断线判定必须排在忙碌表前面: 断线期间按在一条正忙的订阅上 (比如上一次操作还没跑完就掉线了)
@@ -353,7 +361,10 @@ impl App {
             self.push_toast(Toast::new(ToastKind::Error, self.s.toast_offline));
             return Vec::new();
         }
+        // 不能静默丢弃: 用户确认过删除、却什么都没发生, 只会以为按键没生效。
         if self.busy.contains_key(&key) {
+            let name = self.busy_key_name(&key);
+            self.push_toast(Toast::new(ToastKind::Info, (self.s.toast_busy)(&name)));
             return Vec::new();
         }
         if matches!(m, Mutation::RefreshBalance { .. }) {
@@ -410,10 +421,7 @@ impl App {
         // 的只读切片, 塞进 `Cmd::Fetch` 需要各自拥有的所有权, 所以 `.cloned()`。
         let refetch_cmds: Vec<Cmd> = mutation.refetch().iter().cloned().map(Cmd::Fetch).collect();
 
-        let name = match &key {
-            BusyKey::Subscription(id) => self.subscription_name(id),
-            BusyKey::VirtualModel(vm_name) => vm_name.clone(),
-        };
+        let name = self.busy_key_name(&key);
         let (kind, text) = match &result {
             Ok(MutationOutcome::EnabledSet) => {
                 let enabled = matches!(mutation, Mutation::SetEnabled { enabled: true, .. });

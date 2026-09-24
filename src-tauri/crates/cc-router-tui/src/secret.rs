@@ -2,9 +2,6 @@
 //! `Cmd` 里 (主循环、测试失败信息、将来任何 `{:?}` 都不会漏出明文)。读明文只有 `expose()` 一个
 //! 入口, 名字刻意刺眼, 且有源码扫描测试限制它的调用点 (见 `expose_is_only_called_in_allowlisted_files`)。
 
-/// 掩码最多画几个点。
-pub const MASK_CAP: usize = 24;
-
 #[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct Secret(String);
 
@@ -21,12 +18,6 @@ impl Secret {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-
-    /// 界面显示用: 与明文等长的 `•`, 超过 [`MASK_CAP`] 个字符时固定画 `MASK_CAP` 个
-    /// (不泄露真实长度, 也不会撑破字段宽度)。空值返回空串。
-    pub fn masked(&self) -> String {
-        "•".repeat(self.0.chars().count().min(MASK_CAP))
     }
 }
 
@@ -55,16 +46,9 @@ mod tests {
         assert_eq!(empty, "Secret(empty)");
     }
 
-    #[test]
-    fn masked_is_dots_and_caps_at_mask_cap() {
-        assert_eq!(Secret::default().masked(), "");
-        assert_eq!(Secret::new("sk-abcdef").masked(), "•".repeat(9));
-        assert_eq!(Secret::new("x".repeat(100)).masked(), "•".repeat(MASK_CAP));
-    }
-
     /// 照抄主 crate `runtime_file.rs::tests::local_secret_is_only_touched_by_allowlisted_files`
     /// 的写法: 遍历 `src/` 下的 `.rs`, 凡是出现 `expose(` 的文件名必须在白名单里——防止有人在
-    /// 表单渲染 / 日志 / 别的随手一个地方直接读明文。白名单两个成员见各自的注释。
+    /// 表单渲染 / 日志 / 别的随手一个地方直接读明文。白名单成员见各自的注释。
     ///
     /// - 白名单写**相对 `src/` 的路径** (`"client/dto.rs"`, 不是只写文件名), 与后端
     ///   `runtime_file.rs` 白名单写 `"proxy/server.rs"` 同一套规则; 只写文件名的条目永远不命中。
@@ -75,13 +59,9 @@ mod tests {
     /// - 白名单成员必须真的存在于 `src/` 下, 防止死条目。
     #[test]
     fn expose_is_only_called_in_allowlisted_files() {
-        const EXPOSE_ALLOWLIST: [&str; 3] = [
+        const EXPOSE_ALLOWLIST: [&str; 2] = [
             "secret.rs",     // 定义处与它自己的测试
             "client/dto.rs", // `CreateInput::to_args()` / `ProbeInput::to_args()`, 唯一把它变成线上 JSON 的地方
-            // `SecretField::display()`: 向导 API Key 行 `Ctrl+R` 就地切换明文 / 掩码显示。`SecretField`
-            // 的输入框私有, 明文在这个文件之外只能经 `secret()` → `expose()` 拿到, 所以这个文件是向导里
-            // 唯一读明文的地方。
-            "wizard/text.rs",
         ];
 
         fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

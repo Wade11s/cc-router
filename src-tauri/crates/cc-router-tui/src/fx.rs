@@ -23,7 +23,7 @@ pub mod ms {
     pub const TOAST_OUT: u32 = 300;
     pub const ROW_CHANGED: u32 = 600;
     pub const VALUE_CHANGED: u32 = 400;
-    /// 实时路由页新行的淡入 (Task 7)。
+    /// 实时路由页新行的淡入。
     pub const ROW_NEW: u32 = 300;
     /// 向导表单校验失败的那一行。
     pub const FIELD_ERR: u32 = 300;
@@ -42,7 +42,7 @@ pub enum FxKey {
     /// 订阅 id
     Row(String),
     Value(&'static str),
-    /// 实时路由的条目序号 (Task 7)。
+    /// 实时路由的条目序号。
     LiveRow(u64),
     /// 向导表单里的一行 (行下标)。
     Field(usize),
@@ -162,7 +162,7 @@ impl Fx {
         self.add(FxKey::Value(key), effect);
     }
 
-    /// 实时路由的新行从强调色淡入 (Task 7): 视线自然落到刚出现的这一条上, 不需要循环效果。
+    /// 实时路由的新行从强调色淡入: 视线自然落到刚出现的这一条上, 不需要循环效果。
     pub fn row_new(&mut self, seq: u64, row: Rect, from: Color) {
         let effect = fx::fade_from_fg(from, (ms::ROW_NEW, Interpolation::QuadOut)).with_area(row);
         self.add(FxKey::LiveRow(seq), effect);

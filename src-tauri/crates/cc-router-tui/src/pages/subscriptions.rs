@@ -20,7 +20,7 @@ use super::{Component, DrawCtx};
 use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation, OnYes};
 use crate::client::dto::{BalanceSeverity, ModelSlots, QuotaUsage, Slot, SlotEfforts, Subscription, EFFORT_CHOICES, PENDING_MODEL};
 use crate::client::events::SUBSCRIPTION_CHANGES;
-use crate::format::{compact, fit};
+use crate::format::{compact, fit, slot_label};
 use crate::i18n::Strings;
 use crate::store::Store;
 use crate::theme::Theme;
@@ -914,21 +914,6 @@ fn longest_model_width(model_slots: &ModelSlots) -> usize {
 fn slot_model_col(width: u16, model_slots: &ModelSlots) -> usize {
     let available = width.saturating_sub(2 + SLOT_NAME_COL as u16 + EFFORT_COL as u16) as usize;
     (longest_model_width(model_slots) + 2).min(available).max(24)
-}
-
-/// `Slot` 的显示名: 四个主槽用英文原名 (与后端 `ModelSlots` 的字段名一致), `Fallback` 用现有的
-/// `s.sub_slot_fallback` (中文「兜底」)。
-///
-/// `pub(crate)`: 向导的槽位行 (`wizard/common.rs`) 与槽位选择器标题复用这个函数,
-/// 不在那边重写一份同样的 `match`——两处对"槽位怎么叫"必须是同一个答案, 分开维护迟早会走样。
-pub(crate) fn slot_label(slot: Slot, s: &'static Strings) -> &'static str {
-    match slot {
-        Slot::Fable => "fable",
-        Slot::Opus => "opus",
-        Slot::Sonnet => "sonnet",
-        Slot::Haiku => "haiku",
-        Slot::Fallback => s.sub_slot_fallback,
-    }
 }
 
 /// `modified`: 这个槽位的显示值 (草稿) 跟 `Store` 里的原始值不同, 行末追加一条 muted 的

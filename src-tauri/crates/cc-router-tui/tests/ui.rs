@@ -501,7 +501,7 @@ fn focus_row(a: &mut App, label: &str) {
     panic!("按了 {FORM_ROW_LIMIT} 次 ↓ 也没找到「{label}」行\n{}", render(a, 80, 24));
 }
 
-/// 槽位行的标签 (与 `pages::subscriptions::slot_label` 同值; 那个函数不公开)。
+/// 槽位行的标签 (与 `format::slot_label` 同值; 那个函数不公开)。
 fn slot_row(slot: Slot) -> &'static str {
     match slot {
         Slot::Fable => "fable",
@@ -648,6 +648,57 @@ fn the_wizard_builds_a_create_command_with_pending_slots() {
     );
 }
 
+/// 校验按 trim 后判空, 发出去的也必须是 trim 后的值: 粘贴带进来的首尾空白不该落进备注名或
+/// API Key。
+#[test]
+fn the_builtin_create_sends_trimmed_values() {
+    let mut a = wizard_with_providers(vec![zhipu_provider()]);
+    select_zhipu(&mut a);
+    type_str(&mut a, "  sk-test  ");
+    focus_row(&mut a, ZH.wiz_f_display_name);
+    a.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+    type_str(&mut a, "  我的智谱  ");
+    focus_row(&mut a, ZH.wiz_btn_next);
+    let submit = a.handle_key(key(KeyCode::Enter)).expect("填完表单提交应该产出 Action");
+    let Action::WizardRequest(cmd) = submit else { panic!("应该是 WizardRequest, 实际 {submit:?}") };
+    let WizardCmd::Create(input) = *cmd else { panic!("应该是 Create") };
+    assert_eq!(input.display_name, "我的智谱");
+    assert_eq!(input.api_key, Secret::new("sk-test"));
+}
+
+/// 同上, 自定义路径: 厂商名 / 备注名 / API Key 都发 trim 后的值, 探测也一样。
+#[test]
+fn the_custom_probe_and_create_send_trimmed_values() {
+    let mut a = wizard_custom(CustomProtocol::Anthropic);
+    fill_custom(
+        &mut a,
+        CustomFill {
+            provider_name: Some("  中转站  "),
+            base_url: Some("https://relay.example.com"),
+            api_key: Some(" sk-test "),
+            display_name: Some("  我的中转  "),
+            ..Default::default()
+        },
+    );
+    focus_row(&mut a, ZH.wiz_btn_probe);
+    let probe = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
+    let Action::WizardRequest(cmd) = probe else { panic!("应该是 WizardRequest, 实际 {probe:?}") };
+    let WizardCmd::Probe(input) = *cmd else { panic!("应该是 Probe") };
+    assert_eq!(input.api_key, Secret::new("sk-test"), "探测也该发 trim 后的 key");
+    // 探测结果回来之前表单只读, 让它失败回到可编辑状态。
+    a.update(wizard_done(&a, WizardResult::Probed { base_url: "https://relay.example.com".into(), result: Err("网络错误".into()) }));
+
+    pick_core_slots(&mut a, |_| PickerChoice::Custom("glm-4.6".into()));
+    focus_row(&mut a, ZH.wiz_btn_create);
+    let submit = a.handle_key(key(KeyCode::Enter)).expect("创建应该产出 Action");
+    let Action::WizardRequest(cmd) = submit else { panic!("应该是 WizardRequest, 实际 {submit:?}") };
+    let WizardCmd::Create(input) = *cmd else { panic!("应该是 Create") };
+    assert_eq!(input.display_name, "我的中转");
+    assert_eq!(input.api_key, Secret::new("sk-test"));
+    let CreateSource::Custom(custom) = input.source else { panic!("应该是 Custom source") };
+    assert_eq!(custom.provider_display_name, "中转站");
+}
+
 /// 不填 key 直接提交 → 不产出 `Cmd`, 屏幕上出现 `ZH.wiz_err_api_key`, 焦点跳回 `ApiKey`。
 #[test]
 fn submitting_an_incomplete_form_moves_the_cursor_to_the_bad_field() {
@@ -683,7 +734,7 @@ fn the_api_key_is_masked_until_ctrl_r() {
     assert!(!masked_again.contains("sk"), "{masked_again}");
 }
 
-/// 掩码不能封顶 (`Secret::MASK_CAP` = 24) —— 108 字符的 key (Anthropic 实测长度) 掩码后
+/// 掩码不能封顶 —— 108 字符的 key (Anthropic 实测长度) 掩码后
 /// 值区里应该还能看到点、光标落在点串末尾一格 (紧跟其后的空位); 左移几下光标应该跟着点串一起
 /// 移动, 不会飞到空白区域 (那正是封顶版本会出的问题: 掩码文本比明文短, 光标按明文位置算却找
 /// 不到对应的点)。
@@ -3316,6 +3367,22 @@ fn a_key_press_on_a_busy_row_while_offline_still_shows_the_offline_toast() {
     assert!(a.update(Action::Mutate(m)).is_empty(), "断线时不该真的发请求");
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.toast_offline), "忙碌订阅断线时按键也该弹「未连接」\n{out}");
+}
+
+/// 测试连接还在飞时确认删除同一条订阅: 忙碌表会拒绝这次删除, 必须给出提示——否则用户确认过
+/// 删除、却什么都没发生。
+#[test]
+fn deleting_a_busy_subscription_explains_why_nothing_happened() {
+    let mut a = subs_app(false); // 已连接, 默认选中 "1" 智谱主号
+    assert!(!a.update(Action::Mutate(Mutation::TestConnection { id: "1".into() })).is_empty(), "准备: 先让这条订阅忙起来");
+    render(&mut a, 80, 24);
+
+    let open = a.handle_key(key(KeyCode::Char('d'))).expect("d 应该打开删除确认");
+    a.update(open);
+    let yes = a.handle_key(key(KeyCode::Char('y'))).expect("确认弹窗里 y 应该产出 Action");
+    assert!(a.update(yes).is_empty(), "忙碌中不该真的发删除请求");
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(&(ZH.toast_busy)("智谱主号")), "忙碌中删除应该弹提示\n{out}");
 }
 
 /// 「示例中转」(id "3") 的 `balance_supported = false`: `b` 应该就地回答, 不产生 `Cmd`。
