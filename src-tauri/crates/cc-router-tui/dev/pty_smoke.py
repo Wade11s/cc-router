@@ -216,9 +216,10 @@ EXPECT = [
     "共 3 条",
     "请求详情",
     "工具调用",
-    # 新建订阅向导: 厂商 picker 里选中 OAuth 厂商 (ChatGPT) 只弹提示、不落值——用 `Strings` 里
-    # `wiz_desktop_only` 的实际中文文案 (不是「流程没往下走」这种间接断言)。
-    "请在桌面端添加",
+    # 「请在桌面端添加」(OAuth 厂商选中提示) 不放在这里: 厂商 picker 里 OAuth 厂商那一行的
+    # label 本身就带这串字 (`"{显示名} · {desktop_only}"`), 过滤出这一行就已经让它出现在整段
+    # 累计输出里, 放进这个"只要出现过就算过"的列表会让断言测不出「选中之后有没有真的弹提示」——
+    # 按出现次数的增量判断 (见下方 `oauth_notice_count_before`/`_after` 与对应的按键序列)。
     # 创建 + 保存槽位成功的 toast (`wiz_created`); 备注名跟着厂商显示名 "智谱" 自动生成, 与已有的
     # 三条假订阅都不重名, 不会被追加序号。
     "已创建「智谱」",
@@ -357,6 +358,17 @@ def main():
                 except OSError:
                     return
 
+    def visible_text(limit=None):
+        # 去掉转义序列之后的可见文字。**必须从字节 0 开始切**, 不能取 `out` 中间任意一段
+        # (`out[a:b]`) 再单独去转义——终端全屏重绘时几乎每个格子前面都带一段样式转义序列, 任意
+        # 字节偏移量都可能落在某个序列中间, 序列开头 (`\x1b[`) 被切掉的那一截会被正则漏判、原样
+        # 混进"文字"里, 把旁边本来连续的真实文字拆碎 (fix round 1 复现过这个问题: 窄窗口切片让
+        # "请在桌面端添加" 这几个字被拆散, 断言拿不到完整子串)。从 0 开始切的话, 中途顶多在切口
+        # 处留一小段没切干净的转义码尾巴 (或者一个被截断的宽字符), 不会污染前面已经完整闭合的
+        # 那些序列, 所以这个函数只接受"到第几个字节为止"的前缀, 不接受任意区间。
+        raw = bytes(out) if limit is None else bytes(out[:limit])
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw.decode("utf-8", "replace"))
+
     pump(3.0)  # 启动动效 + 首次加载 + 1.5s 时的状态变更事件
     # 2 = 订阅页 (真页面, 期待「订阅 (3)」「备注名」); j = 选中第二条 "Kimi 备用";
     # t = 测试连接 (等够 0.8s 让假后端的响应 + toast + 重拉列表都跑完), e = 就地启停 (同样等 0.8s);
@@ -427,8 +439,26 @@ def main():
         (b"\x1b", 0.3),
         (b"n", 0.8),  # 打开向导, 等厂商列表回来
         (b"\r", 0.4),  # Provider 行 ⏎ 打开厂商 picker
-        (b"chatgpt", 0.3),  # 按 id/label 过滤到 OAuth 厂商
-        (b"\r", 0.4),  # 选中它: 不落值, 只弹「请在桌面端添加」的提示
+        (b"chatgpt", 0.3),  # 按 id/label 过滤到 OAuth 厂商——过滤出的这一行本身就带着
+        # `wiz_desktop_only` 的文案 (`basics.rs::provider_picker`: label 是
+        # `"{显示名} · {desktop_only}"`), 所以光是走到这一步, 屏幕上已经出现过
+        # "请在桌面端添加" 这串字——不能拿它证明"选中之后弹了提示"。真正的断言按出现次数的增量
+        # 判断 (fix round 1: 这里之前直接查整段累计输出, 光筛出这一行就已经让断言通过, 选不选它
+        # 结果一样, 是个测不出行为的假断言)。
+    ):
+        os.write(fd, keys)
+        pump(wait)
+
+    # 选中 OAuth 厂商: 记下选中前 (还停在过滤出的这一行, 期间的重绘可能已经让这串字出现不止一次)
+    # 与选中后各自出现过几次「请在桌面端添加」——真的弹了提示的话选中后应该比选中前**更多**
+    # (toast 又画了一遍同一串字); 次数没变就说明选中没有真的触发提示。不能只看绝对次数是不是
+    # 某个固定值 (比如 1), 因为选中前这一刻已经重绘过几遍无法预先精确知道。
+    oauth_notice_count_before = visible_text(len(out)).count("请在桌面端添加")
+    os.write(fd, b"\r")
+    pump(0.4)
+    oauth_notice_count_after = visible_text(len(out)).count("请在桌面端添加")
+
+    for keys, wait in (
         (b"\r", 0.4),  # 再开一次 picker (未过滤, initial 不匹配任何项时默认选中第一项 = 智谱)
         (b"\r", 0.4),  # 选中智谱: `choose_provider` 自动把焦点跳到 API Key
         (b"sk-test", 0.2),
@@ -480,8 +510,8 @@ def main():
             pass
         _, status = os.waitpid(pid, 0)
 
-    raw = out.decode("utf-8", "replace")
-    text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw)
+    raw = out.decode("utf-8", "replace")  # 备用屏幕进出的转义序列检查要看未去码的原始字符串
+    text = visible_text()
     failures = []
     if not exited:
         failures.append("按 q 之后 3 秒内没有退出")
@@ -539,11 +569,27 @@ def main():
         fable = input_.get("model_slots", {}).get("fable")
         if fable != "(pending)":
             failures.append(f"create_subscription 的 model_slots.fable 应该是 \"(pending)\" (第二步之前的占位), 实际 {fable!r}")
-        source_kind = input_.get("source", {}).get("kind")
-        if source_kind != "from_template":
-            failures.append(f"create_subscription 的 source.kind 应该是 \"from_template\", 实际 {source_kind!r}")
+        source = input_.get("source", {})
+        if source.get("kind") != "from_template":
+            failures.append(f"create_subscription 的 source.kind 应该是 \"from_template\", 实际 {source.get('kind')!r}")
+        # fix round 1: 选中 OAuth 厂商那一步不该落值——这里从结果反向核实: 最终提交的厂商真的是
+        # 后来选的智谱 (`default` 接入点), 不是先选中的 ChatGPT (它没有 endpoints, `endpoint_id`
+        # 会是空串) 也不是两者混出来的半吊子状态。
+        if source.get("provider_id") != "zhipu":
+            failures.append(f"create_subscription 的 source.provider_id 应该是 \"zhipu\" (选 OAuth 厂商不该落值), 实际 {source.get('provider_id')!r}")
+        if source.get("endpoint_id") != "default":
+            failures.append(f"create_subscription 的 source.endpoint_id 应该是 \"default\", 实际 {source.get('endpoint_id')!r}")
         if input_.get("api_key") != "sk-test":
             failures.append(f"create_subscription 的 api_key 应该是 \"sk-test\", 实际 {input_.get('api_key')!r}")
+
+    # fix round 1: 厂商 picker 里 OAuth 厂商那一行的 label 本身就带着 `wiz_desktop_only` 的文案
+    # (筛出这一行就已经出现在屏幕上), 光查整段累计输出里有没有出现这串字测不出「选中它真的弹了
+    # 提示」——按出现次数的增量判断 (见上面 `oauth_notice_count_before`/`_after`)。
+    if oauth_notice_count_after <= oauth_notice_count_before:
+        failures.append(
+            f"选中 OAuth 厂商 (ChatGPT) 应该再弹一次「请在桌面端添加」的提示, 出现次数应该从 "
+            f"{oauth_notice_count_before} 变多, 实际还是 {oauth_notice_count_after}"
+        )
 
     # 向导第二步保存槽位打的是同一个 `update_subscription` command, 这里是历史记录里最后一条
     # (`RECORDED["update_subscription"]` 只留最后一次, 与上面订阅页那次的 `sub_history[0]` 是同一
