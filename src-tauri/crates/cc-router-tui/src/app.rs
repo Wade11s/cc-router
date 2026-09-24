@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Tabs};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 
-use crate::action::{Action, BusyKey, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, Tab, WizardCmd};
+use crate::action::{Action, BusyKey, Cmd, Fetch, FetchData, FetchKind, Mutation, MutationOutcome, OnYes, Tab, WizardCmd};
 use crate::client::dto::{RefreshBalanceResult, RefreshModelsResult};
 use crate::format::Tz;
 use crate::fx::{self, Dir, Fx};
@@ -224,12 +224,12 @@ impl App {
 
     /// `Quit` / `SwitchTab` / `NextTab` / `PrevTab` 四个来源共用: 当前「编辑上下文」`current_dirty()`
     /// 时不直接执行 `action`, 而是打开确认弹窗把它包进 `on_yes`; 否则调用 `run` 真正执行。
-    /// `Action::Confirmed` 里 `discard_current()` 之后再 `update(*inner)`, 会重新走到这里, 但那时
+    /// `OnYes::DiscardThen` 在 `discard_current()` 之后再 `update(*inner)`, 会重新走到这里, 但那时
     /// `current_dirty()` 已经是 `false`——天然放行, 不需要另一条「不检查 dirty」的旁路。
     fn guard_dirty(&mut self, action: Action, run: impl FnOnce(&mut Self) -> Vec<Cmd>) -> Vec<Cmd> {
         if self.current_dirty() {
             let prompt = self.s.confirm_discard.to_string();
-            self.open_popup(Popup::Confirm(ConfirmState { prompt, on_yes: Box::new(action) }));
+            self.open_popup(Popup::Confirm(ConfirmState { prompt, on_yes: OnYes::discard_then(action) }));
             Vec::new()
         } else {
             run(self)
@@ -483,11 +483,16 @@ impl App {
                 self.open_popup(Popup::Confirm(ConfirmState { prompt, on_yes }));
                 Vec::new()
             }
-            Action::Confirmed(inner) => {
+            Action::Confirmed(on_yes) => {
                 self.close_popup();
-                let mut cmds = self.discard_current();
-                cmds.extend(self.update(*inner));
-                cmds
+                match on_yes {
+                    OnYes::DiscardThen(inner) => {
+                        let mut cmds = self.discard_current();
+                        cmds.extend(self.update(*inner));
+                        cmds
+                    }
+                    OnYes::Run(inner) => self.update(*inner),
+                }
             }
             Action::DiscardDraft => self.discard_current(),
             Action::OpenWizard => {
@@ -498,7 +503,7 @@ impl App {
                 cmds
             }
             // `self.wizard.take().is_some()`: 只有真的关掉了 (调用时向导确实存在) 才补一次重拉——
-            // `Confirmed(CloseWizard)` 这条路径上 `discard_current()` 已经关过一次向导了, 这里再
+            // `Confirmed(DiscardThen(CloseWizard))` 这条路径上 `discard_current()` 已经关过一次向导了, 这里再
             // 无条件发一次会产出两条一模一样的 `Cmd::Fetch(Subscriptions)`。
             Action::CloseWizard => {
                 if self.wizard.take().is_some() {
@@ -522,7 +527,7 @@ impl App {
             // **必须判 `self.wizard.is_some()` 才转发**——"没有向导也无害" 这个说法只
             // 对 `WizardDone` 成立 (它落地时向导已经不在, 上面那条"没有向导就丢弃"的分支正好
             // 接住), 对 `Create` 这类会写库的请求不成立: 如果这个 action 被塞进某个
-            // 确认弹窗的 `on_yes` (`Action::Confirmed` 会先 `discard_current()` 关掉向导再执行
+            // 确认弹窗的 `on_yes` (`OnYes::DiscardThen` 会先 `discard_current()` 关掉向导再执行
             // `inner`), 订阅会在向导已经关闭、没人接收结果的情况下照常建到后端, 订阅列表里凭空
             // 多出一条 `(pending)`, 用户毫无察觉也没有 toast。
             Action::WizardRequest(cmd) => {
@@ -913,8 +918,8 @@ mod tests {
         let out = render(&mut a, 80, 24);
         assert!(out.contains(ZH.confirm_discard), "应该弹出确认提示\n{out}");
 
-        assert_eq!(a.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(Box::new(Action::Quit))));
-        assert_eq!(a.update(Action::Confirmed(Box::new(Action::Quit))), vec![Cmd::Quit], "y 之后应该真的退出");
+        assert_eq!(a.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(OnYes::discard_then(Action::Quit))));
+        assert_eq!(a.update(Action::Confirmed(OnYes::discard_then(Action::Quit))), vec![Cmd::Quit], "y 之后应该真的退出");
 
         // 另起一局: n 应该只关掉弹窗, 页面仍然 dirty (草稿没被丢弃, 也没有退出)。
         let mut b = dirty_app();
@@ -932,7 +937,7 @@ mod tests {
         assert_eq!(a.tab, Tab::Logs, "确认之前不该真的切走");
         assert!(a.pages.logs.is_dirty());
 
-        a.update(Action::Confirmed(Box::new(Action::SwitchTab(Tab::Overview))));
+        a.update(Action::Confirmed(OnYes::discard_then(Action::SwitchTab(Tab::Overview))));
         assert_eq!(a.tab, Tab::Overview, "y 之后应该真的切过去");
         assert!(!a.pages.logs.is_dirty(), "y 之后原页面的草稿应该被丢弃");
     }
@@ -943,13 +948,13 @@ mod tests {
         let mut a = dirty_app(); // tab = Logs (index 4)
         assert!(a.update(Action::NextTab).is_empty(), "dirty 时 NextTab 应该先确认");
         assert_eq!(a.tab, Tab::Logs, "确认之前不该真的切走");
-        a.update(Action::Confirmed(Box::new(Action::NextTab)));
+        a.update(Action::Confirmed(OnYes::discard_then(Action::NextTab)));
         assert_eq!(a.tab, Tab::Overview, "y 之后应该真的切到下一页 (末尾绕回开头)");
 
         let mut b = dirty_app();
         assert!(b.update(Action::PrevTab).is_empty(), "dirty 时 PrevTab 应该先确认");
         assert_eq!(b.tab, Tab::Logs);
-        b.update(Action::Confirmed(Box::new(Action::PrevTab)));
+        b.update(Action::Confirmed(OnYes::discard_then(Action::PrevTab)));
         assert_eq!(b.tab, Tab::Live, "y 之后应该真的切到上一页");
     }
 
@@ -974,7 +979,7 @@ mod tests {
         render(&mut a, 80, 24); // 让 App 记住 Help 弹窗的 popup_area。
         assert!(a.popup_area.is_some());
 
-        a.update(Action::OpenConfirm { prompt: "测试".into(), on_yes: Box::new(Action::Refresh) });
+        a.update(Action::OpenConfirm { prompt: "测试".into(), on_yes: OnYes::discard_then(Action::Refresh) });
         assert!(matches!(a.popup, Some(Popup::Confirm(_))), "应该直接替换成确认弹窗");
         assert!(a.popup_area.is_none(), "替换时应该清掉旧弹窗的 popup_area, 不留到下一次关闭时误用");
 
@@ -1097,7 +1102,7 @@ mod tests {
         assert_eq!(a.tab, Tab::Overview, "确认之前不该真的切走");
         assert!(a.wizard.is_some(), "确认之前向导不该被关掉");
 
-        let cmds = a.update(Action::Confirmed(Box::new(Action::SwitchTab(Tab::Subscriptions))));
+        let cmds = a.update(Action::Confirmed(OnYes::discard_then(Action::SwitchTab(Tab::Subscriptions))));
         assert_eq!(a.tab, Tab::Subscriptions, "y 之后应该真的切过去");
         assert!(a.wizard.is_none(), "y 之后向导应该被关掉");
         assert!(cmds.contains(&Cmd::Fetch(Fetch::Subscriptions)), "关向导应该补一次订阅列表重拉: {cmds:?}");
@@ -1111,7 +1116,7 @@ mod tests {
         assert!(b.wizard.is_some(), "确认之前向导不该被关掉");
 
         assert_eq!(
-            b.update(Action::Confirmed(Box::new(Action::Quit))),
+            b.update(Action::Confirmed(OnYes::discard_then(Action::Quit))),
             vec![Cmd::Fetch(Fetch::Subscriptions), Cmd::Quit],
             "y 之后应该先补一次订阅列表重拉、再真的退出"
         );

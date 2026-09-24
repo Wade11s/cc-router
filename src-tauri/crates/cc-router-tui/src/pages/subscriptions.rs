@@ -17,7 +17,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::draft::Draft;
 use super::{Component, DrawCtx};
-use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation};
+use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation, OnYes};
 use crate::client::dto::{BalanceSeverity, ModelSlots, QuotaUsage, Slot, SlotEfforts, Subscription, EFFORT_CHOICES, PENDING_MODEL};
 use crate::client::events::SUBSCRIPTION_CHANGES;
 use crate::format::{compact, fit};
@@ -368,7 +368,8 @@ impl Subscriptions {
     /// 与虚拟模型名列表 (`s.list_sep` 连接, 超过 [`MAX_REFS_SHOWN`] 个只列前几个再接
     /// `s.sub_delete_refs_more`, 参数是**剩余**个数, 不是总数)。后端 `delete_subscription`
     /// 不拒绝也不返回引用方 (静默把这条订阅从每个虚拟模型的 `subscription_ids` 里摘掉), 这份提示
-    /// 只能由 TUI 在删之前从 `Subscription.referenced_by` 现拼。
+    /// 只能由 TUI 在删之前从 `Subscription.referenced_by` 现拼。`OnYes::run`: 删除与草稿无关,
+    /// 选「是」不该顺带丢掉别的未保存修改。
     fn confirm_delete_action(sub: &Subscription, s: &'static Strings) -> Action {
         let mut lines = vec![(s.sub_confirm_delete)(&sub.display_name)];
         if !sub.referenced_by.is_empty() {
@@ -378,7 +379,7 @@ impl Subscriptions {
             let names_line = if remaining > 0 { format!("{shown}{}", (s.sub_delete_refs_more)(remaining)) } else { shown };
             lines.push(names_line);
         }
-        Action::OpenConfirm { prompt: lines.join("\n"), on_yes: Box::new(Action::Mutate(Mutation::Delete { id: sub.id.clone() })) }
+        Action::OpenConfirm { prompt: lines.join("\n"), on_yes: OnYes::run(Action::Mutate(Mutation::Delete { id: sub.id.clone() })) }
     }
 
     /// 每次 `draw` / `handle_key` 都要调用: 把 `selected_id` 解析成当前列表里的下标。
@@ -670,7 +671,7 @@ impl Component for Subscriptions {
                 }
                 KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
                     if self.is_dirty() {
-                        Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::DiscardDraft) })
+                        Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: OnYes::discard_then(Action::DiscardDraft) })
                     } else {
                         // 草稿不脏 (可能压根没有, 也可能改回了原值) 时直接放行, 顺带清掉它——
                         // `focus == List` 时 `draft` 恒为 `None` 是页面维持的不变式。改回原值时草稿

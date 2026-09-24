@@ -236,18 +236,14 @@ pub enum Action {
     PrevTab,
     ToggleHelp,
     ClosePopup,
-    /// 打开一个「是 / 否」确认弹窗; `on_yes` 是选「是」后真正要执行的 `Action`。页面自己想
-    /// 请求确认 (比如「放弃修改」) 时也可以从 `handle_key` 直接返回这个。**如果已经有另一个弹窗
+    /// 打开一个「是 / 否」确认弹窗; `on_yes` 说明选「是」之后做什么, 其中带着真正要执行的
+    /// `Action`。页面自己想请求确认时也可以从 `handle_key` 直接返回这个。**如果已经有另一个弹窗
     /// 打开着 (哪怕是另一个 `Confirm` 或 `Picker`), 会直接替换它**——不播放旧弹窗的关闭动效,
     /// 也不留旧弹窗的几何。
-    OpenConfirm { prompt: String, on_yes: Box<Action> },
-    /// 用户在确认弹窗里选了「是」: 先让当前页面丢弃草稿 (`Component::discard_changes`), 再执行
-    /// `inner`——`inner` 走一次普通 `App::update`, 但此时 dirty 已经被清空, 不会被再次拦截确认。
-    /// **这个丢弃草稿是无条件的、不看 `inner` 是什么**: `Confirmed` 只应该用来包「放弃当前页面的
-    /// 修改」这一类确认 (`App::guard_dirty` 自动包出来的那种就是), 不要拿它包一个跟"要不要丢弃
-    /// 当前页面草稿"无关的确认——哪怕 `inner` 本身跟草稿毫无关系, `discard_changes()` 依然会先被
-    /// 调用一次。
-    Confirmed(Box<Action>),
+    OpenConfirm { prompt: String, on_yes: OnYes },
+    /// 用户在确认弹窗里选了「是」, 带着弹窗打开时给的 [`OnYes`] 原样回来, 按它的变体决定要不要
+    /// 先丢弃当前编辑上下文。
+    Confirmed(OnYes),
     /// 页面主动清空自己的草稿 (比如按 Esc 放弃编辑) 时用; `App` 收到后调用当前页面的
     /// `discard_changes()`, 不产出任何 `Cmd`。
     DiscardDraft,
@@ -255,7 +251,7 @@ pub enum Action {
     OpenWizard,
     /// 关掉向导 (完成 / 取消 / 确认放弃都走这一个)。`App` **真的关掉了向导** (调用时向导确实存在)
     /// 才补一次 `Fetch::Subscriptions`——向导可能已经创建了订阅, 而它不走 `Mutation` 那条自动重拉
-    /// 的路; 向导已经不存在时 (比如 `Action::Confirmed` 先经 `discard_current()` 关过一次, 又把
+    /// 的路; 向导已经不存在时 (比如 `OnYes::DiscardThen` 先经 `discard_current()` 关过一次, 又把
     /// 这个 action 当 `inner` 执行了一遍) 不重复发, 与 `discard_current()` 幂等。
     CloseWizard,
     /// 一次向导请求的结果。`epoch` 是发出请求的那个 `Cmd::Wizard` 带的代次; 与当前向导的代次
@@ -309,6 +305,29 @@ pub enum Action {
     /// `PickerDone` 时发现输入为空) 用的是另一条路 (`Component::take_notice`, 见 `pages/mod.rs`),
     /// 不产出这个 `Action` (那个签名返回 `Vec<Cmd>`, 塞不进一个 `Action`)。
     Notify { kind: ToastKind, text: String },
+}
+
+/// 确认弹窗选「是」之后做什么。**两种语义刻意做成两个变体, 没有默认值**: 每个确认的发起方都
+/// 必须明说「是」会不会丢掉当前的编辑上下文——删除这类执行类确认与草稿无关, 丢了草稿就是把用户
+/// 没保存的修改悄悄扔掉。
+#[derive(Debug, Clone, PartialEq)]
+pub enum OnYes {
+    /// 「放弃修改」类: 先丢弃当前编辑上下文 (有向导时关掉向导, 否则丢弃当前页草稿), 再执行这个
+    /// `Action`——它走一次普通 `App::update`, 此时 dirty 已经清空, 不会被再次拦截确认。
+    /// `App::guard_dirty` 自动包出来的就是这种。
+    DiscardThen(Box<Action>),
+    /// 执行类 (比如删除订阅): 只执行这个 `Action`, 不碰任何草稿。
+    Run(Box<Action>),
+}
+
+impl OnYes {
+    pub fn discard_then(action: Action) -> Self {
+        OnYes::DiscardThen(Box::new(action))
+    }
+
+    pub fn run(action: Action) -> Self {
+        OnYes::Run(Box::new(action))
+    }
 }
 
 #[cfg(test)]

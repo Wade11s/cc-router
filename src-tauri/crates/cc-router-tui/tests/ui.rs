@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use cc_router_tui::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOutcome, OverviewData, Tab, WizardCmd, WizardResult};
+use cc_router_tui::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOutcome, OnYes, OverviewData, Tab, WizardCmd, WizardResult};
 use cc_router_tui::app::{App, AppOptions, MIN_HEIGHT};
 use cc_router_tui::client::dto::{
     AuthHeaderFormat, BalanceCache, BalanceEntry, BalanceSeverity, BalanceSnapshot, CreateInput, CreateSource, CreatedSubscription,
@@ -1043,7 +1043,7 @@ fn escaping_after_the_subscription_was_created_warns_about_pending() {
     let mut a = wizard_at_slots_with_manual_fallback("x");
     assert_eq!(
         a.handle_key(key(KeyCode::Esc)),
-        Some(Action::OpenConfirm { prompt: ZH.wiz_confirm_exit_pending.to_string(), on_yes: Box::new(Action::CloseWizard) }),
+        Some(Action::OpenConfirm { prompt: ZH.wiz_confirm_exit_pending.to_string(), on_yes: OnYes::discard_then(Action::CloseWizard) }),
         "Slots 阶段的 Esc 确认文案应该是「订阅已经创建…」, 不是通用的放弃编辑提示"
     );
 }
@@ -1667,7 +1667,7 @@ fn custom_stage_escape_uses_the_discard_prompt_not_the_pending_one() {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
     assert_eq!(
         a.handle_key(key(KeyCode::Esc)),
-        Some(Action::OpenConfirm { prompt: ZH.confirm_discard.to_string(), on_yes: Box::new(Action::CloseWizard) }),
+        Some(Action::OpenConfirm { prompt: ZH.confirm_discard.to_string(), on_yes: OnYes::discard_then(Action::CloseWizard) }),
         "Custom 阶段的 Esc 确认文案应该是「放弃修改」, 不是「订阅已创建」"
     );
 
@@ -1682,7 +1682,7 @@ fn custom_stage_escape_uses_the_discard_prompt_not_the_pending_one() {
     assert!(a.handle_key(key(KeyCode::Esc)).is_some(), "Probing 是只读请求, Esc 应该可用");
     assert_eq!(
         a.handle_key(key(KeyCode::Esc)),
-        Some(Action::OpenConfirm { prompt: ZH.confirm_discard.to_string(), on_yes: Box::new(Action::CloseWizard) }),
+        Some(Action::OpenConfirm { prompt: ZH.confirm_discard.to_string(), on_yes: OnYes::discard_then(Action::CloseWizard) }),
         "Probing 阶段 Esc 的确认文案同样应该是「放弃修改」"
     );
 }
@@ -2341,11 +2341,11 @@ fn help_popup_still_closes_with_esc_question_mark_and_q() {
 #[test]
 fn confirm_popup_swallows_other_keys() {
     let mut a = loaded(false);
-    a.update(Action::OpenConfirm { prompt: "测试提示".into(), on_yes: Box::new(Action::Refresh) });
+    a.update(Action::OpenConfirm { prompt: "测试提示".into(), on_yes: OnYes::discard_then(Action::Refresh) });
     for code in [KeyCode::Char('2'), KeyCode::Char('r'), KeyCode::Char('q'), KeyCode::Char('?'), KeyCode::Tab, KeyCode::Char('x')] {
         assert_eq!(a.handle_key(key(code)), None, "{code:?} 应该被确认弹窗吞掉");
     }
-    assert_eq!(a.handle_key(key(KeyCode::Char('Y'))), Some(Action::Confirmed(Box::new(Action::Refresh))), "大写 Y 也算「是」");
+    assert_eq!(a.handle_key(key(KeyCode::Char('Y'))), Some(Action::Confirmed(OnYes::discard_then(Action::Refresh))), "大写 Y 也算「是」");
 }
 
 /// Task 2: `n`/`N`/`Esc`/`⏎` 四个键都等同「否」(只关弹窗, 不执行 on_yes); ⏎ 不能被误实现成「是」的默认值。
@@ -2353,7 +2353,7 @@ fn confirm_popup_swallows_other_keys() {
 fn enter_defaults_to_no() {
     let mut a = loaded(false);
     for no_key in [KeyCode::Enter, KeyCode::Char('n'), KeyCode::Char('N'), KeyCode::Esc] {
-        a.update(Action::OpenConfirm { prompt: "测试提示".into(), on_yes: Box::new(Action::Refresh) });
+        a.update(Action::OpenConfirm { prompt: "测试提示".into(), on_yes: OnYes::discard_then(Action::Refresh) });
         assert_eq!(a.handle_key(key(no_key)), Some(Action::ClosePopup), "{no_key:?} 应该等同于「否」");
         a.update(Action::ClosePopup);
     }
@@ -2389,7 +2389,7 @@ fn every_page_help_fits_the_minimum_terminal() {
 #[test]
 fn confirm_popup_80x24() {
     let mut a = loaded(false);
-    a.update(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: Box::new(Action::Quit) });
+    a.update(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: OnYes::discard_then(Action::Quit) });
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
@@ -2553,7 +2553,7 @@ fn popup_borders_survive_wide_glyphs_underneath() {
     assert_borders_intact(&render(&mut help_app, 80, 24), help_area, "Help");
 
     let mut confirm_app = loaded(false);
-    confirm_app.update(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: Box::new(Action::Quit) });
+    confirm_app.update(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: OnYes::discard_then(Action::Quit) });
     let confirm_area = confirm::area(screen, ZH.confirm_discard);
     assert_borders_intact(&render(&mut confirm_app, 80, 24), confirm_area, "Confirm");
 
@@ -2874,7 +2874,7 @@ fn drawing_the_same_state_twice_gives_the_same_frame() {
 
     // Task 2: 确认弹窗打开的状态。
     let mut f = loaded(false);
-    f.update(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: Box::new(Action::Quit) });
+    f.update(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: OnYes::discard_then(Action::Quit) });
     let first = render(&mut f, 80, 24);
     let second = render(&mut f, 80, 24);
     assert_eq!(first, second, "确认弹窗打开的状态应该幂等");
@@ -4071,13 +4071,13 @@ fn esc_with_a_draft_asks_and_yes_returns_to_the_list() {
     a.update(Action::PickerDone { tag: PickerTag::SlotModel { sub_id: "1".into(), slot: Slot::Fable }, choice: PickerChoice::Item("m3".into()) });
 
     let action = a.handle_key(key(KeyCode::Esc));
-    assert_eq!(action, Some(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: Box::new(Action::DiscardDraft) }));
+    assert_eq!(action, Some(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: OnYes::discard_then(Action::DiscardDraft) }));
     assert!(a.update(action.unwrap()).is_empty());
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.confirm_discard), "{out}");
 
-    assert_eq!(a.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(Box::new(Action::DiscardDraft))));
-    a.update(Action::Confirmed(Box::new(Action::DiscardDraft)));
+    assert_eq!(a.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(OnYes::discard_then(Action::DiscardDraft))));
+    a.update(Action::Confirmed(OnYes::discard_then(Action::DiscardDraft)));
     let out2 = render(&mut a, 80, 24);
     assert!(out2.contains(ZH.sub_col_name), "确认放弃后应该回到列表\n{out2}");
 }
@@ -4308,7 +4308,7 @@ fn deleting_asks_first_and_lists_the_referencing_virtual_models() {
         action,
         Some(Action::OpenConfirm {
             prompt: expected_prompt,
-            on_yes: Box::new(Action::Mutate(Mutation::Delete { id: "1".into() })),
+            on_yes: OnYes::run(Action::Mutate(Mutation::Delete { id: "1".into() })),
         })
     );
     a.update(action.unwrap());
@@ -4324,11 +4324,46 @@ fn deleting_asks_first_and_lists_the_referencing_virtual_models() {
     a.update(action2);
     assert_eq!(
         a.handle_key(key(KeyCode::Char('y'))),
-        Some(Action::Confirmed(Box::new(Action::Mutate(Mutation::Delete { id: "1".into() })))),
+        Some(Action::Confirmed(OnYes::run(Action::Mutate(Mutation::Delete { id: "1".into() })))),
         "y 应该产出 Confirmed(Mutate(Delete))"
     );
-    let cmds = a.update(Action::Confirmed(Box::new(Action::Mutate(Mutation::Delete { id: "1".into() }))));
+    let cmds = a.update(Action::Confirmed(OnYes::run(Action::Mutate(Mutation::Delete { id: "1".into() }))));
     assert_eq!(cmds, vec![Cmd::Mutate(Box::new(Mutation::Delete { id: "1".into() }))], "确认后应该真的发出删除请求");
+}
+
+/// 删除确认是执行类 (`OnYes::Run`): 选「是」只发删除, 不碰当前页草稿。今天 `d` 只在列表焦点下
+/// 生效 (列表焦点 ⇒ 没有草稿), 这里绕过按键守卫直接投递确认, 模拟将来在详情焦点下也能删除的
+/// 情形——草稿必须还在。对照: 同一份草稿遇上放弃类 (`OnYes::DiscardThen`) 确认, 哪怕 `inner`
+/// 与草稿无关, 草稿也要被丢掉。
+#[test]
+fn a_delete_confirmation_keeps_the_draft_but_a_discard_confirmation_drops_it() {
+    fn app_with_draft() -> App {
+        let mut a = subs_app(false);
+        render(&mut a, 80, 24);
+        a.handle_key(key(KeyCode::Enter));
+        a.handle_key(key(KeyCode::Enter));
+        a.update(Action::PickerDone { tag: PickerTag::SlotModel { sub_id: "1".into(), slot: Slot::Fable }, choice: PickerChoice::Item("m3".into()) });
+        a
+    }
+    let asks_before_leaving = |a: &mut App| {
+        a.handle_key(key(KeyCode::Esc))
+            == Some(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: OnYes::discard_then(Action::DiscardDraft) })
+    };
+
+    let mut a = app_with_draft();
+    assert!(asks_before_leaving(&mut a), "准备: 页面应该有草稿");
+    a.update(Action::ClosePopup);
+    let delete = Mutation::Delete { id: "3".into() };
+    a.update(Action::OpenConfirm { prompt: (ZH.sub_confirm_delete)("示例中转"), on_yes: OnYes::run(Action::Mutate(delete.clone())) });
+    let yes = a.handle_key(key(KeyCode::Char('y'))).expect("确认弹窗里 y 应该产出 Action");
+    assert_eq!(a.update(yes), vec![Cmd::Mutate(Box::new(delete))], "确认后应该真的发出删除请求");
+    assert!(asks_before_leaving(&mut a), "删除确认不该丢掉草稿\n{}", render(&mut a, 80, 24));
+
+    let mut b = app_with_draft();
+    b.update(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: OnYes::discard_then(Action::Refresh) });
+    let yes = b.handle_key(key(KeyCode::Char('y'))).expect("确认弹窗里 y 应该产出 Action");
+    b.update(yes);
+    assert!(!asks_before_leaving(&mut b), "放弃类确认应该丢掉草稿\n{}", render(&mut b, 80, 24));
 }
 
 /// 没有任何虚拟模型引用的订阅 ("3" 示例中转, `detail_subs()` 里没设置 `referenced_by`, 默认空) 上
@@ -4345,7 +4380,7 @@ fn deleting_a_subscription_nothing_references_shows_a_one_line_prompt() {
         action,
         Some(Action::OpenConfirm {
             prompt: (ZH.sub_confirm_delete)("示例中转"),
-            on_yes: Box::new(Action::Mutate(Mutation::Delete { id: "3".into() })),
+            on_yes: OnYes::run(Action::Mutate(Mutation::Delete { id: "3".into() })),
         }),
         "没有引用方时 prompt 不该有第二 / 三行"
     );
@@ -4785,12 +4820,12 @@ fn mode_change_in_models_focus_can_be_saved_and_discarded_there() {
     let esc_action = b.handle_key(key(KeyCode::Esc));
     assert_eq!(
         esc_action,
-        Some(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: Box::new(Action::DiscardDraft) }),
+        Some(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: OnYes::discard_then(Action::DiscardDraft) }),
         "Models 焦点下 Esc 也该弹确认放弃"
     );
     b.update(esc_action.unwrap());
-    assert_eq!(b.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(Box::new(Action::DiscardDraft))));
-    b.update(Action::Confirmed(Box::new(Action::DiscardDraft)));
+    assert_eq!(b.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(OnYes::discard_then(Action::DiscardDraft))));
+    b.update(Action::Confirmed(OnYes::discard_then(Action::DiscardDraft)));
     let out = render(&mut b, 80, 24);
     assert!(!out.contains(" *"), "确认放弃后应该干净\n{out}");
 }
@@ -5099,13 +5134,13 @@ fn changing_the_selected_model_with_a_draft_asks_first() {
     let mut a = vm_app(false);
     a.handle_key(key(KeyCode::Char('m'))); // Models 焦点造草稿 (fable: 顺序 -> 轮询)
     let action = a.handle_key(key(KeyCode::Down));
-    assert_eq!(action, Some(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: Box::new(Action::DiscardDraft) }));
+    assert_eq!(action, Some(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: OnYes::discard_then(Action::DiscardDraft) }));
     assert!(a.update(action.unwrap()).is_empty());
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.confirm_discard), "{out}");
 
-    assert_eq!(a.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(Box::new(Action::DiscardDraft))));
-    a.update(Action::Confirmed(Box::new(Action::DiscardDraft)));
+    assert_eq!(a.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(OnYes::discard_then(Action::DiscardDraft))));
+    a.update(Action::Confirmed(OnYes::discard_then(Action::DiscardDraft)));
     let out2 = render(&mut a, 80, 24);
     assert!(!out2.contains(" *"), "{out2}");
     let fable_line = vm_list_row(&out2, "model-fable");
@@ -5119,13 +5154,13 @@ fn esc_in_members_with_a_draft_asks_and_yes_returns_to_models() {
     a.handle_key(key(KeyCode::Right));
     a.handle_key(key(KeyCode::Char('J')));
     let action = a.handle_key(key(KeyCode::Esc));
-    assert_eq!(action, Some(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: Box::new(Action::DiscardDraft) }));
+    assert_eq!(action, Some(Action::OpenConfirm { prompt: ZH.confirm_discard.into(), on_yes: OnYes::discard_then(Action::DiscardDraft) }));
     assert!(a.update(action.unwrap()).is_empty());
     let out = render(&mut a, 80, 24);
     assert!(out.contains(ZH.confirm_discard), "{out}");
 
-    assert_eq!(a.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(Box::new(Action::DiscardDraft))));
-    a.update(Action::Confirmed(Box::new(Action::DiscardDraft)));
+    assert_eq!(a.handle_key(key(KeyCode::Char('y'))), Some(Action::Confirmed(OnYes::discard_then(Action::DiscardDraft))));
+    a.update(Action::Confirmed(OnYes::discard_then(Action::DiscardDraft)));
     let out2 = render(&mut a, 80, 24);
     assert!(!out2.contains(" *"), "{out2}");
     let buf = render_buffer(&mut a, 80, 24);

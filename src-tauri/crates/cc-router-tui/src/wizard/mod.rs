@@ -33,7 +33,7 @@ use ratatui::widgets::{Block, BorderType};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 
-use crate::action::{Action, WizardCmd, WizardResult};
+use crate::action::{Action, OnYes, WizardCmd, WizardResult};
 use crate::client::dto::{CustomProtocol, ModelSlots, ProbeModelsResult, Provider, RefreshModelsResult, Slot};
 use crate::fx::Dir;
 use crate::i18n::Strings;
@@ -144,7 +144,7 @@ impl Wizard {
             }
             let created = matches!(self.stage, Stage::Slots { .. } | Stage::Basics { phase: BasicsPhase::LoadingModels { .. }, .. });
             let prompt = if created { s.wiz_confirm_exit_pending } else { s.confirm_discard };
-            return Some(Action::OpenConfirm { prompt: prompt.to_string(), on_yes: Box::new(Action::CloseWizard) });
+            return Some(Action::OpenConfirm { prompt: prompt.to_string(), on_yes: OnYes::discard_then(Action::CloseWizard) });
         }
         match &mut self.stage {
             Stage::Basics { form, phase } if *phase == BasicsPhase::Editing => form.handle_key(key, phase, &self.providers, s),
@@ -746,7 +746,7 @@ mod tests {
         basics(&mut w).draft.provider_id = "zhipu".into(); // has_input() 为真
         assert_eq!(
             w.handle_key(key(KeyCode::Esc), &Store::default(), s),
-            Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::CloseWizard) })
+            Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: OnYes::discard_then(Action::CloseWizard) })
         );
     }
 
@@ -759,7 +759,7 @@ mod tests {
         assert!(w.can_cancel(), "等模型列表时应该能取消");
         assert_eq!(
             w.handle_key(key(KeyCode::Esc), &Store::default(), s),
-            Some(Action::OpenConfirm { prompt: s.wiz_confirm_exit_pending.to_string(), on_yes: Box::new(Action::CloseWizard) })
+            Some(Action::OpenConfirm { prompt: s.wiz_confirm_exit_pending.to_string(), on_yes: OnYes::discard_then(Action::CloseWizard) })
         );
     }
 

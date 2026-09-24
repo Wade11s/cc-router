@@ -16,7 +16,7 @@ use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 
 use super::draft::Draft;
 use super::{Component, DrawCtx};
-use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation};
+use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation, OnYes};
 use crate::client::dto::{RoutingMode, VirtualModel};
 use crate::client::events::SUBSCRIPTION_CHANGES;
 use crate::format::fit;
@@ -151,7 +151,7 @@ impl VirtualModels {
     /// (换了一个虚拟模型, 成员列表光标该从头开始)。
     fn move_model_selection(&mut self, vms: &[VirtualModel], idx: usize, delta: isize, s: &'static Strings) -> Option<Action> {
         if self.is_dirty() {
-            return Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::DiscardDraft) });
+            return Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: OnYes::discard_then(Action::DiscardDraft) });
         }
         self.draft.clear();
         let next = (idx as isize + delta).clamp(0, vms.len() as isize - 1) as usize;
@@ -442,7 +442,7 @@ impl Component for VirtualModels {
                     self.save_action(s, store)
                 }
                 KeyCode::Esc if self.is_dirty() => {
-                    Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::DiscardDraft) })
+                    Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: OnYes::discard_then(Action::DiscardDraft) })
                 }
                 _ => None,
             },
@@ -536,7 +536,7 @@ impl Component for VirtualModels {
                     }
                     KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
                         if self.is_dirty() {
-                            Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: Box::new(Action::DiscardDraft) })
+                            Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: OnYes::discard_then(Action::DiscardDraft) })
                         } else {
                             self.draft.clear();
                             self.focus = VmFocus::Models;
