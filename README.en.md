@@ -272,6 +272,13 @@ Outbound is grouped into three protocol families, plus a fourth group of OAuth-b
 
 Settings → Web UI → once enabled, open `http://127.0.0.1:23456/ui/` in a browser to get exactly the same management UI as the desktop app. For other devices on your LAN, switch the proxy listen address to `0.0.0.0`; the settings page lists the reachable URLs. Sign in with the proxy access token; the “Login required” switch can be turned off (then any device on the same network can change your configuration without signing in — use with care).
 
+### Terminal UI (optional, off by default)
+
+`cc-router-tui` lets you manage the running cc-router from a terminal. Turn on “Enable terminal UI” under Settings → Security & Access → Terminal UI (local connections only; the desktop app must stay running). The same card lets you copy the full launch path; after clicking “Add to PATH”, just type `cc-router-tui` in any terminal: on macOS it creates a symlink under `/usr/local/bin` (a system authorization prompt may appear), on Windows it adds the install directory to your user PATH (reopen terminals that are already open), for the AppImage it copies a binary to `~/.local/bin` (the copy doesn't follow app updates — click again after updating), and the deb package is installed with the system and already on PATH.
+
+- **What it covers** — overview, subscriptions (enable / disable, test connection, refresh models and balance, edit slots, create, delete), virtual models, live routing and request logs; press `?` to see every key. The UI language follows the desktop app's language setting (reopen the terminal UI after changing it)
+- **Known limitations** — the terminal must be at least 80×24; some symbols are “ambiguous-width” characters that East Asian locales may render two columns wide, which misaligns the layout — if you see that, turn on your terminal's option to display ambiguous-width characters as narrow (single-width); creating OAuth subscriptions and changing API keys still happen in the desktop app
+
 ## FAQ & Use Cases
 
 <details>

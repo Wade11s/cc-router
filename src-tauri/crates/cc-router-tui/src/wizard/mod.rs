@@ -251,7 +251,7 @@ impl Wizard {
                 Stage::Custom { form, phase } if *phase == CustomPhase::Creating => {
                     match inner {
                         Ok(_created) => {
-                            self.notice = Some((ToastKind::Success, (s.wiz_created)(form.draft.display_name.value())));
+                            self.notice = Some((ToastKind::Success, (s.wiz_created)(form.draft.display_name.value().trim())));
                             self.close_request = true;
                         }
                         Err(e) => {
@@ -290,7 +290,8 @@ impl Wizard {
                     .find(|p| p.id == form.draft.provider_id)
                     .map(|p| p.model_discovery.example_models.clone())
                     .unwrap_or_default();
-                let name = form.draft.display_name.value().to_string();
+                // 与发给后端的备注名同值 (`to_create_input` 里 trim 过), 提示里不带首尾空格。
+                let name = form.draft.display_name.value().trim().to_string();
                 self.stage = Stage::Slots { id: id.clone(), name, form: SlotsForm::new(draft, examples, note), saving: false };
                 // 内置路径唯一的「换步」转场: 第一步的表单换成第二步。自定义单页没有第二步,
                 // `Loading → Basics` 是加载而不是换步, 都不该播这个动效。
@@ -834,5 +835,35 @@ mod tests {
         assert!(!w.take_close_request(), "不该关向导");
         assert!(w.take_notice().is_none(), "不该弹 toast");
         assert!(matches!(w.stage, Stage::Slots { saving: false, .. }));
+    }
+
+    /// 创建成功的提示用 trim 后的备注名——与发给后端、落库的值一致。内置路径的名字在进第二步时
+    /// 记下, 保存成功时才弹; 自定义路径创建成功即弹。两条都用首尾带空格的输入走一遍。
+    #[test]
+    fn created_notice_uses_the_trimmed_display_name() {
+        let s = &crate::i18n::ZH;
+        let expected = Some((ToastKind::Success, (s.wiz_created)("主力")));
+
+        let mut w = basics_at(BasicsPhase::LoadingModels { id: "sub-1".into() });
+        basics(&mut w).draft.display_name.set("  主力  ");
+        let models = done(WizardResult::Models {
+            id: "sub-1".into(),
+            result: Ok(RefreshModelsResult::Auto { models: vec![ModelInfo { id: "glm-4.6".into(), display_name: None }], fetched_at: 0 }),
+        });
+        w.update(&models, &Store::default(), s);
+        match &mut w.stage {
+            Stage::Slots { name, saving, .. } => {
+                assert_eq!(name, "主力");
+                *saving = true;
+            }
+            _ => panic!("应该进了 Slots 阶段"),
+        }
+        w.update(&done(WizardResult::SlotsSaved(Ok(()))), &Store::default(), s);
+        assert_eq!(w.take_notice(), expected, "内置路径");
+
+        let mut w = custom_at(CustomPhase::Creating);
+        custom(&mut w).draft.display_name.set("  主力  ");
+        w.update(&done(WizardResult::Created(Ok(CreatedSubscription { id: "sub-2".into() }))), &Store::default(), s);
+        assert_eq!(w.take_notice(), expected, "自定义路径");
     }
 }

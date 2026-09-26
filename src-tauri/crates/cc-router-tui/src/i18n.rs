@@ -1904,6 +1904,30 @@ mod tests {
         }
     }
 
+    /// `--check` 的五行状态是「标签 + 空白 + 值」两列, 值那一列必须对齐: 每种语言里五行的值都从
+    /// 同一显示列开始 (全角字符按两列算)。标签与值之间至少两个空格——以此找到值的起点。
+    #[test]
+    fn check_output_value_column_is_aligned() {
+        fn value_col(line: &str) -> usize {
+            let body = line.strip_prefix("  ").unwrap_or_else(|| panic!("缺两格缩进: {line:?}"));
+            let gap = body.find("  ").unwrap_or_else(|| panic!("标签与值之间不足两个空格: {line:?}"));
+            let value_at = 2 + gap + body[gap..].len() - body[gap..].trim_start_matches(' ').len();
+            line[..value_at].width()
+        }
+        for lang in [Lang::Zh, Lang::En, Lang::Ja] {
+            let s = strings(lang);
+            let lines = [
+                (s.cli_check_addr)("http://127.0.0.1:23456"),
+                (s.cli_check_mode)("proxy", false),
+                (s.cli_check_subs)(3, 2),
+                (s.cli_check_lang)("en"),
+                s.cli_check_events_ok.to_string(),
+            ];
+            let cols: Vec<usize> = lines.iter().map(|l| value_col(l)).collect();
+            assert!(cols.iter().all(|c| *c == cols[0]), "{lang:?}: 值列起点不一致 {cols:?}\n{lines:#?}");
+        }
+    }
+
     /// 英文固定文案的确认弹窗在句间用 `\n` 手工断好行, 每行放得下最小终端 (弹窗最宽 80 − 4, 减边框
     /// 与内距 6 = 70 列), 不依赖自动折行挑的断点。完整显示 (三种语言) 由 `tests/ui.rs` 的
     /// `fixed_confirm_prompts_are_shown_in_full_at_80x24` 在渲染结果上检查。

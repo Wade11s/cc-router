@@ -135,8 +135,8 @@ DATA = {
     # (与其它假 command 一致); 过滤条件本身只靠 `RECORDED["list_requests"]` 断言。三条分别是
     # 成功 (带 effort + 工具字段, 供详情弹窗展示「工具调用」小节) / 失败 429 (带 error_message) /
     # 超时。
-    # P5 Task 3: 新建订阅向导要用的四个 command, 这里只让它们可被调用 (契约锁在
-    # `src-tauri/src/tui_contract.rs`), 按键流程留给后续 Task 的冒烟脚本改动。
+    # 新建订阅向导用到的四个 command (契约锁在 `src-tauri/src/tui_contract.rs`); 脚本后段真的
+    # 按键走一遍向导, 并对 create_subscription / update_subscription 的请求体做断言。
     # 两个内置厂商: 一个 api_key 带两个 endpoint (给「选厂商 -> 选 endpoint」这条路径用),
     # 一个 chatgpt_oauth (没有 endpoints, 用来验证厂商选择器里的置灰判断)。
     "list_providers": [
@@ -276,17 +276,15 @@ class Handler(BaseHTTPRequestHandler):
             RECORDED["list_requests"] = req
             body = json.dumps(DATA[name]).encode()
         elif name == "create_subscription":
-            # P5 Task 3: 只让它可被调用并记下请求体; 按键流程 (真的走一遍向导) 留给后续 Task。
+            # 记下请求体供事后断言, 返回一个固定的新 id。
             req = json.loads(raw or b"{}")
             RECORDED["create_subscription"] = req
             body = json.dumps({"id": "9"}).encode()
         elif name == "delete_subscription":
-            # 同上: 只记请求体, 不真的从 DATA["list_subscriptions"] 里删——按键流程留给后续 Task。
-            # 真后端签名是 AppResult<()>, serde_json::to_value(()) 是 null, 不是 {} (评审 #2:
-            # 这里原来写的 {} 会让 Task 7 照 call_mutation 的惯例写 client.call::<()>(...) 时,
-            # 对真后端成功、对假后端报 "invalid type: map, expected unit"——与本文件第 219/233 行
-            # 注释和 runtime.rs 里 update_subscription/update_virtual_model 用 json!(null) 的既有
-            # 约定一致)。
+            # 只记请求体供事后断言 (删除时选中的是哪一条), 不真的从 DATA["list_subscriptions"] 里删。
+            # 真后端签名是 AppResult<()>, serde_json::to_value(()) 是 null, 所以这里回 null 而不是
+            # {}——客户端按 `()` 反序列化, 回 {} 会报 "invalid type: map, expected unit"
+            # (与 set_subscription_enabled / update_virtual_model 的假实现同一约定)。
             req = json.loads(raw or b"{}")
             RECORDED["delete_subscription"] = req
             body = json.dumps(None).encode()
