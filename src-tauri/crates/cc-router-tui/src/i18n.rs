@@ -1535,7 +1535,9 @@ pub const JA: Strings = Strings {
     st_quota_exhausted: "クォータ枯渇",
     st_transient_error: "一時的エラー",
     st_auth_failed: "認証情報が無効",
-    st_disabled: "無効",
+    // 与桌面端 `src/i18n/locales/ja.json` 的 `subscriptionState.disabled` 一致;「無効」是桌面端设置
+    // 页开关自身的标签, 这里显示的是订阅状态, 术语要对齐后者。
+    st_disabled: "無効化済み",
     st_unknown: "不明",
     st_quota_reached: "上限到達",
 

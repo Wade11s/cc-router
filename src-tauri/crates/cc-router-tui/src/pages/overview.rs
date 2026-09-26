@@ -49,11 +49,16 @@ fn status_col(s: &Strings) -> usize {
     (widest(state_labels(s)) + COUNTDOWN_WIDTH).max(STATUS_MIN_COL)
 }
 
-/// 限额周期名一列: 这一屏实际显示的周期名里最宽的 + 2 格间隔 (没有任何限额时按「—」一格算)。
+/// 限额周期名一列: 这一屏**配置了上限**的周期名里最宽的 + 2 格间隔 (没有任何限额时按「—」一格算)。
 /// 只量实际出现的周期: 英文「Lifetime total」比其余周期名宽一倍, 按四个一起量会让所有行的进度条
 /// 都让掉一截。
+///
+/// 按每条订阅的 `tightest_quota()`(用量比例最高的周期) 取名会让这一列随用量抖动: 同一份限额配置,
+/// 换一种用量分布就能让哪个周期"最紧"翻面, 整屏进度条跟着一起变宽变窄。改成量**每条订阅所有设了
+/// 上限的周期** (`ratio().is_some()`, 与用量无关只与是否配置了 `limit` 有关), 这一列只会随限额配置
+/// 变, 不随请求进来、用量变化而抖动。
 fn quota_label_col<'a>(s: &Strings, subs: impl IntoIterator<Item = &'a Subscription>) -> usize {
-    widest(subs.into_iter().filter_map(Subscription::tightest_quota).map(|q| s.quota_period(q.period))).max(1) + 2
+    widest(subs.into_iter().flat_map(|sub| sub.quota_usage.iter()).filter(|q| q.ratio().is_some()).map(|q| s.quota_period(q.period))).max(1) + 2
 }
 
 #[derive(Default)]

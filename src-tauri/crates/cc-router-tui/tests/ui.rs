@@ -2345,6 +2345,43 @@ fn long_subscription_list_is_truncated_with_a_count() {
     assert!(out.contains("sub-07") && !out.contains("sub-08"), "{out}");
 }
 
+/// 限额列宽必须只随「配置了哪些周期的上限」变化, 不随「哪个周期用量最紧」变化——同一份配置下,
+/// 换一种用量分布让 `tightest_quota()` 从 Daily 翻到 Total (EN 下两个名字宽度差一倍: "Daily" 5列,
+/// "Lifetime total" 14列) 不该让整屏的进度条跟着变宽变窄。
+#[test]
+fn quota_label_column_does_not_jitter_when_the_tightest_period_flips() {
+    use_lang(Lang::En);
+
+    fn find_gauge_span(row: &str) -> (usize, usize) {
+        let chars: Vec<char> = row.chars().collect();
+        let start = chars.iter().position(|c| *c == '━' || *c == '─').unwrap_or_else(|| panic!("找不到进度条\n{row}"));
+        let len = chars[start..].iter().take_while(|c| **c == '━' || **c == '─').count();
+        (start, len)
+    }
+
+    fn render_at(daily_used: u64, total_used: u64) -> String {
+        let mut a = app(false);
+        a.update(Action::Connected { app_version: VERSION.into() });
+        let mut d = data();
+        d.settings.preferred_language = "en".into();
+        let mut example = sub("1", "Example", SubscriptionState::Healthy);
+        example.quota_usage =
+            vec![quota_period(QuotaPeriod::Daily, 100, daily_used), quota_period(QuotaPeriod::Total, 1000, total_used)];
+        d.subscriptions = vec![example];
+        a.update(overview_done(1, d));
+        let buf = render_buffer(&mut a, 80, 24);
+        let y = (0..buf.area.height).find(|&y| buffer_row_text(&buf, y).contains("Example")).unwrap_or_else(|| panic!("找不到 Example 所在的行"));
+        buffer_row_text(&buf, y)
+    }
+
+    // 状态 A: daily 用量比例 (0.9) 高于 total (0.1) → tightest = Daily。
+    let row_a = render_at(90, 100);
+    // 状态 B: total 用量比例 (0.9) 高于 daily (0.1) → tightest = Total。
+    let row_b = render_at(10, 900);
+
+    assert_eq!(find_gauge_span(&row_a), find_gauge_span(&row_b), "进度条的位置/宽度不该随「哪个周期最紧」变化\nA: {row_a}\nB: {row_b}");
+}
+
 #[test]
 fn reconnect_toast_appears_then_expires() {
     let mut a = loaded(false);
