@@ -69,9 +69,14 @@ pub struct RuntimeInfo {
     pub https_port: Option<u16>,
     pub ca_pem_path: Option<String>,
     pub local_secret: String,
+    /// 桌面端 `tauri_plugin_os::locale()` 的原始标签 (如 `"zh-Hans-CN"`), 用来在「跟随系统」时
+    /// 与桌面端/托盘选出同一种语言。`#[serde(default)]`: 旧版桌面端写的 runtime.json 没有这个
+    /// 字段, 缺省即 `None` (退回环境变量探测)。
+    #[serde(default)]
+    pub system_locale: Option<String>,
 }
 
-/// 手写 Debug: 密钥不能进日志 / panic 信息。
+/// 手写 Debug: 密钥不能进日志 / panic 信息, 但 `system_locale` 不是秘密, 照常打印。
 impl std::fmt::Debug for RuntimeInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RuntimeInfo")
@@ -81,6 +86,7 @@ impl std::fmt::Debug for RuntimeInfo {
             .field("https_port", &self.https_port)
             .field("ca_pem_path", &self.ca_pem_path)
             .field("local_secret", &"<redacted>")
+            .field("system_locale", &self.system_locale)
             .finish()
     }
 }
@@ -188,5 +194,21 @@ mod tests {
         let shown = format!("{info:?}");
         assert!(!shown.contains("abc"), "{shown}");
         assert!(shown.contains("<redacted>"));
+    }
+
+    /// 旧版桌面端写的 runtime.json (P6 之前) 没有 `system_locale` 字段, 必须仍然解析成功
+    /// (缺省为 `None`), 否则升级后 TUI 会突然连不上运行中的旧 app。
+    #[test]
+    fn runtime_file_without_system_locale_still_parses() {
+        let info: RuntimeInfo = serde_json::from_str(SAMPLE).unwrap();
+        assert_eq!(info.system_locale, None);
+    }
+
+    #[test]
+    fn runtime_file_with_system_locale_parses() {
+        let raw = r#"{"pid":7,"app_version":"5.1.0","http_port":23456,"https_port":null,
+            "ca_pem_path":null,"local_secret":"abc","system_locale":"zh-Hans-CN"}"#;
+        let info: RuntimeInfo = serde_json::from_str(raw).unwrap();
+        assert_eq!(info.system_locale.as_deref(), Some("zh-Hans-CN"));
     }
 }

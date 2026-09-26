@@ -76,7 +76,7 @@ fn header_names_match() {
 
 #[test]
 fn runtime_file_is_readable_by_the_tui() {
-    let written = RuntimeFile::new(Path::new("/data"), None, Some(23457), "s3cret");
+    let written = RuntimeFile::new(Path::new("/data"), None, Some(23457), "s3cret", None);
     let read: discovery::RuntimeInfo = through_json(&written);
     assert_eq!(read.pid, written.pid);
     assert_eq!(read.app_version, written.app_version);
@@ -84,6 +84,21 @@ fn runtime_file_is_readable_by_the_tui() {
     assert_eq!(read.ca_pem_path, written.ca_pem_path);
     assert_eq!(read.local_secret, "s3cret");
     assert_eq!(read.base_url().as_deref(), Some("https://127.0.0.1:23457"));
+    assert_eq!(read.system_locale, None);
+}
+
+/// `system_locale` 的 Some / None 两种形状都能从主 crate 序列化结果里被 TUI `RuntimeInfo`
+/// 读回来——`Some` 时原样保留, `None` 时字段被省略 (`skip_serializing_if`) 但 TUI 的
+/// `#[serde(default)]` 照样把缺失字段读成 `None`, 不是解析失败。
+#[test]
+fn runtime_file_system_locale_reaches_the_tui() {
+    let with_locale = RuntimeFile::new(Path::new("/data"), Some(23456), None, "s3cret", Some("zh-Hans-CN".into()));
+    let read: discovery::RuntimeInfo = through_json(&with_locale);
+    assert_eq!(read.system_locale.as_deref(), Some("zh-Hans-CN"));
+
+    let without_locale = RuntimeFile::new(Path::new("/data"), Some(23456), None, "s3cret", None);
+    let read: discovery::RuntimeInfo = through_json(&without_locale);
+    assert_eq!(read.system_locale, None);
 }
 
 #[test]

@@ -19,6 +19,11 @@ pub struct RuntimeFile {
     pub https_port: Option<u16>,
     pub ca_pem_path: Option<String>,
     pub local_secret: String,
+    /// `tauri_plugin_os::locale()` 的原始标签 (如 `"zh-Hans-CN"`), 给 TUI 在「跟随系统」时用,
+    /// 与托盘 `tray.rs::TrayLocale::resolve` 走同一条映射规则。省略而不是写 `null`——文件里
+    /// 少一个字段比多一行 `"system_locale": null` 更容易看懂「这台机器探测不到系统语言」。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_locale: Option<String>,
 }
 
 impl std::fmt::Debug for RuntimeFile {
@@ -30,6 +35,7 @@ impl std::fmt::Debug for RuntimeFile {
             .field("https_port", &self.https_port)
             .field("ca_pem_path", &self.ca_pem_path)
             .field("local_secret", &"<redacted>")
+            .field("system_locale", &self.system_locale)
             .finish()
     }
 }
@@ -48,11 +54,14 @@ pub fn generate_secret() -> String {
 
 impl RuntimeFile {
     /// `ca_pem_path` 只在 HTTPS listener 起来时给: TUI 只有走 https 才需要信任本地 CA。
+    /// `system_locale` 是外部探测好的原始标签 (通常是 `tauri_plugin_os::locale()`), 纯函数不
+    /// 自己去读 OS——测试里到处在调它, 读 OS 会让映射规则没法在任何平台的 CI 上单测。
     pub fn new(
         app_data_dir: &Path,
         http_port: Option<u16>,
         https_port: Option<u16>,
         local_secret: &str,
+        system_locale: Option<String>,
     ) -> Self {
         Self {
             pid: std::process::id(),
@@ -62,6 +71,7 @@ impl RuntimeFile {
             ca_pem_path: https_port
                 .map(|_| crate::tls::ca_pem_path(app_data_dir).to_string_lossy().into_owned()),
             local_secret: local_secret.to_string(),
+            system_locale,
         }
     }
 }
@@ -114,9 +124,9 @@ mod tests {
     #[test]
     fn ca_path_is_present_only_when_https_listener_is_up() {
         let dir = std::path::Path::new("/data");
-        let http_only = RuntimeFile::new(dir, Some(23456), None, "s");
+        let http_only = RuntimeFile::new(dir, Some(23456), None, "s", None);
         assert_eq!(http_only.ca_pem_path, None);
-        let https = RuntimeFile::new(dir, None, Some(23457), "s");
+        let https = RuntimeFile::new(dir, None, Some(23457), "s", None);
         assert_eq!(
             https.ca_pem_path.as_deref(),
             Some(crate::tls::ca_pem_path(dir).to_string_lossy().as_ref())
@@ -129,8 +139,8 @@ mod tests {
     #[test]
     fn write_produces_parseable_json_and_overwrites() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), &RuntimeFile::new(dir.path(), Some(1), None, "first")).unwrap();
-        write(dir.path(), &RuntimeFile::new(dir.path(), Some(2), None, "second")).unwrap();
+        write(dir.path(), &RuntimeFile::new(dir.path(), Some(1), None, "first", None)).unwrap();
+        write(dir.path(), &RuntimeFile::new(dir.path(), Some(2), None, "second", None)).unwrap();
         let raw = std::fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["http_port"], 2);
@@ -146,6 +156,20 @@ mod tests {
         assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
+    /// `system_locale` 为 `None` 时整个键不出现 (探测不到系统语言, 不是「探测到了空字符串」);
+    /// 有值时原样写出, 供 TUI 直接读。
+    #[test]
+    fn system_locale_is_omitted_when_absent_and_written_when_present() {
+        let dir = std::path::Path::new("/data");
+        let without = RuntimeFile::new(dir, Some(1), None, "s", None);
+        let raw = serde_json::to_string(&without).unwrap();
+        assert!(!raw.contains("system_locale"), "{raw}");
+
+        let with = RuntimeFile::new(dir, Some(1), None, "s", Some("zh-Hans-CN".into()));
+        let v: serde_json::Value = serde_json::to_value(&with).unwrap();
+        assert_eq!(v["system_locale"], "zh-Hans-CN");
+    }
+
     #[cfg(unix)]
     #[test]
     fn file_is_owner_only_even_when_replacing_a_world_readable_one() {
@@ -156,7 +180,7 @@ mod tests {
         std::fs::write(&path, "{}").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        write(dir.path(), &RuntimeFile::new(dir.path(), Some(1), None, "s")).unwrap();
+        write(dir.path(), &RuntimeFile::new(dir.path(), Some(1), None, "s", None)).unwrap();
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "{mode:o}");
@@ -206,18 +230,26 @@ mod tests {
 
     #[test]
     fn debug_output_redacts_the_secret() {
-        let f = RuntimeFile::new(std::path::Path::new("/data"), Some(1), None, "super-secret-value");
+        let f = RuntimeFile::new(
+            std::path::Path::new("/data"),
+            Some(1),
+            None,
+            "super-secret-value",
+            Some("ja-JP".into()),
+        );
         let shown = format!("{f:?}");
         assert!(!shown.contains("super-secret-value"), "{shown}");
         assert!(shown.contains("<redacted>"), "{shown}");
         assert!(shown.contains("http_port"), "{shown}");
+        // system_locale 不是秘密, Debug 应该照常打印它的值。
+        assert!(shown.contains("ja-JP"), "{shown}");
     }
 
     #[test]
     fn write_into_a_missing_directory_errors_and_leaves_nothing_behind() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("does-not-exist");
-        let f = RuntimeFile::new(&missing, Some(1), None, "s");
+        let f = RuntimeFile::new(&missing, Some(1), None, "s", None);
         assert!(write(&missing, &f).is_err());
         assert!(!missing.exists());
     }

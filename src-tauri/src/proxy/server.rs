@@ -156,11 +156,14 @@ async fn write_runtime_file(state: &AppState) {
             return;
         }
     };
+    // 与托盘 `tray::TrayLocale::from_pref` 读的是同一个 API: 原始标签直接下发给 TUI, 映射规则
+    // (zh*/ja*/其余) 由 TUI 侧的 `Lang::resolve` 做, 这里不解析。
     let file = crate::runtime_file::RuntimeFile::new(
         &app_data_dir,
         *state.http_bound_port.read().await,
         *state.https_bound_port.read().await,
         &state.local_secret,
+        tauri_plugin_os::locale(),
     );
     // 同步小文件写入, 只在启动时发生一次, 不值得 spawn_blocking。
     match crate::runtime_file::write(&app_data_dir, &file) {

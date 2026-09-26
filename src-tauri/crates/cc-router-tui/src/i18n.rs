@@ -15,15 +15,26 @@ pub enum Lang {
 
 impl Lang {
     /// `preferred` 来自桌面端设置 (`"system"` / `"zh"` / `"en"` / `"ja"`)。
-    /// `"system"` 时按 `LC_ALL` → `LC_MESSAGES` → `LANG` 取系统语言, 映射规则与桌面端
-    /// `src/i18n/index.tsx::detectSystemLocale` / `tray.rs` 一致: `zh*` → zh, `ja*` → ja, 其余 → en。
-    pub fn resolve(preferred: &str, env: impl Fn(&str) -> Option<String>) -> Self {
+    /// `system_tag` 是 runtime.json 里桌面端下发的原始系统语言标签 (`tauri_plugin_os::locale()`
+    /// 的原样值), 只有连上桌面端才拿得到。
+    ///
+    /// 解析顺序: 显式 `zh`/`en`/`ja` 优先命中即返回; `"system"` / 空串 / **任何未知值**都跟随系统——
+    /// 与 `tray.rs::TrayLocale::resolve` 一致, 未知偏好不是 en, 而是像 `"system"` 一样继续探测。
+    /// 系统探测顺序: `system_tag` (非空) → 环境变量 `LC_ALL` → `LC_MESSAGES` → `LANG` → en。
+    /// 映射规则 (大小写不敏感) 与桌面端 `src/i18n/index.tsx::detectSystemLocale` / `tray.rs` 一致:
+    /// `zh*` → zh, `ja*` → ja, 其余 → en。
+    pub fn resolve(preferred: &str, system_tag: Option<&str>, env: impl Fn(&str) -> Option<String>) -> Self {
         let tag = match preferred {
-            "system" | "" => ["LC_ALL", "LC_MESSAGES", "LANG"]
-                .iter()
-                .find_map(|k| env(k).filter(|v| !v.is_empty()))
-                .unwrap_or_default(),
-            other => other.to_string(),
+            "zh" => return Self::Zh,
+            "en" => return Self::En,
+            "ja" => return Self::Ja,
+            // "system"、空串、以及任何未知值都走系统探测。
+            _ => system_tag.filter(|t| !t.is_empty()).map(str::to_string).unwrap_or_else(|| {
+                ["LC_ALL", "LC_MESSAGES", "LANG"]
+                    .iter()
+                    .find_map(|k| env(k).filter(|v| !v.is_empty()))
+                    .unwrap_or_default()
+            }),
         };
         let lower = tag.to_lowercase();
         if lower.starts_with("zh") {
@@ -888,23 +899,43 @@ mod tests {
 
     #[test]
     fn explicit_preference_wins_over_system() {
-        assert_eq!(Lang::resolve("ja", env(&[("LANG", "zh_CN.UTF-8")])), Lang::Ja);
-        assert_eq!(Lang::resolve("en", env(&[("LANG", "zh_CN.UTF-8")])), Lang::En);
+        assert_eq!(Lang::resolve("ja", None, env(&[("LANG", "zh_CN.UTF-8")])), Lang::Ja);
+        assert_eq!(Lang::resolve("en", Some("zh-CN"), env(&[])), Lang::En);
+    }
+
+    /// runtime.json 下发的系统标签必须先于环境变量被采信——桌面端与 TUI 进程的
+    /// 环境变量不一定一致 (比如从 Finder / 快捷方式启动), 系统标签是桌面端自己探测到的事实。
+    #[test]
+    fn system_tag_from_the_desktop_app_beats_environment() {
+        assert_eq!(Lang::resolve("system", Some("ja-JP"), env(&[("LANG", "zh_CN.UTF-8")])), Lang::Ja);
     }
 
     #[test]
-    fn system_follows_the_same_prefix_rule_as_the_desktop_app() {
-        assert_eq!(Lang::resolve("system", env(&[("LANG", "zh_CN.UTF-8")])), Lang::Zh);
-        assert_eq!(Lang::resolve("system", env(&[("LANG", "zh-Hant-TW")])), Lang::Zh);
-        assert_eq!(Lang::resolve("system", env(&[("LANG", "ja_JP.UTF-8")])), Lang::Ja);
-        assert_eq!(Lang::resolve("system", env(&[("LANG", "de_DE.UTF-8")])), Lang::En);
-        assert_eq!(Lang::resolve("system", env(&[])), Lang::En);
+    fn empty_or_missing_system_tag_falls_back_to_environment() {
+        assert_eq!(Lang::resolve("system", None, env(&[("LANG", "zh_CN.UTF-8")])), Lang::Zh);
+        assert_eq!(Lang::resolve("system", Some(""), env(&[("LANG", "ja_JP.UTF-8")])), Lang::Ja);
+        assert_eq!(Lang::resolve("system", None, env(&[])), Lang::En);
     }
 
     #[test]
     fn lc_all_beats_lang_and_empty_values_are_skipped() {
-        assert_eq!(Lang::resolve("system", env(&[("LC_ALL", "ja_JP"), ("LANG", "zh_CN")])), Lang::Ja);
-        assert_eq!(Lang::resolve("system", env(&[("LC_ALL", ""), ("LANG", "zh_CN")])), Lang::Zh);
+        assert_eq!(Lang::resolve("system", None, env(&[("LC_ALL", "ja_JP"), ("LANG", "zh_CN")])), Lang::Ja);
+        assert_eq!(Lang::resolve("system", None, env(&[("LC_ALL", ""), ("LANG", "zh_CN")])), Lang::Zh);
+    }
+
+    /// 未知偏好值 (既不是 zh/en/ja, 也不是 "system"/空串) 应该像 "system" 一样跟随系统——
+    /// 与 `tray.rs::TrayLocale::resolve` 的行为一致, 不能悄悄退化成 en。
+    #[test]
+    fn unknown_preference_follows_the_system_like_the_tray() {
+        assert_eq!(Lang::resolve("fr", Some("zh-Hans-CN"), env(&[])), Lang::Zh);
+    }
+
+    #[test]
+    fn mapping_matches_the_desktop_rule_case_insensitively() {
+        assert_eq!(Lang::resolve("system", Some("ZH-Hant"), env(&[])), Lang::Zh);
+        assert_eq!(Lang::resolve("system", Some("Ja"), env(&[])), Lang::Ja);
+        assert_eq!(Lang::resolve("system", Some("en-US"), env(&[])), Lang::En);
+        assert_eq!(Lang::resolve("system", Some("pt-BR"), env(&[])), Lang::En);
     }
 
     /// 标签栏一行放得下: 每个标签渲染成 ` N 名称 `, 之间一个分隔符, 总宽 ≤ 76 (80 列减边框与内距)。
