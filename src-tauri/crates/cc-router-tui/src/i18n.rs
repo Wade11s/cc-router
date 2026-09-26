@@ -1039,7 +1039,7 @@ pub const EN: Strings = Strings {
 
     confirm_title: "Confirm",
     confirm_keys: "y Yes   n No",
-    confirm_discard: "You have unsaved changes. Discard them?",
+    confirm_discard: "You have unsaved changes. Reset them?",
 
     picker_use_typed: |text| format!("Use \"{text}\""),
     picker_empty: "No matches",
@@ -1156,7 +1156,7 @@ pub const EN: Strings = Strings {
     sub_busy_saving: "Saving…",
     sub_busy_deleting: "Deleting…",
     sub_slot_modified: "modified",
-    sub_save_first: "Press s to save or Esc to discard your changes first",
+    sub_save_first: "Press s to save or Esc to reset your changes first",
     sub_effort_na_fallback: "The fallback slot has no reasoning effort",
     sub_effort_na_kiro: "Kiro does not support reasoning effort",
     sub_model_required: "Model cannot be empty",

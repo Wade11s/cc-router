@@ -147,7 +147,7 @@ pub fn fit(text: &str, width: usize) -> String {
 }
 
 /// 按**显示宽度**折行 (CJK 占两列)。先按 `'\n'` 拆成若干段, 每段贪心装满 `width` 列, 断行点优先
-/// 落在词边界: ASCII 空格处可断 (断在那里的那一个空格丢掉), 每个宽字符 (CJK) 前后都可断; 一个词
+/// 落在词边界: ASCII 空格处可断 (断点处的空格全部丢掉, 见 [`LineFill`]), 每个宽字符 (CJK) 前后都可断; 一个词
 /// (连续的非空格窄字符) 放不进当前行时整个挪到下一行, 比一整行还宽的词退回按字符切 (接着当前行
 /// 往下填)。空段折成一个空串; 单个字符比 `width` 还宽时单独成一行 (保证每轮至少前进一个字符,
 /// 不会死循环)。`width == 0` 时只按 `'\n'` 拆、不折——`Popup::Detail` (`widgets/detail.rs`) 的字段值
@@ -160,7 +160,7 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
             out.push(segment.to_string());
             continue;
         }
-        let mut lines = LineFill { width, line: String::new(), used: 0, out: &mut out };
+        let mut lines = LineFill { width, line: String::new(), used: 0, continuation: false, out: &mut out };
         for token in tokens(segment) {
             lines.push_token(token);
         }
@@ -200,10 +200,16 @@ fn tokens(segment: &str) -> Vec<Token<'_>> {
 }
 
 /// 往 `out` 里一行一行地填 (`wrap` 的内部状态)。
+///
+/// 空白规则: 折行处的空格 (不论连续几个) 全部丢掉——行尾的不留, 续行开头的也不带过去, 所以折行
+/// 永远不会产出空行或只有空格的行。只有段首 (文本开头或显式 `'\n'` 之后) 的空格算缩进保留, 除非
+/// 它们本身就落在了折行处。
 struct LineFill<'o> {
     width: usize,
     line: String,
     used: usize,
+    /// 当前行是折行产生的续行、且还没放进任何非空格内容: 此时来的空格直接丢。
+    continuation: bool,
     out: &'o mut Vec<String>,
 }
 
@@ -211,7 +217,9 @@ impl LineFill<'_> {
     fn push_token(&mut self, token: Token) {
         match token {
             Token::Space => {
-                if self.used + 1 > self.width {
+                if self.continuation && self.line.is_empty() {
+                    // 续行开头的空格属于上一个断点。
+                } else if self.used + 1 > self.width {
                     // 行尾恰好落在空格上: 在这里断, 这个空格不带到下一行。
                     self.break_line();
                 } else {
@@ -221,19 +229,17 @@ impl LineFill<'_> {
             Token::Wide(c) => {
                 let w = c.width().unwrap_or(0);
                 if self.used > 0 && self.used + w > self.width {
-                    self.break_at_space();
+                    self.break_line();
                 }
                 self.push_char(c, w);
             }
             Token::Word(word) => {
                 let w = word.width();
                 if self.used + w <= self.width {
-                    self.line.push_str(word);
-                    self.used += w;
+                    self.push_str(word, w);
                 } else if w <= self.width {
-                    self.break_at_space();
-                    self.line.push_str(word);
-                    self.used = w;
+                    self.break_line();
+                    self.push_str(word, w);
                 } else {
                     for c in word.chars() {
                         let cw = c.width().unwrap_or(0);
@@ -250,23 +256,34 @@ impl LineFill<'_> {
     fn push_char(&mut self, c: char, w: usize) {
         self.line.push(c);
         self.used += w;
-    }
-
-    fn break_line(&mut self) {
-        self.out.push(std::mem::take(&mut self.line));
-        self.used = 0;
-    }
-
-    /// 在紧挨着的那个空格处断行: 行尾的一个空格是断点, 丢掉它。
-    fn break_at_space(&mut self) {
-        if self.line.ends_with(' ') {
-            self.line.pop();
+        if c != ' ' {
+            self.continuation = false;
         }
-        self.break_line();
     }
 
+    fn push_str(&mut self, word: &str, w: usize) {
+        self.line.push_str(word);
+        self.used += w;
+        self.continuation = false;
+    }
+
+    /// 折行: 丢掉行尾全部空格 (它们就是断点); 丢完什么都不剩就不出这一行。
+    fn break_line(&mut self) {
+        let kept = self.line.trim_end_matches(' ').len();
+        self.line.truncate(kept);
+        if !self.line.is_empty() {
+            self.out.push(std::mem::take(&mut self.line));
+        }
+        self.used = 0;
+        self.continuation = true;
+    }
+
+    /// 段尾: 折行之后什么都没剩 (比如段尾的空格恰好落在断点) 就不出空行; 没折过行的空段由 `wrap`
+    /// 自己处理, 走不到这里。
     fn finish(self) {
-        self.out.push(self.line);
+        if !(self.continuation && self.line.is_empty()) {
+            self.out.push(self.line);
+        }
     }
 }
 
@@ -355,6 +372,27 @@ mod tests {
     fn wrap_keeps_cjk_char_breaking() {
         assert_eq!(wrap("智谱主号备用", 5), vec!["智谱", "主号", "备用"]);
         assert_eq!(wrap("已达到本分钟请求数上限", 8), vec!["已达到本", "分钟请求", "数上限"]);
+    }
+
+    /// 断点处的空格不论几个都丢掉, 不产出空行或只有空格的行。
+    #[test]
+    fn wrap_drops_every_space_at_a_break() {
+        // 断点前后各有空格。
+        assert_eq!(wrap("abcd  efgh", 4), vec!["abcd", "efgh"]);
+        assert_eq!(wrap("abc   def", 3), vec!["abc", "def"]);
+        // 段尾的空格恰好落在断点。
+        assert_eq!(wrap("abc ", 3), vec!["abc"]);
+        // 段首的空格落在断点上 (下一个词放不进这一行) 也一并丢掉。
+        assert_eq!(wrap(" abcd", 4), vec!["abcd"]);
+        assert_eq!(wrap("  abcdefghi", 10), vec!["abcdefghi"]);
+    }
+
+    /// 段首 (文本开头或 `'\n'` 之后) 没落在断点上的空格是缩进, 保留; 续行开头的空格不保留。
+    #[test]
+    fn wrap_keeps_leading_indent_but_not_on_continuation_lines() {
+        assert_eq!(wrap("  ab cd", 10), vec!["  ab cd"]);
+        assert_eq!(wrap("x\n  ab", 10), vec!["x", "  ab"]);
+        assert_eq!(wrap("  ab cd", 5), vec!["  ab", "cd"]);
     }
 
     /// 中英混排: 英文词整体挪行, 中文字之间照样可断。

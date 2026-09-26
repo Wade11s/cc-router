@@ -55,6 +55,8 @@ const EFFORT_COL: usize = 8;
 const LAST_ERROR_ROWS: u16 = 4;
 /// 「上次操作」最多占的行数, 比「最近错误」少一行——它是补充信息, 不该比主字段还显眼。
 const LAST_ACTION_ROWS: u16 = 3;
+/// 余额栏「账户不可用」一行放不下时最多折成的行数。
+const BALANCE_UNAVAILABLE_ROWS: u16 = 2;
 /// `PageUp` / `PageDown` 在第一帧画出来之前没有真实的可视行数可用, 先给个不至于原地不动的默认值。
 const DEFAULT_PAGE_ROWS: usize = 10;
 /// 删除确认弹窗里最多直接列出的引用方 (虚拟模型) 个数, 超出的部分折成
@@ -1016,7 +1018,14 @@ fn balance_rows(sub: &Subscription, theme: &Theme, s: &'static Strings, value_wi
     if snapshot.is_available == Some(false) {
         let label = if first { s.sub_f_balance } else { "" };
         first = false;
-        out.push(DetailRow::Line(field_line(s, label, vec![Span::styled(clip(s.sub_balance_unavailable, value_width), Style::new().fg(theme.err))])));
+        let style = Style::new().fg(theme.err);
+        // 放得下就是普通的一行; 放不下 (译文较长、详情栏较窄) 折成至多两行, 不截成半句。只在放不下时
+        // 才走折行: `wrapped_row` 的行数估算会多留一行, 一行放得下的文字用它会平白多出一个空行。
+        if s.sub_balance_unavailable.width() <= value_width {
+            out.push(DetailRow::Line(field_line(s, label, vec![Span::styled(s.sub_balance_unavailable, style)])));
+        } else {
+            out.push(wrapped_row(label, s.sub_balance_unavailable, value_width as u16, BALANCE_UNAVAILABLE_ROWS, style));
+        }
     }
     if snapshot.entries.is_empty() {
         if first {
