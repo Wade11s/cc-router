@@ -31,11 +31,13 @@ enum Parsed {
     Invalid(String),
 }
 
-/// 解析到一半就出错时 (缺路径 / 未知参数), 用当时已经拿到的部分 `Args` (比如更早的
-/// `--data-dir` 覆盖) 去算连接前语言——错误提示因此也能跟着 `--data-dir` 指向的那个数据目录里的
-/// `system_locale` 走, 不用等 `Args` 全部解析完。
+/// 解析出错时 (缺路径 / 未知参数) 用**默认** `Args` 去算连接前语言, 不是当时已经拿到的那部分——
+/// 与 `main()` 里给 `Parsed::Help`/`Parsed::Invalid` 追加 `cli_help` 时用的是同一个假设, 这样
+/// 「错误那句」与「后面追加的帮助文本」永远是同一种语言, 不会各算各的。目前 `strings()` 三语都
+/// 返回 `ZH`, 这条一致性还看不出差异, 但不需要等 `Args` 全部解析完这一点已经先做对了。
 fn parse_args(mut argv: impl Iterator<Item = String>) -> Parsed {
     let mut args = Args::default();
+    let lang = pre_connect_lang(&Args::default());
     while let Some(a) = argv.next() {
         match a.as_str() {
             "-h" | "--help" => return Parsed::Help,
@@ -44,9 +46,9 @@ fn parse_args(mut argv: impl Iterator<Item = String>) -> Parsed {
             "--no-fx" => args.no_fx = true,
             "--data-dir" => match argv.next() {
                 Some(p) => args.data_dir = Some(PathBuf::from(p)),
-                None => return Parsed::Invalid(strings(pre_connect_lang(&args)).cli_err_missing_data_dir_path.into()),
+                None => return Parsed::Invalid(strings(lang).cli_err_missing_data_dir_path.into()),
             },
-            other => return Parsed::Invalid((strings(pre_connect_lang(&args)).cli_err_unknown_arg)(other)),
+            other => return Parsed::Invalid((strings(lang).cli_err_unknown_arg)(other)),
         }
     }
     Parsed::Run(args)

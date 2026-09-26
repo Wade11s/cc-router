@@ -578,7 +578,7 @@ pub fn detail_spec(item: &RequestLog, store: &Store, s: &Strings) -> DetailSpec 
         });
         let mut effective = item.effective_effort.clone().unwrap_or_else(|| "—".to_string());
         if let Some(src) = &item.effort_source {
-            effective.push_str(&format!("（{}）", (s.lg_effort_source)(src)));
+            effective.push_str(&(s.lg_d_effort_source_suffix)(&(s.lg_effort_source)(src)));
         }
         rows.push(DetailRow::Field { label: s.lg_d_effort_effective.to_string(), value: effective, tone: Tone::Normal });
         let upstream = item.upstream_effort.clone().unwrap_or_else(|| s.lg_d_effort_upstream_none.to_string());

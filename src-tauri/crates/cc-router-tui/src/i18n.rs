@@ -36,7 +36,7 @@ impl Lang {
                     .unwrap_or_default()
             }),
         };
-        let lower = tag.to_lowercase();
+        let lower = tag.to_ascii_lowercase();
         if lower.starts_with("zh") {
             Self::Zh
         } else if lower.starts_with("ja") {
@@ -365,6 +365,9 @@ pub struct Strings {
     pub lg_d_effort_upstream: &'static str,
     pub lg_d_effort_upstream_none: &'static str,
     pub lg_effort_source: fn(src: &str) -> String,
+    /// 「实际生效」值后面追加的来源说明, 参数是 `lg_effort_source` 已经格式化好的那句话
+    /// (比如「订阅槽位强制」)——只负责套一层括号, 括号本身也是中文全角字符, 不能写死在调用点。
+    pub lg_d_effort_source_suffix: fn(label: &str) -> String,
     pub lg_d_stop_reason: &'static str,
     pub lg_d_tools_offered: &'static str,
     pub lg_d_tool_results: &'static str,
@@ -477,7 +480,8 @@ pub struct Strings {
     pub err_network: fn(detail: &str) -> String,
     /// `ClientError::Decode`。
     pub err_bad_response: fn(detail: &str) -> String,
-    /// `ClientError::ReadFile` (读本地 CA 证书失败)。
+    /// `ClientError::ReadFile` (读本地 CA 证书失败)。`client_error` 会把它的结果再套一层
+    /// `err_network`——用户看到的原文是「网络错误: 读取 …」, 这个字段只管后半句。
     pub err_read_file: fn(path: &str, detail: &str) -> String,
     /// `DiscoveryError::MissingEnv`。
     pub err_data_dir_env: fn(var: &str) -> String,
@@ -562,7 +566,11 @@ pub fn client_error(s: &Strings, e: &crate::client::ClientError) -> String {
         ClientError::Api { status, code, message } => format!("{message} ({code}, HTTP {status})"),
         ClientError::Transport(detail) => (s.err_network)(detail),
         ClientError::Decode(detail) => (s.err_bad_response)(detail),
-        ClientError::ReadFile { path, message } => (s.err_read_file)(path, message),
+        // 改前 (7a570bc 之前) 这类失败是手写 `ClientError::Transport(format!("读取 {path}: {e}"))`,
+        // Display 再套一层「网络错误: {0}」——嵌两层格式化出「网络错误: 读取 {path}: {e}」。拆成
+        // `ReadFile` 独立变体是为了能按语言重新格式化, 但用户看到的文字必须保持这句原文不变,
+        // 所以这里手动把 `err_read_file` 的结果再套一层 `err_network`, 还原原来的嵌套。
+        ClientError::ReadFile { path, message } => (s.err_network)(&(s.err_read_file)(path, message)),
     }
 }
 
@@ -875,6 +883,7 @@ pub const ZH: Strings = Strings {
         "yaml" => "provider 默认".to_string(),
         other => other.to_string(),
     },
+    lg_d_effort_source_suffix: |label| format!("（{label}）"),
     lg_d_stop_reason: "结束原因",
     lg_d_tools_offered: "声明工具数",
     lg_d_tool_results: "回传结果数",
@@ -1057,49 +1066,257 @@ mod tests {
         )
     }
 
-    /// 去掉 `//` 行注释 (含 `///` / `//!` 文档注释), 但尊重字符串字面量——不能把
-    /// `"http://127.0.0.1:{p}"` 这类内容里的 `//` 误判成注释开始, 否则会漏扫真正的字符串内容。
-    /// 不处理块注释 / 字符字面量: 本仓库当前在「首个 `#[cfg(test)]` 之前」的范围内没有块注释,
-    /// 也没有含 CJK 的字符字面量, 简单实现就够用——扫描红了才需要重新考虑这条取舍。
-    fn strip_line_comments(src: &str) -> String {
-        let mut out = String::with_capacity(src.len());
-        let mut chars = src.chars().peekable();
-        let mut in_string = false;
-        while let Some(c) = chars.next() {
-            if in_string {
-                out.push(c);
-                if c == '\\' {
-                    if let Some(next) = chars.next() {
-                        out.push(next);
-                    }
-                } else if c == '"' {
-                    in_string = false;
-                }
-                continue;
-            }
-            if c == '"' {
-                in_string = true;
-                out.push(c);
-                continue;
-            }
-            if c == '/' && chars.peek() == Some(&'/') {
-                while let Some(&nc) = chars.peek() {
-                    if nc == '\n' {
-                        break;
-                    }
-                    chars.next();
-                }
-                continue;
-            }
-            out.push(c);
+    /// 给整份源码打一对逐字符布尔掩码。`not_comment[i]`: 这个字符不在 `//`/`///`/`//!` 行注释
+    /// 或 `/* */` 块注释 (支持嵌套) 里——字符串字面量的内容仍然算「不在注释里」, 因为扫描的目标
+    /// 正是字符串字面量本身, 不能连它一起剥掉。`bare_code[i]`: 这个字符既不在注释里也不在字符串
+    /// 字面量里——只给下面 `test_mod_ranges` 的花括号配对用, 字符串内容里出现的 `{`/`}`
+    /// (比如断言里的 JSON 文本) 不能被当成语法花括号去配对。
+    ///
+    /// **已知简化 (不处理字符字面量 `'x'` 与原始字符串 `r"..."`/`r#"..."#`)**: 本仓库当前
+    /// 「production 代码」范围内没有含花括号的字符字面量、也没有含 CJK 的原始字符串——这条简化
+    /// 目前不影响结果。字符字面量与生命周期标注 (`'a`) 用同一个 `'` 前缀, 稳妥地区分两者需要
+    /// 更多上下文, 不值得为了这条扫描测试引入; 如果哪天真的漏报/误报, 应该先来修这里, 不是绕过它。
+    fn code_masks(chars: &[char]) -> (Vec<bool>, Vec<bool>) {
+        #[derive(Clone, Copy)]
+        enum State {
+            Normal,
+            LineComment,
+            BlockComment(u32),
+            Str,
         }
-        out
+        let mut not_comment = vec![true; chars.len()];
+        let mut bare_code = vec![true; chars.len()];
+        let mut state = State::Normal;
+        let mut i = 0;
+        while i < chars.len() {
+            state = match state {
+                State::Normal => {
+                    if chars[i] == '"' {
+                        bare_code[i] = false;
+                        i += 1;
+                        State::Str
+                    } else if chars[i] == '/' && chars.get(i + 1) == Some(&'/') {
+                        not_comment[i] = false;
+                        bare_code[i] = false;
+                        i += 1;
+                        State::LineComment
+                    } else if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                        not_comment[i] = false;
+                        bare_code[i] = false;
+                        not_comment[i + 1] = false;
+                        bare_code[i + 1] = false;
+                        i += 2;
+                        State::BlockComment(1)
+                    } else {
+                        i += 1;
+                        State::Normal
+                    }
+                }
+                State::LineComment => {
+                    not_comment[i] = false;
+                    bare_code[i] = false;
+                    let at_newline = chars[i] == '\n';
+                    i += 1;
+                    if at_newline { State::Normal } else { State::LineComment }
+                }
+                State::BlockComment(depth) => {
+                    not_comment[i] = false;
+                    bare_code[i] = false;
+                    if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                        not_comment[i + 1] = false;
+                        bare_code[i + 1] = false;
+                        i += 2;
+                        State::BlockComment(depth + 1)
+                    } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                        not_comment[i + 1] = false;
+                        bare_code[i + 1] = false;
+                        i += 2;
+                        if depth == 1 { State::Normal } else { State::BlockComment(depth - 1) }
+                    } else {
+                        i += 1;
+                        State::BlockComment(depth)
+                    }
+                }
+                State::Str => {
+                    bare_code[i] = false;
+                    if chars[i] == '\\' && i + 1 < chars.len() {
+                        bare_code[i + 1] = false;
+                        i += 2;
+                        State::Str
+                    } else if chars[i] == '"' {
+                        i += 1;
+                        State::Normal
+                    } else {
+                        i += 1;
+                        State::Str
+                    }
+                }
+            };
+        }
+        (not_comment, bare_code)
+    }
+
+    /// 找出所有 `#[cfg(test)] [<可见性>] mod <ident> { ... }` 的整块范围 (半开区间
+    /// `[start, end)`, `start` 是属性开头、`end` 是配对花括号之后一个字符), 花括号配对只数
+    /// `bare_code` 为真的花括号。`<可见性>` 是可选的 `pub`/`pub(crate)`/`pub(super)`/
+    /// `pub(in ...)`——`client/mod.rs` 的测试专用假后端就写成 `#[cfg(test)] pub(crate) mod
+    /// test_support {`, 不认这个前缀会把它误判成生产代码。单个 `#[cfg(test)]` 挂在非 `mod` 项上
+    /// (比如一个只在测试里用的小助手函数) 不处理——那种地方按裸代码扫描是刻意接受的简化 (见
+    /// `no_cjk_string_literals_outside_i18n` 的文档), 真被抓到就直接挪进 `Strings`, 不值得为了
+    /// 跳过它再实现一遍「找下一个语义单元的边界」。
+    fn test_mod_ranges(chars: &[char], bare_code: &[bool]) -> Vec<(usize, usize)> {
+        fn matches(chars: &[char], bare_code: &[bool], at: usize, needle: &[char]) -> bool {
+            at + needle.len() <= chars.len() && (0..needle.len()).all(|k| bare_code[at + k] && chars[at + k] == needle[k])
+        }
+        fn skip_ws(chars: &[char], bare_code: &[bool], mut j: usize) -> usize {
+            while j < chars.len() && bare_code[j] && chars[j].is_whitespace() {
+                j += 1;
+            }
+            j
+        }
+        /// `pub`/`pub(...)` 可见性修饰符 (若存在) 之后的位置; 不存在原样返回 `j`。
+        fn skip_optional_visibility(chars: &[char], bare_code: &[bool], j: usize) -> usize {
+            let kw_pub: Vec<char> = "pub".chars().collect();
+            if !matches(chars, bare_code, j, &kw_pub) {
+                return j;
+            }
+            let after_pub = j + kw_pub.len();
+            // `pub` 后紧跟标识符字符 (比如 `public_thing`) 说明这是另一个词, 不是可见性修饰符。
+            if after_pub < chars.len() && bare_code[after_pub] && (chars[after_pub].is_alphanumeric() || chars[after_pub] == '_') {
+                return j;
+            }
+            let after_ws = skip_ws(chars, bare_code, after_pub);
+            if after_ws < chars.len() && bare_code[after_ws] && chars[after_ws] == '(' {
+                let mut depth = 1i32;
+                let mut p = after_ws + 1;
+                while p < chars.len() && depth > 0 {
+                    if bare_code[p] {
+                        if chars[p] == '(' {
+                            depth += 1;
+                        } else if chars[p] == ')' {
+                            depth -= 1;
+                        }
+                    }
+                    p += 1;
+                }
+                return p;
+            }
+            after_ws
+        }
+
+        let attr: Vec<char> = "#[cfg(test)]".chars().collect();
+        let kw_mod: Vec<char> = "mod".chars().collect();
+        let mut ranges = Vec::new();
+        let mut i = 0;
+        while i < chars.len() {
+            if matches(chars, bare_code, i, &attr) {
+                let start = i;
+                let mut j = skip_ws(chars, bare_code, i + attr.len());
+                j = skip_optional_visibility(chars, bare_code, j);
+                j = skip_ws(chars, bare_code, j);
+                if matches(chars, bare_code, j, &kw_mod) {
+                    j = skip_ws(chars, bare_code, j + kw_mod.len());
+                    let ident_start = j;
+                    while j < chars.len() && bare_code[j] && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                        j += 1;
+                    }
+                    if j > ident_start {
+                        j = skip_ws(chars, bare_code, j);
+                        if j < chars.len() && bare_code[j] && chars[j] == '{' {
+                            let mut depth = 1u32;
+                            let mut p = j + 1;
+                            while p < chars.len() && depth > 0 {
+                                if bare_code[p] {
+                                    if chars[p] == '{' {
+                                        depth += 1;
+                                    } else if chars[p] == '}' {
+                                        depth -= 1;
+                                    }
+                                }
+                                p += 1;
+                            }
+                            if depth == 0 {
+                                ranges.push((start, p));
+                                i = p;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+        ranges
+    }
+
+    /// 扫一份源码, 返回含 CJK 字符的字符串字面量所在的行号 (1 起, 去重到每行至多一条)。跳过
+    /// `#[cfg(test)] mod <ident> { ... }` 整块 (见 [`test_mod_ranges`]) 与全部注释, 字符串字面量
+    /// 内容本身 (包括 `"http://127.0.0.1:{p}"` 这类含 `//` 的内容) 照常扫描。
+    fn cjk_offenders(source: &str) -> Vec<usize> {
+        let chars: Vec<char> = source.chars().collect();
+        let (not_comment, bare_code) = code_masks(&chars);
+        let excluded = test_mod_ranges(&chars, &bare_code);
+        let in_excluded = |i: usize| excluded.iter().any(|&(s, e)| i >= s && i < e);
+
+        let mut offenders = Vec::new();
+        let mut line = 1usize;
+        for (i, &c) in chars.iter().enumerate() {
+            if c == '\n' {
+                line += 1;
+                continue;
+            }
+            if not_comment[i] && !in_excluded(i) && is_cjk(c) && offenders.last() != Some(&line) {
+                offenders.push(line);
+            }
+        }
+        offenders
+    }
+
+    /// **证明「只挖 `mod tests {}` 这一整块, 不是切到第一个 `#[cfg(test)]` 就不再看了」**:
+    /// 单个 `#[cfg(test)]` 挂在小助手函数上 (不是 `mod`) 之后的生产代码仍然要被扫到——这正是
+    /// 「找第一个 `#[cfg(test)]` 就截断」的旧实现会漏掉的场景 (`wizard/text.rs`/`app.rs` 等文件
+    /// 前段就有这种孤立的 `#[cfg(test)]` 小函数, 之后还有几百行真正的生产代码)。
+    #[test]
+    fn cjk_after_an_early_cfg_test_helper_is_still_reported() {
+        let src = "#[cfg(test)]\nfn helper() {}\n\nfn real() {\n    let x = \"中文\";\n}\n";
+        assert_eq!(cjk_offenders(src), vec![5]);
+    }
+
+    /// `#[cfg(test)] mod tests { .. }` 整块 (含花括号跨行、块内随便写中文断言) 不应该被扫到。
+    #[test]
+    fn cjk_inside_the_test_mod_block_is_not_reported() {
+        let src = "fn real() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        let x = \"中文\";\n        assert_eq!(x, \"中文\");\n    }\n}\n";
+        assert_eq!(cjk_offenders(src), Vec::<usize>::new());
+    }
+
+    /// `#[cfg(test)] pub(crate) mod test_support { .. }`(`client/mod.rs` 假后端的真实写法)
+    /// 中间那个可见性修饰符不能让匹配失败——回归用例, 改前的版本会把这种模块错判成生产代码。
+    #[test]
+    fn cjk_inside_a_pub_crate_cfg_test_mod_is_not_reported() {
+        let src = "fn real() {}\n\n#[cfg(test)]\npub(crate) mod test_support {\n    fn helper() {\n        let x = \"绑定本地端口失败\";\n    }\n}\n";
+        assert_eq!(cjk_offenders(src), Vec::<usize>::new());
+    }
+
+    /// `mod tests {}` 之后如果又出现生产代码 (不能假设「测试模块永远是文件最后一段」), 仍然要
+    /// 被扫到——确认排除的是「这一块本身的范围」, 不是「从这里到文件结尾」。
+    #[test]
+    fn cjk_after_a_test_mod_block_is_still_reported() {
+        let src = "#[cfg(test)]\nmod tests {\n    fn t() { let x = \"中文\"; }\n}\n\nfn real() {\n    let y = \"中文\";\n}\n";
+        assert_eq!(cjk_offenders(src), vec![7]);
+    }
+
+    /// 字符串字面量里的 `//` (比如 URL) 不能被误判成注释开始 (否则会漏扫真正的字符串内容);
+    /// 反过来注释里的中文不该被扫到。两条放一个测试里, 互相印证掩码逻辑没有做反。
+    #[test]
+    fn urls_in_strings_are_not_mistaken_for_comments_and_comments_are_ignored() {
+        let src = "fn real() {\n    // 注释里的中文\n    let url = \"http://例子\";\n}\n";
+        assert_eq!(cjk_offenders(src), vec![3]);
     }
 
     /// **锁住 P6 的收编成果**: `i18n.rs` 之外的非测试代码不许再冒出 CJK 字符串字面量——所有
-    /// 用户可见文字都必须经 `Strings`。只看每个文件「第一个 `#[cfg(test)]` 之前」的部分 (测试里
-    /// 用中文断言 / mock 数据是正常的, 不受这条约束); 忽略 `//` 注释 (含文档注释)。读文件失败也算
-    /// 失败 (fail-closed), 不能让扫描本身的问题被静默放过。
+    /// 用户可见文字都必须经 `Strings`。「非测试代码」精确到 `#[cfg(test)] mod <ident> { ... }`
+    /// 这一整块本身 (见 [`cjk_offenders`]), 不是「文件里第一次出现 `#[cfg(test)]` 之前」。
+    /// 读文件失败也算失败 (fail-closed), 不能让扫描本身的问题被静默放过。
     #[test]
     fn no_cjk_string_literals_outside_i18n() {
         fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -1124,13 +1341,9 @@ mod tests {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不了 {path:?}: {e}"));
-            let before_tests = text.split("#[cfg(test)]").next().unwrap_or(&text);
-            let stripped = strip_line_comments(before_tests);
-            for (i, line) in stripped.split('\n').enumerate() {
-                if line.chars().any(is_cjk) {
-                    let rel = path.strip_prefix(&src_dir).unwrap_or(&path);
-                    offenders.push(format!("{}:{}", rel.display(), i + 1));
-                }
+            let rel = path.strip_prefix(&src_dir).unwrap_or(&path).to_path_buf();
+            for line in cjk_offenders(&text) {
+                offenders.push(format!("{}:{}", rel.display(), line));
             }
         }
         assert!(offenders.is_empty(), "非 i18n.rs 的非测试代码里发现含 CJK 字符的字符串字面量: {offenders:?}");
@@ -1149,8 +1362,10 @@ mod tests {
         assert_eq!(client_error(&ZH, &ClientError::Transport("x".into())), "网络错误: x");
         assert_eq!(client_error(&ZH, &ClientError::Decode("x".into())), "响应无法解析: x");
         assert_eq!(
+            // 改前 (7a570bc) 是 `ClientError::Transport(format!("读取 {path}: {e}"))`, Display 套一层
+            // 「网络错误: {0}」——这句「网络错误: 读取 …」的原文必须保持逐字节不变。
             client_error(&ZH, &ClientError::ReadFile { path: "/a/b".into(), message: "denied".into() }),
-            "读取 /a/b: denied"
+            "网络错误: 读取 /a/b: denied"
         );
         assert_eq!(
             client_error(&ZH, &ClientError::Api { status: 400, code: "bad_request".into(), message: "无效 id".into() }),
