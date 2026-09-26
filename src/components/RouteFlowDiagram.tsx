@@ -9,7 +9,7 @@ import { fmtCooldownLeft } from "@/lib/format";
 import { isCustomProviderId } from "@/lib/providerLabels";
 import { VM_ORDER } from "@/lib/virtualModels";
 import { useT, type TFunction } from "@/i18n";
-import logoUrl from "@/assets/logo.png";
+import { LogoMark } from "@/components/sketch/LogoMark";
 import type { SubscriptionDto, VirtualModelDto } from "@/types";
 
 /* ============================================================
@@ -243,7 +243,7 @@ export function RouteFlowDiagram() {
           ))}
 
           <div className={running ? "rf-hub" : "rf-hub off"}>
-            <img src={logoUrl} alt="cc-router" />
+            <LogoMark size={80} tile label="cc-router" />
           </div>
           <div className="rf-hub-label">cc-router</div>
 

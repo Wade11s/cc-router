@@ -1,7 +1,7 @@
 import { WindowChrome } from "@/components/layout/WindowChrome";
 import { useNavigate } from "react-router";
 import { TriangleAlert } from "lucide-react";
-import logoUrl from "@/assets/logo.png";
+import { LogoMark } from "@/components/sketch/LogoMark";
 import { useT } from "@/i18n";
 import { runtime } from "@/runtime";
 
@@ -25,9 +25,7 @@ export function OnboardingDisclaimerPage() {
       {/* 无壳的全屏页: 同样铺拖窗带, 否则 Windows / Linux 上无法拖动与关闭 */}
       {runtime.kind === "desktop" && <WindowChrome />}
       <div className="card onboarding-disclaimer">
-        <div className="onboarding-disclaimer-mark">
-          <img src={logoUrl} alt="cc-router" />
-        </div>
+        <LogoMark size={72} tile label="cc-router" className="onboarding-disclaimer-mark" />
         <h1 className="onboarding-disclaimer-title">
           <TriangleAlert size={18} />
           {t("onboarding.disclaimer.title")}

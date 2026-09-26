@@ -96,37 +96,75 @@
 @layer utilities {
 
 /* ============================================================
- * cc-router 视觉系统 (operator's console)
- * 暖中性灰 + 单一强调色(铁锈橙) + 紧凑密度
- * 参考: claude.ai/design 设计稿 cc-router.html
+ * cc-router 视觉系统 —「手绘速写本」
+ * 与官网 ccrouter.app 同一套语言, 改样式前先认清三个母题:
+ * 1) 墨线: 容器边框用 --stroke 深色实线 (1.5–2px), 不再用浅灰细线;
+ * 2) 错位色块: 投影是硬边 offset (box-shadow 无模糊), 插画填色也整体偏移几像素,
+ *    像套印没对准的版画 —— 所以 --shadow-card 不是柔光阴影;
+ * 3) 手写标注: --font-hand 只用于编号、角标、批注这类短句, 正文永远是 --font-sans。
+ * 不规则圆角 (--r-sketch*) 是八值椭圆角被浏览器按比例压缩后的效果, 任意尺寸都成立。
  * ============================================================ */
 
 :root {
-  /* Warm neutral grey scale */
-  --bg:        #f6f5f2;
-  --surface:   #ffffff;
-  --surface-2: #fbfaf7;
-  --surface-3: #f1efea;
-  --line:      #e6e3dc;
-  --line-2:    #d8d4cb;
-  --ink:       #1a1916;
-  --ink-2:     #3a3833;
-  --ink-3:     #6b6962;
-  --ink-4:     #9a978f;
-  --ink-5:     #bdbab2;
+  /* 象牙纸 + 墨色 */
+  --bg:        #FAF9F5;
+  --surface:   #FFFFFF;
+  --surface-2: #F5F3EC;
+  --surface-3: #F0EEE6;
+  --line:      #E3DFD5;
+  --line-2:    #C9C5BA;
+  --ink:       #141413;
+  --ink-2:     #3D3D3A;
+  --ink-3:     #5E5D59;
+  --ink-4:     #87867F;
+  --ink-5:     #B5B3AA;
+  --stroke:    #141413;
 
-  /* Single accent — Claude 铁锈橙 (rust) */
-  --accent:      oklch(0.63 0.14 42);
-  --accent-ink:  oklch(0.42 0.12 42);
-  --accent-bg:   oklch(0.96 0.03 42);
-  --accent-line: oklch(0.85 0.07 42);
+  /* 陶土色; 压在象牙底上只有 ~3:1, 小字一律用加深的 --accent-ink */
+  --accent:      #D97757;
+  --accent-ink:  #A94F32;
+  --accent-bg:   #F8E9E1;
+  --accent-line: #EBC0AC;
 
   /* Status */
-  --ok:    oklch(0.62 0.13 150);
-  --ok-bg: oklch(0.95 0.04 150);
-  --warn:  oklch(0.70 0.15 75);
-  --err:   oklch(0.58 0.18 28);
-  --err-bg: oklch(0.96 0.03 28);
+  --ok:    #4F7A42;
+  --ok-bg: #E6EEE1;
+  --warn:  #9A7020;
+  --err:   #B84A30;
+  --err-bg: #F8E6E0;
+
+  /* 插画与色块用的柔和色 (与官网 global.css 一致) */
+  --fill-oat:       #E3DACC;
+  --fill-cactus:    #BCD1CA;
+  --fill-heather:   #CBCADB;
+  --fill-coral:     #EBCECE;
+  --fill-butter:    #F2D59B;
+  --fill-sky:       #C8DAEB;
+  --fill-clay-deep: #C9694A;
+  --fill-nose:      #F0A48A;
+  --fill-stone:     #CFCCC2;
+  --blob:           #EDE6DA;
+  --grid:           rgba(20, 20, 19, 0.06);
+
+  /* 硬边错位投影 */
+  --shadow-card: 5px 5px 0 var(--fill-oat);
+  --shadow-pop:  8px 8px 0 var(--fill-oat);
+  --shadow-ink:  3px 3px 0 var(--stroke);
+
+  /* 手绘不规则圆角 */
+  --r-sketch:     255px 15px 225px 15px / 15px 225px 15px 255px;
+  --r-sketch-alt: 15px 225px 15px 255px / 255px 15px 225px 15px;
+  /* 大容器 (卡片/弹窗) 用温和版: 八个角各不相同但边是直的, 内容不会被弧线吃掉;
+   * 官网那种夸张弧边只留给按钮、标签这类小件 (被压缩后正好好看) */
+  --r-card:       16px 28px 18px 24px / 26px 16px 30px 18px;
+  --r-card-alt:   26px 16px 28px 18px / 16px 28px 18px 26px;
+  --r-blob:       50% 44% 52% 46% / 46% 52% 44% 50%;
+
+  /* 手画波浪线 (横 / 竖), 作 mask 用, 线色由 background 决定 */
+  --squiggle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='10' viewBox='0 0 240 10'%3E%3Cpath d='M0 5 C 40 1, 80 9, 120 5 S 200 9, 240 5' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  /* 标题下两道陶土色笔触 (拉伸铺满, 所以 preserveAspectRatio=none) */
+  --underline-strokes: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 14' preserveAspectRatio='none'%3E%3Cpath d='M3 7 C 40 3, 100 10, 156 5' fill='none' stroke='%23000' stroke-width='4.5' stroke-linecap='round'/%3E%3Cpath d='M14 12 C 55 9, 108 13, 148 10' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E");
+  --squiggle-v: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='120' viewBox='0 0 10 120'%3E%3Cpath d='M5 0 C 1 15, 9 45, 5 60 C 1 75, 9 105, 5 120' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
 
   --r-sm: 6px;
   --r-md: 10px;
@@ -187,35 +225,37 @@
    * 让仍在用 Tailwind utility 的页面(Onboarding / SubscriptionEdit / 共享 ui/*)
    * 继续看到一致的暖灰色调,而非旧的冷蓝。
    */
-  --background: 40 23% 96%;     /* ≈ #f6f5f2 */
-  --foreground: 40 6% 9%;        /* ≈ #1a1916 */
+  --background: 48 33% 97%;     /* ≈ #FAF9F5 */
+  --foreground: 60 3% 8%;        /* ≈ #141413 */
   --card: 0 0% 100%;
-  --card-foreground: 40 6% 9%;
+  --card-foreground: 60 3% 8%;
   --popover: 0 0% 100%;
-  --popover-foreground: 40 6% 9%;
-  --primary: 40 6% 9%;           /* ≈ ink */
+  --popover-foreground: 60 3% 8%;
+  --primary: 60 3% 8%;           /* ≈ ink */
   --primary-foreground: 0 0% 100%;
-  --secondary: 40 14% 93%;
-  --secondary-foreground: 40 6% 9%;
-  --muted: 40 14% 93%;
-  --muted-foreground: 40 4% 42%;
-  --accent-foreground: 40 6% 9%;
-  --destructive: 18 70% 50%;
+  --secondary: 48 23% 92%;
+  --secondary-foreground: 60 3% 8%;
+  --muted: 48 23% 92%;
+  --muted-foreground: 48 3% 36%;
+  --accent-foreground: 60 3% 8%;
+  --destructive: 11 59% 45%;
   --destructive-foreground: 0 0% 100%;
-  --border: 40 14% 88%;
-  --input: 40 14% 84%;
-  --ring: 40 6% 9%;
+  --border: 43 20% 86%;
+  --input: 44 11% 76%;
+  --ring: 60 3% 8%;
   --radius: 0.5rem;
 
   /* status- 颜色保持 tailwind config 里的语义 */
 
-  /* === Font stacks (system-only, no bundled webfonts) ===
+  /* === Font stacks ===
    * 分两段: 前段负责拉丁字母与数字, 后段负责汉字与全角标点。
    * 靠浏览器的逐字符 fallback 自动分工 —— 汉字在前段字体里没有字形,
    * 会自动落到后段的中文字体, 因此中西文能各用各的最优字形。
-   * CSP 的 font-src 'self' data: 禁止外链, 这里只用系统自带字体。 */
+   * 打头的四款拉丁 webfont (与官网一致) 由 src/fonts.ts 随包打入, 只含 latin 子集;
+   * 汉字全部走系统字体, 不打包 CJK webfont (体积太大)。 */
   --font-sans:
     /* 拉丁 / 数字 / UI 主字形 */
+    "Instrument Sans",
     -apple-system, BlinkMacSystemFont,                /* macOS: SF Pro */
     "Segoe UI Variable Text", "Segoe UI",             /* Win11 小字号光学优化版 → Win10 回退 */
     Inter, Roboto, "Helvetica Neue", Arial,           /* Linux 常见 / 通用兜底 */
@@ -225,42 +265,66 @@
     "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", /* Linux */
     system-ui, sans-serif;
   --font-mono:
+    "JetBrains Mono",
     ui-monospace, SFMono-Regular, "SF Mono", Menlo,   /* macOS */
     "Cascadia Mono", "Cascadia Code", Consolas,       /* Win11 → Win10 */
     "DejaVu Sans Mono", "Liberation Mono",            /* Linux */
     "Source Han Mono SC", monospace;
+  /* 页面标题: 衬线; 汉字落到系统宋体 */
+  --font-display:
+    Newsreader, Georgia,
+    "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun",
+    serif;
+  /* 手写批注: 拉丁用 Caveat, 汉字落到系统楷体 (官网用的龙藏体不打包) */
+  --font-hand:
+    Caveat,
+    "Kaiti SC", "STKaiti", "KaiTi", "AR PL UKai CN",
+    cursive;
 }
 
 /* ============================================================
- * Dark mode: 高对比冷调深色 (蓝灰底)
- * 所有变量集中在此, 后续可按需微调
+ * Dark mode: 夜间速写本 —— 深色纸 + 米白墨线, 柔和色整体压暗,
+ * 错位色块的逻辑不变 (与官网 html[data-theme=dark] 同一套值)
  * ============================================================ */
 .dark {
   /* Core grey scale */
-  --bg:        #0b0b0e;
-  --surface:   #16161a;
-  --surface-2: #121216;
-  --surface-3: #1e1e24;
-  --line:      #262630;
-  --line-2:    #32323e;
-  --ink:       #e8e8ec;
-  --ink-2:     #c8c8d0;
-  --ink-3:     #92929e;
-  --ink-4:     #6a6a76;
-  --ink-5:     #4e4e5a;
+  --bg:        #1F1E1D;
+  --surface:   #262624;
+  --surface-2: #232220;
+  --surface-3: #2A2825;
+  --line:      #3A3834;
+  --line-2:    #55524C;
+  --ink:       #F0EEE6;
+  --ink-2:     #D1CFC5;
+  --ink-3:     #A8A69D;
+  --ink-4:     #87867F;
+  --ink-5:     #5E5D59;
+  --stroke:    #E8E6DC;
 
-  /* Accent — 铁锈橙 (暗色下提亮) */
-  --accent:      oklch(0.67 0.15 42);
-  --accent-ink:  oklch(0.78 0.08 42);
-  --accent-bg:   oklch(0.18 0.04 42);
-  --accent-line: oklch(0.28 0.08 42);
+  /* Accent — 陶土色 (暗色下提亮) */
+  --accent:      #E08B6E;
+  --accent-ink:  #EFA489;
+  --accent-bg:   #3A2A24;
+  --accent-line: #6E4535;
 
   /* Status */
-  --ok:     oklch(0.68 0.15 150);
-  --ok-bg:  oklch(0.17 0.05 150);
-  --warn:   oklch(0.75 0.16 75);
-  --err:    oklch(0.62 0.20 28);
-  --err-bg: oklch(0.18 0.06 28);
+  --ok:     #8DB57C;
+  --ok-bg:  #27322A;
+  --warn:   #D6AE5C;
+  --err:    #E8836A;
+  --err-bg: #3A2522;
+
+  --fill-oat:       #3A3630;
+  --fill-cactus:    #34463F;
+  --fill-heather:   #3A3A4C;
+  --fill-coral:     #4A3634;
+  --fill-butter:    #4E4430;
+  --fill-sky:       #2F4050;
+  --fill-clay-deep: #B85E41;
+  --fill-nose:      #B8735E;
+  --fill-stone:     #5E5D59;
+  --blob:           #2E2B28;
+  --grid:           rgba(240, 238, 230, 0.05);
 
   /* 路由图派生色 — 暗色版: 线色压暗(当描边用)、文字/流动色提亮、底色压到近黑 */
   --rf-client-line: oklch(0.42 0.09 150);
@@ -290,24 +354,24 @@
   --shadow-lg: 0 1px 0 rgba(0,0,0,0.45), 0 24px 60px -28px rgba(0,0,0,0.60);
 
   /* === Tailwind / shadcn HSL token === */
-  --background: 240 8% 7%;
-  --foreground: 240 4% 92%;
-  --card: 240 6% 10%;
-  --card-foreground: 240 4% 92%;
-  --popover: 240 6% 10%;
-  --popover-foreground: 240 4% 92%;
-  --primary: 240 4% 92%;
-  --primary-foreground: 240 6% 10%;
-  --secondary: 240 5% 16%;
-  --secondary-foreground: 240 4% 92%;
-  --muted: 240 5% 16%;
-  --muted-foreground: 240 4% 62%;
-  --accent-foreground: 240 4% 92%;
-  --destructive: 10 70% 58%;
-  --destructive-foreground: 0 0% 100%;
-  --border: 240 5% 20%;
-  --input: 240 5% 24%;
-  --ring: 240 4% 80%;
+  --background: 30 3% 12%;
+  --foreground: 48 23% 92%;
+  --card: 60 2% 15%;
+  --card-foreground: 48 23% 92%;
+  --popover: 60 2% 15%;
+  --popover-foreground: 48 23% 92%;
+  --primary: 48 23% 92%;
+  --primary-foreground: 60 2% 15%;
+  --secondary: 36 6% 16%;
+  --secondary-foreground: 48 23% 92%;
+  --muted: 36 6% 16%;
+  --muted-foreground: 48 5% 64%;
+  --accent-foreground: 48 23% 92%;
+  --destructive: 11 73% 66%;
+  --destructive-foreground: 60 3% 8%;
+  --border: 40 5% 22%;
+  --input: 38 5% 32%;
+  --ring: 48 17% 88%;
 }
 
 * { box-sizing: border-box; }
@@ -331,6 +395,20 @@ body {
 #root { min-height: 100vh; }
 
 .mono { font-family: var(--font-mono); font-feature-settings: "ss01"; }
+.hand { font-family: var(--font-hand); }
+
+/* 手绘插画的墨线 (SidebarIcon / LogoMark); 线宽由组件按渲染尺寸内联给出 */
+.sk-ink { fill: none; stroke: var(--stroke); stroke-linecap: round; stroke-linejoin: round; }
+/* LogoMark 的 App 图标式底板 (macOS 圆角比例 22.37%) */
+.logo-tile {
+  display: inline-block;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  line-height: 0;
+  background: var(--bg);
+  border-radius: 22.37%;
+  box-shadow: 0 0 0 1px var(--line);
+}
 .tnum { font-variant-numeric: tabular-nums; }
 
 button { font: inherit; color: inherit; cursor: pointer; }
@@ -377,10 +455,10 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 
 .app {
   display: grid;
-  /* 宽度取 en 最长导航项 "Virtual models" 的实测需求 (28 边距 + 22 内距 + 16 图标
-   * + 11 间隔 + 92 文字 + 11 间隔 + 18 badge ≈ 198), 留一点渲染余量。
+  /* 宽度取 en 最长导航项 "Virtual models" 的实测需求 (28 边距 + 22 内距 + 4 边框
+   * + 28 图标 + 11 间隔 + 92 文字 + 11 间隔 + 24 badge ≈ 220), 留一点渲染余量。
    * ja 译文更长, 按 .nav-label 的规则折行, 不截断。 */
-  grid-template-columns: 204px 1fr;
+  grid-template-columns: 224px 1fr;
   min-height: 100vh;
   width: 100%;
   max-width: 100%;
@@ -390,101 +468,123 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 
 /* === Sidebar === */
 .sidebar {
-  border-right: 1px solid var(--line);
-  background: var(--surface-2);
-  padding: calc(22px + var(--titlebar-inset)) 14px 18px;
+  background: var(--surface-3);
+  padding: calc(18px + var(--titlebar-inset)) 14px 18px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
   position: sticky;
   top: 0;
   height: 100vh;
   overflow-y: auto;
 }
+/* 右边缘: 一道竖向手画波浪线, 代替直线边框 (mask 而非背景图, 线色才能跟主题走) */
+.sidebar::after {
+  content: "";
+  position: absolute;
+  /* 侧栏自身 overflow-y:auto 会裁掉溢出部分, 所以波浪线整条画在内侧 */
+  top: 0; right: 0; bottom: 0;
+  width: 10px;
+  background: var(--line-2);
+  -webkit-mask: var(--squiggle-v) repeat-y center top / 10px 120px;
+  mask: var(--squiggle-v) repeat-y center top / 10px 120px;
+  pointer-events: none;
+}
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 10px 18px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 12px;
+  padding: 4px 4px 0;
 }
-.brand-mark {
-  width: 32px; height: 32px;
-  border-radius: 8px;
-  flex-shrink: 0;
-  overflow: hidden;
-  display: grid;
-  place-items: center;
-  background: transparent;
+.brand-mark { flex-shrink: 0; }
+.brand-text { line-height: 1.1; min-width: 0; }
+.brand-name {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 21px;
+  letter-spacing: -0.01em;
 }
-.brand-mark img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  /* 像素艺术风 logo: 用 nearest-neighbor 保持锐利,避免缩放发糊 */
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-}
-.brand-text { line-height: 1.1; }
-.brand-name { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
 /* 定位标语在 zh 下是一行, 日/英译文更长会折成两行 —— 给它一个像样的行高,
  * 比为了单行把文案砍到不通顺更好 */
-.brand-tag { font-size: 11px; color: var(--ink-3); margin-top: 3px; line-height: 1.4; }
+.brand-tag { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; line-height: 1.4; }
+.brand-rule {
+  display: block;
+  width: 100%;
+  height: 10px;
+  margin: 12px 0 12px;
+  flex-shrink: 0;
+}
+.brand-rule path { fill: none; stroke: var(--line-2); stroke-width: 1.6; stroke-linecap: round; }
 
+/* 导航项: 平时无边框; 选中时是一张「纸条」—— 白底 + 墨线 + 不规则圆角 + 错位投影。
+ * 边框常驻 (透明), 选中/悬停只换颜色, 避免 1.8px 的跳动 */
 .nav-item {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 8px 11px;
-  border-radius: var(--r-sm);
+  min-height: 42px;
+  padding: 4px 10px 4px 8px;
+  border: 1.8px solid transparent;
+  border-radius: var(--r-sketch);
   color: var(--ink-2);
   font-weight: 500;
   font-size: 13.5px;
   cursor: pointer;
-  border: none;
   background: transparent;
   text-align: left;
   width: 100%;
   position: relative;
-  transition: background 0.12s, color 0.12s;
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s, color 0.15s;
   text-decoration: none;
 }
-/* 侧边栏宽度按 en 最长项 "Virtual models" 定 (见 .app 的 204px)。
+/* 侧边栏宽度按 en 最长项 "Virtual models" 定 (见 .app 的列宽)。
  * ja 的译文更长, 允许折成两行 —— 导航标签绝不截断成省略号, 宁可换行。
  * flex 下 min-width:0 让标签能收缩到容器内换行, 而不是撑破 nav-item。 */
 .nav-label {
+  flex: 1;
   min-width: 0;
   line-height: 1.35;
 }
-.nav-item:hover { background: var(--surface-3); color: var(--ink); }
+.nav-item:hover { background: var(--surface); border-color: var(--line-2); color: var(--ink); }
+.nav-item:hover .nav-icon { transform: rotate(-6deg); }
 .nav-item.active {
-  background: var(--ink);
-  color: var(--surface);
+  background: var(--surface);
+  border-color: var(--stroke);
+  box-shadow: 3px 3px 0 var(--fill-oat);
+  color: var(--ink);
+  font-weight: 600;
 }
-.nav-item.active .nav-icon { color: var(--accent); }
+.nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .nav-item .nav-icon {
-  width: 16px; height: 16px;
+  width: 28px; height: 28px;
   flex-shrink: 0;
-  color: var(--ink-3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: transform 0.15s ease;
 }
-.nav-item.active .badge {
-  background: rgba(255,255,255,0.15);
-  color: rgba(255,255,255,0.85);
-}
+/* 角标: 手写数字写在一个歪歪的小圈里 */
 .nav-item .badge {
   margin-left: auto;
-  font-size: 10.5px;
-  font-family: var(--font-mono);
-  background: var(--surface-3);
-  color: var(--ink-3);
-  padding: 1px 6px;
-  border-radius: 4px;
+  min-width: 24px;
+  height: 21px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-hand);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink);
+  border: 1.4px solid var(--line-2);
+  border-radius: var(--r-blob);
+  transform: rotate(-4deg);
 }
+.nav-item.active .badge { background: var(--fill-butter); border-color: var(--stroke); }
+@media (prefers-reduced-motion: reduce) {
+  .nav-item:hover .nav-icon { transform: none; }
+}
+
 /* === Main === */
 .main {
   padding: 22px 28px 36px;
@@ -497,34 +597,69 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   overflow-x: hidden;
   overflow-x: clip;
 }
-.page-header { margin-bottom: 18px; }
+.page-header { margin-bottom: 22px; }
+/* 页面标题: 衬线 + 底下手画两道陶土色笔触 (官网 .display .accent 的做法) */
 .page-header h1 {
-  font-size: var(--fs-h1);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: 0 0 4px;
+  position: relative;
+  display: inline-block;
+  z-index: 0;
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin: 0 0 10px;
   color: var(--ink);
+}
+.page-header h1::after {
+  content: "";
+  position: absolute;
+  left: -4px; right: -8px; bottom: -5px;
+  height: 11px;
+  z-index: -1;
+  background: var(--accent);
+  -webkit-mask: var(--underline-strokes) no-repeat center / 100% 100%;
+  mask: var(--underline-strokes) no-repeat center / 100% 100%;
+  opacity: 0.85;
 }
 .page-header .subtitle {
   color: var(--ink-3);
-  font-size: 13px;
-  max-width: 720px;
-  line-height: 1.5;
+  font-size: 13.5px;
+  max-width: 760px;
+  line-height: 1.65;
 }
 .page-actions {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 22px;
 }
 
+/* 手写批注 (页面右上角的一句话 + 手画箭头), 纯装饰 */
+.hand-note {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-bottom: -8px;
+  color: var(--accent-ink);
+  transform: rotate(-3deg);
+  font-family: var(--font-hand);
+  font-size: 22px;
+  line-height: 1;
+}
+.hand-note path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 1100px) { .hand-note { display: none; } }
+
 /* === Cards === */
+/* 墨线描边 + 不规则圆角 + 硬边错位投影。卡片里别再套同款卡片, 嵌套层用 --line 细线 */
 .card {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-sm);
+  border: 2px solid var(--stroke);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
 }
 .card-head {
   padding: var(--pad-card) var(--pad-card) calc(var(--pad-card) - 6px);
@@ -534,7 +669,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   gap: 16px;
 }
 .card-title {
-  font-size: 13px;
+  font-family: var(--font-display);
+  font-size: 16px;
   font-weight: 600;
   color: var(--ink);
   letter-spacing: -0.005em;
@@ -546,52 +682,60 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .card-body { padding: 0 var(--pad-card) var(--pad-card); }
 
 /* === Buttons === */
+/* 悬停时轻微歪一下并落出硬投影, 按下时回正、投影消失 */
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 8px 14px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line-2);
+  padding: 7px 16px;
+  border-radius: var(--r-sketch);
+  border: 1.8px solid var(--stroke);
   background: var(--surface);
   color: var(--ink);
   font-size: 13px;
   font-weight: 500;
-  transition: background 0.12s, border-color 0.12s, transform 0.05s;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
   text-decoration: none;
   white-space: nowrap;
 }
-.btn:hover { background: var(--surface-2); border-color: var(--ink-4); }
-.btn:active { transform: translateY(1px); }
-.btn:disabled, .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
-.btn.primary {
-  background: var(--ink);
-  color: var(--surface);
-  border-color: var(--ink);
-}
-.btn.primary:hover { background: var(--ink-2); }
+.btn:hover { transform: translate(-1px, -1px) rotate(-0.6deg); box-shadow: 3px 3px 0 var(--fill-oat); }
+.btn:active { transform: translate(1px, 1px); box-shadow: none; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:disabled, .btn[disabled] { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+/* 主按钮 = 陶土色底 + 墨色字 (白字压陶土色对比不够) */
+.btn.primary,
 .btn.accent {
   background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+  color: #141413;
+  font-weight: 600;
 }
-.btn.accent:hover { filter: brightness(0.95); }
+.btn.primary:hover:not(:disabled),
+.btn.accent:hover:not(:disabled) { box-shadow: var(--shadow-ink); }
 .btn.danger {
-  background: var(--err);
-  color: #fff;
-  border-color: var(--err);
+  background: var(--fill-coral);
+  color: var(--ink);
+  font-weight: 600;
+  border-radius: var(--r-sketch-alt);
 }
-.btn.danger:hover { filter: brightness(0.95); }
-.btn.ghost { background: transparent; border: 1px dashed var(--line-2); color: var(--ink-3); }
-.btn.ghost:hover { color: var(--ink); border-color: var(--ink-4); }
-.btn.bare { background: transparent; border: none; color: var(--ink-3); padding: 4px 8px; }
-.btn.bare:hover { background: var(--surface-3); color: var(--ink); }
-.btn.sm { padding: 5px 10px; font-size: 12px; border-radius: 5px; }
+.btn.danger:hover:not(:disabled) { box-shadow: 3px 3px 0 var(--err); }
+.btn.ghost {
+  background: transparent;
+  border: 1.5px dashed var(--line-2);
+  border-radius: var(--r-sketch-alt);
+  color: var(--ink-3);
+}
+.btn.ghost:hover { color: var(--ink); border-color: var(--stroke); box-shadow: none; }
+.btn.bare { background: transparent; border-color: transparent; color: var(--ink-3); padding: 4px 8px; border-radius: var(--r-blob); }
+.btn.bare:hover { background: var(--surface-3); color: var(--ink); transform: none; box-shadow: none; }
+.btn.sm { padding: 4px 11px; font-size: 12px; border-width: 1.5px; }
 .btn-icon {
   width: 14px; height: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn:hover, .btn:active { transform: none; }
 }
 
 /* === Pills, badges === */
@@ -599,47 +743,51 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 2px 9px;
+  border: 1.3px solid transparent;
+  border-radius: var(--r-sketch);
   background: var(--surface-3);
   color: var(--ink-2);
   font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
 }
+/* 状态点: 手画的歪圆 */
 .pill .dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
+  width: 7px; height: 7px;
+  border-radius: var(--r-blob);
   background: var(--ink-4);
 }
-.pill.ok { background: var(--ok-bg); color: oklch(0.40 0.12 150); }
+.pill.ok { background: var(--ok-bg); color: var(--ok); }
 .pill.ok .dot { background: var(--ok); }
-.pill.warn { background: oklch(0.96 0.05 75); color: oklch(0.45 0.13 75); }
+.pill.warn { background: color-mix(in srgb, var(--fill-butter) 65%, var(--surface)); color: var(--ink-2); }
 .pill.warn .dot { background: var(--warn); }
-.pill.err { background: var(--err-bg); color: oklch(0.42 0.16 28); }
+.pill.err { background: var(--err-bg); color: var(--err); }
 .pill.err .dot { background: var(--err); }
 .pill.accent { background: var(--accent-bg); color: var(--accent-ink); }
 .pill.accent .dot { background: var(--accent); }
-.pill.tag { background: transparent; border: 1px solid var(--line-2); color: var(--ink-3); font-family: var(--font-mono); font-size: 10.5px; padding: 1px 6px; }
+.pill.tag { background: transparent; border: 1.3px dashed var(--line-2); color: var(--ink-3); font-family: var(--font-mono); font-size: 10.5px; padding: 1px 7px; }
 
 /* === Inputs === */
+/* 平时浅墨线, 悬停/聚焦加深为墨色; 聚焦时落一块黄油色投影, 替代柔光 focus ring */
 .input, .select {
   width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-sm);
+  padding: 7px 13px;
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--r-sketch-alt);
   background: var(--surface);
   font-size: 13px;
   color: var(--ink);
-  transition: border 0.12s, box-shadow 0.12s;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
+.input:hover:not(:disabled), .select:hover:not(:disabled) { border-color: var(--ink-4); }
 .input:focus, .select:focus {
   outline: none;
-  border-color: var(--ink-2);
-  box-shadow: 0 0 0 3px rgba(0,0,0,0.04);
+  border-color: var(--stroke);
+  box-shadow: 3px 3px 0 var(--fill-butter);
 }
 .input.mono { font-family: var(--font-mono); }
-.input:disabled, .select:disabled { background: var(--surface-2); color: var(--ink-4); cursor: not-allowed; }
+.input:disabled, .select:disabled { background: var(--surface-2); color: var(--ink-4); cursor: not-allowed; border-style: dashed; }
 .field-label {
   font-size: 12px;
   font-weight: 500;
@@ -663,63 +811,68 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   margin: 0 0 12px;
   padding: 10px 12px;
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border: 1.5px dashed var(--line-2);
+  border-radius: var(--r-sketch-alt);
 }
 
-/* Toggle */
+/* Toggle: 手画轨道 + 歪圆滑块; 开 = 仙人掌绿底 + 墨色滑块 */
 .toggle {
-  width: 38px; height: 22px;
-  background: var(--ink-5);
-  border-radius: 999px;
+  width: 42px; height: 24px;
+  box-sizing: border-box;
+  background: transparent;
+  border: 1.8px solid var(--line-2);
+  border-radius: var(--r-sketch);
   position: relative;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s;
   flex-shrink: 0;
-  border: none;
   padding: 0;
 }
 .toggle::after {
   content: '';
   position: absolute;
   top: 2px; left: 2px;
-  width: 18px; height: 18px;
-  background: #fff;
-  border-radius: 50%;
-  transition: transform 0.15s;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  width: 16px; height: 16px;
+  background: var(--ink-4);
+  border-radius: var(--r-blob);
+  transition: transform 0.15s, background 0.15s;
 }
-.toggle.on { background: var(--ink); }
-.toggle.on::after { transform: translateX(16px); }
+.toggle.on { background: var(--fill-cactus); border-color: var(--stroke); }
+.toggle.on::after { transform: translateX(18px); background: var(--stroke); }
+.toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .toggle:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* Radio inline */
+/* Radio inline (分段控件): 墨线外框, 选中项是一团黄油色 */
 .radio-group {
   display: inline-flex;
-  background: var(--surface-3);
-  border-radius: var(--r-sm);
-  padding: 3px;
+  align-items: center;
+  background: transparent;
+  border: 1.5px solid var(--stroke);
+  border-radius: var(--r-sketch);
+  padding: 2px;
   gap: 2px;
 }
 .radio-group button {
   border: none;
   background: transparent;
-  padding: 4px 12px;
-  border-radius: 5px;
+  padding: 3px 11px;
+  border-radius: var(--r-blob);
   font-size: 12px;
   color: var(--ink-3);
   font-weight: 500;
+  transition: background 0.12s, color 0.12s;
 }
+.radio-group button:hover { color: var(--ink); }
 .radio-group button.on {
-  background: var(--surface);
+  background: var(--fill-butter);
   color: var(--ink);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  font-weight: 600;
 }
 
 /* === Provider logo container === */
 .logo {
   width: 22px; height: 22px;
-  border-radius: 5px;
+  border-radius: var(--r-blob);
   display: inline-grid;
   place-items: center;
   flex-shrink: 0;
@@ -733,21 +886,22 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 }
 
 /* === Tables === */
+/* 表头下一道实墨线, 行间用虚线 */
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table th {
   text-align: left;
-  font-weight: 500;
+  font-weight: 600;
   font-size: 11px;
-  color: var(--ink-4);
+  color: var(--ink-3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-2);
+  border-bottom: 2px solid var(--stroke);
+  background: transparent;
 }
 .table td {
   padding: var(--pad-row) 16px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1.5px dashed var(--line);
   vertical-align: middle;
   color: var(--ink-2);
 }
@@ -921,18 +1075,19 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .slot-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: var(--gap-md);
+  gap: 22px 24px;
 }
 @media (max-width: 900px) {
   .slot-grid { grid-template-columns: 1fr; }
 }
 .slot-card {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  padding: var(--pad-card);
-  box-shadow: var(--shadow-sm);
+  border: 2px solid var(--stroke);
+  border-radius: var(--r-card);
+  padding: var(--pad-card) calc(var(--pad-card) + 2px);
+  box-shadow: var(--shadow-card);
 }
+.slot-card:nth-child(even) { border-radius: var(--r-card-alt); }
 .slot-head {
   display: flex;
   align-items: baseline;
@@ -967,15 +1122,17 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--r-sketch);
+  background: var(--bg);
   margin-bottom: 8px;
   position: relative;
+  transition: border-color 0.12s, background 0.12s;
 }
-.endpoint:hover { background: var(--surface); }
+.endpoint:nth-child(even) { border-radius: var(--r-sketch-alt); }
+.endpoint:hover { background: var(--surface); border-color: var(--ink-4); }
 .endpoint .grip {
-  color: var(--ink-5);
+  color: var(--ink-4);
   cursor: grab;
   display: inline-flex;
   align-items: center;
@@ -985,14 +1142,14 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   padding: 0;
 }
 .endpoint .grip:active { cursor: grabbing; }
+/* 优先级序号: 手写数字 */
 .endpoint .priority {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--ink-4);
-  background: var(--surface-3);
-  width: 18px; height: 18px;
-  border-radius: 4px;
+  font-family: var(--font-hand);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent-ink);
+  width: 16px; height: 18px;
   display: grid; place-items: center;
 }
 .endpoint-info { flex: 1; min-width: 0; }
@@ -1014,7 +1171,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   text-overflow: ellipsis;
 }
 .endpoint-model::before { content: '↳ '; color: var(--ink-4); }
-.endpoint-status { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+.endpoint-status { width: 8px; height: 8px; border-radius: var(--r-blob); background: var(--ok); flex-shrink: 0; }
 .endpoint-status.err { background: var(--err); }
 .endpoint-status.warn { background: var(--warn); }
 .endpoint-status.idle { background: var(--ink-4); }
@@ -1024,15 +1181,15 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   color: var(--ink-4);
   font-size: 12px;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--r-blob);
 }
-.endpoint .remove:hover { color: var(--err); background: var(--err-bg); }
+.endpoint .remove:hover { color: var(--ink); background: var(--fill-coral); }
 
 .add-endpoint {
   width: 100%;
   padding: 9px;
-  border: 1px dashed var(--line-2);
-  border-radius: var(--r-sm);
+  border: 1.5px dashed var(--line-2);
+  border-radius: var(--r-sketch-alt);
   background: transparent;
   color: var(--ink-3);
   font-size: 12.5px;
@@ -1042,18 +1199,19 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   justify-content: center;
   gap: 6px;
   margin-top: 4px;
+  transition: color 0.12s, border-color 0.12s, transform 0.15s;
 }
-.add-endpoint:hover { color: var(--ink); border-color: var(--ink-4); background: var(--surface-2); }
+.add-endpoint:hover:not(:disabled) { color: var(--ink); border-color: var(--stroke); transform: rotate(-0.4deg); }
 .add-endpoint:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .endpoint-empty {
-  border: 1px dashed var(--line-2);
-  border-radius: var(--r-sm);
+  border: 1.5px dashed var(--line-2);
+  border-radius: var(--r-sketch-alt);
   padding: 18px 12px;
   text-align: center;
   color: var(--ink-4);
   font-size: 12px;
-  background: var(--surface-2);
+  background: transparent;
   margin-bottom: 8px;
 }
 
@@ -1076,8 +1234,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 }
 .stat {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--r-card-alt);
   padding: 16px 18px;
 }
 .stat-label { font-size: 11px; color: var(--ink-4); font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -1094,36 +1252,38 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .stat-delta.down { color: var(--err); }
 
 /* === Statistics page === */
+/* 时间范围切换: 与 .radio-group 同款分段控件 */
 .range-tabs {
   display: inline-flex;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  padding: 3px;
+  align-items: center;
+  background: transparent;
+  border: 1.5px solid var(--stroke);
+  border-radius: var(--r-sketch);
+  padding: 2px;
   gap: 2px;
   margin-bottom: 16px;
 }
 .range-tab {
-  padding: 5px 12px;
+  padding: 4px 12px;
   font-size: 12px;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--r-blob);
   color: var(--ink-3);
   cursor: pointer;
 }
 .range-tab:hover { color: var(--ink); }
 .range-tab.active {
-  background: var(--surface);
+  background: var(--fill-butter);
   color: var(--ink);
-  font-weight: 500;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  font-weight: 600;
 }
 
 .stats-section {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border: 2px solid var(--stroke);
+  box-shadow: var(--shadow-card);
+  border-radius: var(--r-card);
   padding: 18px 20px;
   margin-bottom: 16px;
 }
@@ -1131,7 +1291,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   margin-bottom: 14px;
 }
 .stats-section-title {
-  font-size: 13px;
+  font-family: var(--font-display);
+  font-size: 16px;
   font-weight: 600;
   color: var(--ink);
 }
@@ -1208,11 +1369,11 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .recharts-tooltip-wrapper { outline: none; }
 .stats-tooltip {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border: 1.5px solid var(--stroke);
+  border-radius: var(--r-card-alt);
   padding: 8px 10px;
   font-size: 11px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  box-shadow: 3px 3px 0 var(--fill-oat);
 }
 .stats-tooltip .tt-row {
   display: flex;
@@ -1236,7 +1397,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   margin: 6px 0 12px;
 }
 .stats-block-head .range-tabs { margin-bottom: 0; }
-.stats-block-title { font-size: 14px; font-weight: 600; color: var(--ink); letter-spacing: -0.005em; }
+.stats-block-title { font-family: var(--font-display); font-size: 19px; font-weight: 600; color: var(--ink); letter-spacing: -0.005em; }
 .stats-block-sub { font-size: 11.5px; color: var(--ink-4); margin-top: 2px; }
 .stats-section + .stats-block-head { margin-top: 22px; }
 
@@ -1267,24 +1428,24 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 /* 卡片内的小切换器: range-tabs 的缩小版, 不动 range-tabs 本身 (小票页复用) */
 .seg-tabs {
   display: inline-flex;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  align-items: center;
+  background: transparent;
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--r-sketch);
   padding: 2px;
   gap: 2px;
 }
 .seg-tab {
-  padding: 3px 9px;
+  padding: 2px 9px;
   font-size: 11px;
   border: none;
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--r-blob);
   color: var(--ink-3);
   cursor: pointer;
 }
 .seg-tab:hover { color: var(--ink); }
-.seg-tab.active { background: var(--surface); color: var(--ink); font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
-.dark .seg-tab.active { box-shadow: 0 1px 2px rgba(0,0,0,0.25); }
+.seg-tab.active { background: var(--fill-butter); color: var(--ink); font-weight: 600; }
 
 /* 环图 + 右侧图例表 */
 .donut-wrap { display: grid; grid-template-columns: 200px 1fr; gap: 16px; align-items: center; }
@@ -1345,14 +1506,16 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   gap: 8px;
   color: var(--ink-4);
 }
+/* 步骤序号: 手写数字写在歪圆圈里 */
 .step .num {
-  width: 22px; height: 22px;
-  border-radius: 50%;
-  border: 1px solid var(--line-2);
+  width: 24px; height: 24px;
+  border-radius: var(--r-blob);
+  border: 1.5px solid var(--line-2);
   display: grid; place-items: center;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font-hand);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
   background: var(--surface);
 }
 .step.done .num { background: var(--ink); color: var(--surface); border-color: var(--ink); }
@@ -1367,7 +1530,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   grid-template-columns: 200px 1fr;
   gap: 24px;
   padding: 18px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1.5px dashed var(--line);
   align-items: start;
 }
 .setting-row:first-child { padding-top: 0; }
@@ -1383,8 +1546,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .codeblock {
   background: var(--surface-3);
   color: var(--ink-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border: 1.5px dashed var(--line-2);
+  border-radius: var(--r-sketch-alt);
   padding: 16px 18px;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1400,11 +1563,11 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   position: absolute;
   top: 10px; right: 10px;
   background: var(--surface);
-  border: 1px solid var(--line-2);
+  border: 1.3px solid var(--line-2);
   color: var(--ink-3);
   font-size: 11px;
   padding: 4px 9px;
-  border-radius: 4px;
+  border-radius: var(--r-sketch);
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1419,8 +1582,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   align-items: center;
   gap: 10px;
   background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--r-sketch-alt);
   padding: 6px 6px 6px 12px;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1439,8 +1602,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   align-items: center;
   gap: 5px;
   padding: 4px 9px;
-  border-radius: 4px;
-  border: 1px solid var(--line-2);
+  border-radius: var(--r-sketch);
+  border: 1.3px solid var(--line-2);
   background: var(--surface);
   color: var(--ink-3);
   font-size: 11px;
@@ -1449,9 +1612,9 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 }
 .copyline-copy:hover { background: var(--surface-3); color: var(--ink); }
 .danger-card {
-  border: 1px solid oklch(0.85 0.08 28);
-  background: oklch(0.98 0.02 28);
-  border-radius: var(--r-md);
+  border: 1.5px dashed var(--err);
+  background: var(--err-bg);
+  border-radius: var(--r-card);
   padding: var(--pad-card);
   display: grid;
   grid-template-columns: 1fr auto;
@@ -1461,22 +1624,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 
 /* About: 全宽卡片, 左对齐, 与其余页面一致 */
 .about-hero { display: flex; align-items: flex-start; gap: 18px; }
-/* 应用图标: 关于页 56px, 更新页 small 28px; 两处共用一份圆角/阴影/像素渲染 */
-.app-mark {
-  width: 56px; height: 56px;
-  border-radius: 14px;
-  overflow: hidden;
-  flex-shrink: 0;
-  box-shadow: var(--shadow-sm);
-}
-.app-mark.small { width: 28px; height: 28px; border-radius: 7px; }
-.app-mark img {
-  width: 100%; height: 100%;
-  object-fit: cover;
-  display: block;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-}
+/* 关于页的手绘 App 图标 (LogoMark tile), 这里只负责错位投影 */
+.app-mark { box-shadow: 0 0 0 1px var(--line), 4px 4px 0 var(--fill-oat); }
 .about-name { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
 .about-meta {
   display: flex; gap: 8px; flex-wrap: wrap;
@@ -1532,19 +1681,9 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   text-align: left;
 }
 .onboarding-disclaimer-mark {
-  width: 56px; height: 56px;
+  display: block;
   margin: 0 auto 14px;
-  border-radius: 14px;
-  overflow: hidden;
-  display: grid;
-  place-items: center;
-  box-shadow: var(--shadow-sm);
-}
-.onboarding-disclaimer-mark img {
-  width: 100%; height: 100%;
-  object-fit: cover;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+  box-shadow: 0 0 0 1px var(--line), 4px 4px 0 var(--fill-oat);
 }
 .onboarding-disclaimer-title {
   display: flex;
@@ -1597,16 +1736,16 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   align-items: flex-start;
   gap: 8px;
   padding: 10px 14px;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-sketch-alt);
   font-size: 12px;
   line-height: 1.5;
   white-space: normal;
-  border: 1px solid var(--line-2);
+  border: 1.5px dashed var(--line-2);
   background: var(--surface-2);
   color: var(--ink-2);
 }
-.alert.warn { background: oklch(0.96 0.05 75); border-color: oklch(0.85 0.07 75); color: oklch(0.36 0.13 75); }
-.alert.err  { background: var(--err-bg); border-color: oklch(0.82 0.10 28); color: oklch(0.42 0.16 28); }
+.alert.warn { background: color-mix(in srgb, var(--fill-butter) 45%, var(--surface)); border-color: var(--warn); color: var(--ink-2); }
+.alert.err  { background: var(--err-bg); border-color: var(--err); color: var(--ink-2); }
 
 /* === Empty state inside .card === */
 .empty-state {
@@ -1626,7 +1765,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .status-dot {
   display: inline-block;
   width: 8px; height: 8px;
-  border-radius: 50%;
+  border-radius: var(--r-blob);
   background: var(--ink-4);
   flex-shrink: 0;
 }
@@ -1640,16 +1779,17 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
  * 仅作用于 VirtualModels 添加订阅弹窗等使用 Radix Dialog 的场景。
  * 通过统一类名让浮层视觉与 .card 体系一致。
  */
+/* 弹窗 = 放大一号的卡片: 投影加到 8px, 遮罩用半透明象牙色 */
 .cc-dialog {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-lg);
+  border: 2px solid var(--stroke);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-pop);
   padding: var(--pad-card);
   font-family: inherit;
 }
 .cc-dialog-overlay {
-  background: rgba(20, 18, 12, 0.32);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
   backdrop-filter: blur(2px);
 }
 
@@ -1658,29 +1798,41 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 20px;
+  border-bottom: 1.5px dashed var(--line-2);
+  margin-bottom: 22px;
 }
 .tab {
   padding: 9px 14px;
   cursor: pointer;
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  position: relative;
   color: var(--ink-3);
   font-size: 13px;
   font-weight: 500;
-  transition: color 0.12s, border-color 0.12s;
+  transition: color 0.12s;
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
-.tab:hover:not(.active):not(:disabled) { color: var(--ink-2); }
-.tab.active {
-  color: var(--ink);
-  border-bottom-color: var(--ink);
+/* 选中项下面手画一笔陶土色波浪 (官网导航的做法), 悬停时从左往右画出来 */
+.tab::after {
+  content: "";
+  position: absolute;
+  left: 10px; right: 10px; bottom: -5px;
+  height: 8px;
+  background: var(--accent);
+  -webkit-mask: var(--squiggle) repeat-x left center / 120px 8px;
+  mask: var(--squiggle) repeat-x left center / 120px 8px;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.2s ease;
 }
+.tab:hover:not(.active):not(:disabled) { color: var(--ink-2); }
+.tab:hover:not(:disabled)::after,
+.tab.active::after { transform: scaleX(1); }
+.tab:hover:not(.active):not(:disabled)::after { opacity: 0.45; }
+.tab.active { color: var(--ink); font-weight: 600; }
 .tab:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .brand-grid {
@@ -1693,8 +1845,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--r-card-alt);
   color: var(--ink-2);
   font-size: 13px;
   font-weight: 500;
@@ -1728,9 +1880,10 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   border-bottom: 1px solid var(--line);
 }
 .page-bar h1 {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.015em;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
   white-space: nowrap;
 }
@@ -1830,7 +1983,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 }
 .flush-section:last-child { border-bottom: none; }
 .flush-title {
-  font-size: 13px;
+  font-family: var(--font-display);
+  font-size: 16px;
   font-weight: 600;
   color: var(--ink);
   display: flex;
@@ -1854,31 +2008,31 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 /* === 紧凑槽位卡 ===
  * 卡片外形(圆角/阴影/间距) 保持与其他页面一致, 只压缩卡内密度:
  * 调度模式并进卡头、端点行单行 30px、添加按钮 26px。 */
-/* fallback: 通栏一行, 左侧 accent 竖条点明「第 5 个虚拟模型」而非第 5 个槽位 */
+/* fallback: 通栏一行, 错位投影换成陶土色, 点明「第 5 个虚拟模型」而非第 5 个槽位 */
 .slot-card.wide {
   grid-column: 1 / -1;
-  border-left: 3px solid var(--accent-line);
+  box-shadow: 5px 5px 0 var(--accent-line);
 }
 .slot-head.compact {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
 }
-.slot-head.compact .slot-name { font-size: 14px; }
-.slot-head.compact .slot-purpose { font-size: 11.5px; margin-left: 8px; }
+.slot-head.compact .slot-name { font-size: 15px; }
+.slot-head.compact .slot-purpose { font-size: 12px; margin-left: 8px; }
 .radio-group.sm { padding: 2px; flex-shrink: 0; }
 .radio-group.sm button { padding: 3px 9px; font-size: 11px; }
 
-.endpoint-list { display: flex; flex-direction: column; gap: 5px; }
+.endpoint-list { display: flex; flex-direction: column; gap: 7px; }
 .endpoint.compact {
-  height: 30px;
+  height: 36px;
   padding: 0 8px;
   gap: 7px;
   margin-bottom: 0;
 }
 .endpoint.compact .priority {
-  width: 16px; height: 16px;
-  font-size: 9.5px;
+  width: 14px; height: 18px;
+  font-size: 18px;
 }
 .endpoint.compact .endpoint-info {
   display: flex;
@@ -1904,7 +2058,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   color: var(--ink-5);
 }
 .add-endpoint.compact {
-  height: 26px;
+  height: 34px;
   padding: 0;
   font-size: 11.5px;
   margin-top: 5px;
@@ -1975,7 +2129,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 @keyframes flow { to { stroke-dashoffset: -34; } }
 .rf-flow { animation: flow 2.4s linear infinite; }
 
-/* logo 自带白底圆角, 再套一层深色方块等于两重边框, 所以 hub 只做定位容器。
+/* logo (LogoMark tile) 自带圆角底板, 再套一层方块等于两重边框, 所以 hub 只做定位容器。
  * 纵向跟着画布中心走 (96/2 = 48), 画布变高时不会留在原地。 */
 .rf-hub {
   position: absolute;
@@ -1985,14 +2139,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   display: grid;
   place-items: center;
 }
-.rf-hub img {
-  width: 76px; height: 76px;
-  border-radius: 18px;
-  image-rendering: pixelated;
-  display: block;
-  box-shadow: 0 8px 24px -10px rgba(20,18,12,0.40);
-}
-.rf-hub.off img { box-shadow: none; opacity: 0.7; }
+.rf-hub > .logo-tile { box-shadow: 0 0 0 1px var(--line), 4px 4px 0 var(--fill-oat); transition: opacity 0.2s; }
+.rf-hub.off > .logo-tile { opacity: 0.7; }
 .rf-hub-label {
   position: absolute;
   left: 400px;
@@ -2092,10 +2240,10 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .access-value {
   flex: 1;
   min-width: 0;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-sm);
+  height: 32px;
+  padding: 0 12px;
+  border: 1.5px solid var(--line-2);
+  border-radius: var(--r-sketch-alt);
   background: var(--surface-2);
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -2107,10 +2255,10 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   text-overflow: ellipsis;
 }
 .access-copy {
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--line-2);
-  border-radius: 5px;
+  height: 32px;
+  padding: 0 11px;
+  border: 1.5px solid var(--stroke);
+  border-radius: var(--r-sketch);
   background: var(--surface);
   color: var(--ink);
   font-size: 11.5px;
@@ -2142,9 +2290,9 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--ink-3);
-  border: 1px solid var(--line-2);
-  border-radius: 4px;
-  padding: 1px 6px;
+  border: 1.3px solid var(--line-2);
+  border-radius: var(--r-sketch);
+  padding: 1px 7px;
 }
 .api-path {
   font-family: var(--font-mono);
@@ -2157,8 +2305,8 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .readonly-note {
   margin-top: 12px;
   padding: 11px 14px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-sm);
+  border: 1.5px dashed var(--line-2);
+  border-radius: var(--r-sketch-alt);
   background: var(--surface-2);
   font-size: 12px;
   line-height: 1.6;
@@ -2172,7 +2320,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   background: var(--ink);
   color: var(--surface);
   border: none;
-  border-radius: 5px;
+  border-radius: var(--r-sketch);
   padding: 5px 10px;
   font-size: 11.5px;
   font-weight: 500;
@@ -2503,20 +2651,11 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   background: var(--surface-2);
 }
 
-/* === 侧边栏状态点 (红=有更新 / 绿=代理在跑) === */
-.nav-dot {
-  margin-left: auto;
-  width: 8px; height: 8px;
-  border-radius: 9999px;
-  background: var(--err);
-  box-shadow: 0 0 0 2px var(--err-bg);
-  flex-shrink: 0;
-}
-.nav-dot.ok {
-  width: 6px; height: 6px;
-  background: var(--ok);
-  box-shadow: 0 0 0 2px var(--ok-bg);
-}
+/* === 侧边栏状态点: 绿=代理在跑 (手画圆点 + 放射短线) / 陶土星号=有更新 === */
+.nav-dot { margin-left: auto; flex-shrink: 0; }
+.nav-dot.ok .nav-dot-fill { fill: var(--ok); }
+.nav-dot.ok .nav-dot-rays { fill: none; stroke: var(--ok); stroke-width: 1.4; stroke-linecap: round; }
+.nav-dot.err path { fill: none; stroke: var(--accent); stroke-width: 2.1; stroke-linecap: round; }
 
 /* === Tailwind base override 兼容: 让原 ui/* shadcn 组件颜色仍可读 === */
 }
@@ -2529,30 +2668,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 
 /* === Dark mode overrides: 硬编码颜色修复 === */
 .dark .cc-dialog-overlay {
-  background: rgba(0,0,0,0.55);
-}
-
-.dark .toggle::after {
-  background: #e8e8ec;
-}
-
-.dark .toggle.on {
-  background: var(--accent);
-}
-
-.dark .toggle.on::after {
-  box-shadow: 0 1px 2px rgba(0,0,0,0.40);
-}
-
-.dark .danger-card {
-  background: oklch(0.18 0.06 28);
-  border-color: oklch(0.30 0.10 28);
-}
-
-.dark .alert.warn {
-  background: oklch(0.17 0.05 75);
-  border-color: oklch(0.30 0.08 75);
-  color: oklch(0.78 0.10 75);
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
 }
 
 .dark .diagram {
@@ -2561,20 +2677,6 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
     radial-gradient(circle at 20% 0%, oklch(0.15 0.03 70) 0%, transparent 50%);
   background-blend-mode: normal, normal;
   background-color: var(--surface);
-}
-
-.dark .btn.accent:hover {
-  filter: brightness(1.08);
-}
-
-.dark .btn.danger:hover {
-  filter: brightness(1.08);
-}
-
-/* === Dark mode: nav-item active (避免浅色背景过于刺眼) === */
-.dark .nav-item.active {
-  background: var(--surface-3);
-  color: var(--ink);
 }
 
 /* === CodeMirror: 纳入设计系统的等宽字体 (与主题无关) ===
@@ -2602,37 +2704,14 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   background: var(--surface-3);
 }
 .dark .cm-editor .cm-activeLine {
-  background: oklch(0.22 0.02 250);
+  background: var(--surface-3);
 }
 .dark .cm-editor .cm-cursor {
   border-left-color: var(--ink);
 }
 .dark .cm-editor .cm-selectionBackground,
 .dark .cm-editor.cm-focused .cm-selectionBackground {
-  background: oklch(0.35 0.06 260) !important;
-}
-
-/* === Dark mode: 聚焦环(暗色下黑色阴影不可见) === */
-.dark .input:focus,
-.dark .select:focus {
-  box-shadow: 0 0 0 3px rgba(255,255,255,0.10);
-}
-
-/* === Dark mode: 阴影微调 === */
-.dark .radio-group button.on {
-  box-shadow: 0 1px 2px rgba(0,0,0,0.30);
-}
-.dark .range-tab.active {
-  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
-}
-.dark .stats-tooltip {
-  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-}
-
-/* === Dark mode: warn pill (黄色警示在暗色下保持可读) === */
-.dark .pill.warn {
-  background: oklch(0.18 0.05 75);
-  color: oklch(0.78 0.10 75);
+  background: var(--fill-butter) !important;
 }
 
 /* === Dark mode: OAuth 弹窗遮罩(内联样式无法用 .cc-dialog-overlay 覆盖) === */
@@ -2640,10 +2719,6 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   background: rgba(0,0,0,0.65) !important;
 }
 
-/* === Dark mode: 路由图中心 hub 的投影(浅色阴影在暗底上不可见) === */
-.dark .rf-hub img {
-  box-shadow: 0 8px 24px -10px rgba(0,0,0,0.70);
-}
 
 /* 网页界面登录页 (仅 web 模式) */
 .web-login-shell {
@@ -2658,16 +2733,17 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .web-login-card {
   width: 360px;
   padding: 28px 26px 24px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  border: 2px solid var(--stroke);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-pop);
   background: var(--surface);
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-.web-login-logo { width: 40px; height: 40px; }
+.web-login-logo { align-self: flex-start; }
 .web-login-card h1 { font-size: 16px; margin: 0; color: var(--ink); }
 .web-login-card .desc { margin: 0; font-size: 12px; color: var(--ink-3); line-height: 1.5; }
 .web-login-error { font-size: 12px; color: var(--err); }
-.nav-logout { margin-top: auto; background: none; border: 0; width: 100%; text-align: left; cursor: pointer; }
+.nav-logout { margin-top: auto; font: inherit; }
 /* .btn-dark: 暗色下 --ink 是浅色, 深底白字自动变成浅底深字, 语义仍成立 */

@@ -37,12 +37,21 @@ export function VirtualModelsPage() {
 
   return (
     <>
-      <div className="page-header">
-        <h1>{t("virtualModels.title")}</h1>
-        <div className="subtitle">
-          {t("virtualModels.subtitle1")}
-          <span className="mono" style={{ color: "var(--ink-2)" }}> model-fallback</span>
-          {t("virtualModels.subtitle2")}
+      <div className="page-actions">
+        <div className="page-header" style={{ marginBottom: 0 }}>
+          <h1>{t("virtualModels.title")}</h1>
+          <div className="subtitle">
+            {t("virtualModels.subtitle1")}
+            <span className="mono" style={{ color: "var(--ink-2)" }}> model-fallback</span>
+            {t("virtualModels.subtitle2")}
+          </div>
+        </div>
+        {/* 手写批注: 指向下方可拖拽排序的订阅行 */}
+        <div className="hand-note" aria-hidden="true">
+          <span>{t("virtualModels.dragHint")}</span>
+          <svg viewBox="0 0 40 40" width="32" height="32">
+            <path d="M6 6 C 22 6, 32 14, 30 32 M23 26 L30 33 L36 25" />
+          </svg>
         </div>
       </div>
 

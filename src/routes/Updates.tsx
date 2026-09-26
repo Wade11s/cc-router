@@ -7,7 +7,7 @@ import {
   RotateCw,
 } from "lucide-react";
 import { version as VERSION } from "../../package.json";
-import logoUrl from "@/assets/logo.png";
+import { LogoMark } from "@/components/sketch/LogoMark";
 import { useUpdater } from "@/hooks/useUpdater";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { useT } from "@/i18n";
@@ -56,9 +56,7 @@ export function UpdatesPage() {
           <div className="setting-row">
             <div className="label-col">{t("updates.row.current")}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div className="app-mark small">
-                <img src={logoUrl} alt="cc-router" />
-              </div>
+              <LogoMark size={30} variant="compact" />
               <span className="mono" style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
                 cc-router v{VERSION}
               </span>
