@@ -130,6 +130,12 @@ impl App {
         self.fx.is_running()
     }
 
+    /// `runtime.rs` 用它把 `ClientError` 格式化成当前语言的文字 (`i18n::client_error`)——
+    /// `App` 是唯一持有 `&'static Strings` 的地方, 主循环没有自己的一份。
+    pub fn strings(&self) -> &'static Strings {
+        self.s
+    }
+
     /// 当前向导的代次; 没有向导时 `None`。只读: 投递 `Action::WizardDone` 的一方 (测试) 要知道
     /// 该带哪个代次, 生产路径上它由 `Cmd::Wizard` 原样带回, 用不着这个。
     pub fn wizard_epoch(&self) -> Option<u64> {
@@ -595,7 +601,7 @@ impl App {
                 // 的 id 广播给所有页面; 不管 Store 是不是接受了这份订阅列表 (可能是晚到的旧结果),
                 // 总览页自己的其它字段 (今日统计 / 每小时序列 / 代理状态) 都照常更新。
                 Ok(FetchData::Overview(mut data)) => {
-                    debug_assert_eq!(fetch, Fetch::Overview, "spawn_fetch 应该保证 FetchData::Overview 只配 Fetch::Overview");
+                    debug_assert_eq!(fetch, Fetch::Overview, "spawn_fetch must pair FetchData::Overview only with Fetch::Overview");
                     let subs = std::mem::take(&mut data.subscriptions);
                     let changed = self.store.apply_subscriptions(issued, subs);
                     if let Some(changed) = &changed {
@@ -614,7 +620,7 @@ impl App {
                 // 单独的订阅列表刷新 (SSE 触发): 只进 Store, 不需要转给任何页面的 update ——
                 // 各页面画的时候直接读 ctx.store。
                 Ok(FetchData::Subscriptions(subs)) => {
-                    debug_assert_eq!(fetch, Fetch::Subscriptions, "spawn_fetch 应该保证 FetchData::Subscriptions 只配 Fetch::Subscriptions");
+                    debug_assert_eq!(fetch, Fetch::Subscriptions, "spawn_fetch must pair FetchData::Subscriptions only with Fetch::Subscriptions");
                     let changed = self.store.apply_subscriptions(issued, subs);
                     if let Some(changed) = &changed {
                         self.notify_subscriptions_changed(changed);
@@ -627,7 +633,7 @@ impl App {
                 // 虚拟模型列表刷新: 只进 Store, 不需要转给任何页面的 update ——虚拟模型页
                 // 画的时候直接读 ctx.store, 与订阅列表同一套约定。
                 Ok(FetchData::VirtualModels(vms)) => {
-                    debug_assert_eq!(fetch, Fetch::VirtualModels, "spawn_fetch 应该保证 FetchData::VirtualModels 只配 Fetch::VirtualModels");
+                    debug_assert_eq!(fetch, Fetch::VirtualModels, "spawn_fetch must pair FetchData::VirtualModels only with Fetch::VirtualModels");
                     let accepted = self.store.apply_virtual_models(issued, vms);
                     if accepted {
                         // 虚拟模型页没有 `on_subscriptions_changed` 那条早通知路径 (那是给订阅
@@ -641,7 +647,7 @@ impl App {
                 // 日志页自己的分页 / 过滤状态——不进 `Store`, 加载结果原样转给发起它的
                 // 页面 (哪怕它此刻不可见: 用户翻页/改过滤之后立刻切走是常见操作)。
                 Ok(FetchData::Requests(page)) => {
-                    debug_assert_eq!(fetch.kind(), FetchKind::Requests, "spawn_fetch 应该保证 FetchData::Requests 只配 Fetch::Requests");
+                    debug_assert_eq!(fetch.kind(), FetchKind::Requests, "spawn_fetch must pair FetchData::Requests only with Fetch::Requests");
                     let action = Action::FetchDone { fetch, issued, result: Ok(FetchData::Requests(page)) };
                     self.update_page(Tab::Logs, &action)
                 }

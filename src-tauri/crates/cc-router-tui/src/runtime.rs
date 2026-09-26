@@ -19,6 +19,7 @@ use crate::client::dto::{
     TestConnectionResult, VirtualModel,
 };
 use crate::client::{commands, Client, ClientError};
+use crate::i18n::{client_error, Strings};
 
 const TICK: Duration = Duration::from_millis(250);
 const FRAME: Duration = Duration::from_millis(16);
@@ -65,7 +66,7 @@ async fn fetch_overview(client: &Client) -> Result<OverviewData, ClientError> {
     Ok(OverviewData { status, settings, stats, series, subscriptions })
 }
 
-fn spawn_fetch(client: Arc<Client>, tx: UnboundedSender<Action>, fetch: Fetch, issued: u64) {
+fn spawn_fetch(client: Arc<Client>, tx: UnboundedSender<Action>, fetch: Fetch, issued: u64, s: &'static Strings) {
     tokio::spawn(async move {
         // 按引用匹配: `Fetch::Requests` 带的 `RequestQuery` 不是 `Copy`, `to_args()` 只需要 `&self`,
         // 借一下就够——`fetch` 本身留到匹配结束之后原样送回 `Action::FetchDone`, 不需要为了送回去
@@ -82,7 +83,7 @@ fn spawn_fetch(client: Arc<Client>, tx: UnboundedSender<Action>, fetch: Fetch, i
                 .map(FetchData::VirtualModels),
             Fetch::Requests(q) => client.call::<RequestPage>(commands::LIST_REQUESTS, q.to_args()).await.map(FetchData::Requests),
         };
-        let result = result.map_err(|e: ClientError| e.to_string());
+        let result = result.map_err(|e: ClientError| client_error(s, &e));
         let _ = tx.send(Action::FetchDone { fetch, issued, result });
     });
 }
@@ -137,9 +138,9 @@ async fn call_mutation(client: &Client, mutation: &Mutation) -> Result<MutationO
 /// **不去重、不补跑**: 每一个 `Cmd::Mutate` 都直接 `spawn` 一次 HTTP 调用, 不经过 [`Fetches`] ——
 /// 与就地操作「同一订阅同时只跑一个」的语义完全由 `App` 的忙碌表在更上游把关, 这里只管发送。
 /// 退出时仍在进行的变更不等待 (与加载一致, 任务被主循环结束时一并丢弃)。
-fn spawn_mutation(client: Arc<Client>, tx: UnboundedSender<Action>, mutation: Mutation) {
+fn spawn_mutation(client: Arc<Client>, tx: UnboundedSender<Action>, mutation: Mutation, s: &'static Strings) {
     tokio::spawn(async move {
-        let result = call_mutation(&client, &mutation).await.map_err(|e: ClientError| e.to_string());
+        let result = call_mutation(&client, &mutation).await.map_err(|e: ClientError| client_error(s, &e));
         // `barrier: 0` 只是占位符: 真正的值由 `process_action`/`stamp_barrier` 在主循环收到这条
         // 消息的那一刻补盖, 用的是那一刻的发起计数器, 不是 spawn 这一刻的 (两者之间可能已经又issued
         // 出去好几次加载, 全都得算进屏障)。
@@ -150,27 +151,27 @@ fn spawn_mutation(client: Arc<Client>, tx: UnboundedSender<Action>, mutation: Mu
 /// 按 [`WizardCmd`] 分派到对应 command。`LoadModels`/`Probe` 复用刷新模型的 30 秒超时
 /// ([`REFRESH_TIMEOUT`]): 拉候选模型 / 探测自定义厂商都可能要真的打一次上游, 与订阅页「刷新模型」
 /// 同一档超时。`Create`/`SaveSlots` 用默认超时 (`Client::call`, 不单独指定)。
-async fn call_wizard(client: &Client, cmd: &WizardCmd) -> WizardResult {
+async fn call_wizard(client: &Client, cmd: &WizardCmd, s: &'static Strings) -> WizardResult {
     match cmd {
         WizardCmd::LoadProviders => {
             let result = client.call::<Vec<Provider>>(commands::LIST_PROVIDERS, json!({})).await;
-            WizardResult::Providers(result.map_err(|e: ClientError| e.to_string()))
+            WizardResult::Providers(result.map_err(|e: ClientError| client_error(s, &e)))
         }
         WizardCmd::Create(input) => {
             let result = client.call::<CreatedSubscription>(commands::CREATE_SUBSCRIPTION, input.to_args()).await;
-            WizardResult::Created(result.map_err(|e: ClientError| e.to_string()))
+            WizardResult::Created(result.map_err(|e: ClientError| client_error(s, &e)))
         }
         WizardCmd::LoadModels { id } => {
             let result =
                 client.call_with_timeout::<RefreshModelsResult>(commands::REFRESH_MODEL_LIST, json!({ "id": id }), REFRESH_TIMEOUT).await;
             // `id` 原样带回去: 代次之外的纵深防御, 向导据此核对结果是不是这次请求的 (见 `WizardResult`)。
-            WizardResult::Models { id: id.clone(), result: result.map_err(|e: ClientError| e.to_string()) }
+            WizardResult::Models { id: id.clone(), result: result.map_err(|e: ClientError| client_error(s, &e)) }
         }
         WizardCmd::Probe(input) => {
             let result =
                 client.call_with_timeout::<ProbeModelsResult>(commands::PROBE_CUSTOM_MODELS, input.to_args(), REFRESH_TIMEOUT).await;
             // `input.base_url` 在 `submit_probe` 打包 `ProbeInput` 时已经 trim 过, 原样带回去。
-            WizardResult::Probed { base_url: input.base_url.clone(), result: result.map_err(|e: ClientError| e.to_string()) }
+            WizardResult::Probed { base_url: input.base_url.clone(), result: result.map_err(|e: ClientError| client_error(s, &e)) }
         }
         WizardCmd::SaveSlots { id, model_slots } => {
             // 只带 `model_slots` 这一块 patch (不带 `slot_efforts`): 向导不设置思考档位, 少发一个
@@ -178,16 +179,16 @@ async fn call_wizard(client: &Client, cmd: &WizardCmd) -> WizardResult {
             // 字段不同, 这里刻意只发一个)。
             let patch = json!({ "model_slots": model_slots });
             let result = client.call::<serde_json::Value>(commands::UPDATE_SUBSCRIPTION, json!({ "id": id, "patch": patch })).await;
-            WizardResult::SlotsSaved(result.map(|_| ()).map_err(|e: ClientError| e.to_string()))
+            WizardResult::SlotsSaved(result.map(|_| ()).map_err(|e: ClientError| client_error(s, &e)))
         }
     }
 }
 
 /// 向导的请求。与 `spawn_mutation` 一样**不去重、不补跑**: 向导同一时刻最多一个请求在飞, 由它
 /// 自己的阶段保证。`epoch` 原样带回, `App` 据此丢弃已经关掉的向导实例的结果。
-fn spawn_wizard(client: Arc<Client>, tx: UnboundedSender<Action>, epoch: u64, cmd: WizardCmd) {
+fn spawn_wizard(client: Arc<Client>, tx: UnboundedSender<Action>, epoch: u64, cmd: WizardCmd, s: &'static Strings) {
     tokio::spawn(async move {
-        let result = call_wizard(&client, &cmd).await;
+        let result = call_wizard(&client, &cmd, s).await;
         let _ = tx.send(Action::WizardDone { epoch, result: Box::new(result) });
     });
 }
@@ -312,12 +313,15 @@ impl Fetches {
 }
 
 pub async fn run(client: Arc<Client>, mut app: App) -> std::io::Result<()> {
+    // `App` 是唯一持有 `&'static Strings` 的地方 (由 main.rs 按连接后的界面语言算出来传给它);
+    // 主循环拿一份引用往下传, 不用重新解析语言, 也不需要自己再存一份。
+    let s = app.strings();
     // try_init() 进入备用屏幕 + raw mode, 并装好 panic 钩子 (panic 时先恢复终端再打印)。
     // 用 try_init 而不是 init(): 没有可用终端 (无 tty, 比如 stdin/stdout 都不是终端) 时返回
     // Err 而不是 panic, 这样 main.rs 能走统一的「一行提示 + exit 1」路径, 而不是 panic 的
     // exit 101 + backtrace。
     let mut terminal = ratatui::try_init()?;
-    let result = event_loop(&mut terminal, client, &mut app).await;
+    let result = event_loop(&mut terminal, client, &mut app, s).await;
     ratatui::restore();
     result
 }
@@ -333,6 +337,7 @@ fn process_action(
     fetches: &mut Fetches,
     issued: &mut Issued,
     app: &mut App,
+    s: &'static Strings,
 ) -> bool {
     // 必须排在下面的 `issued.next()` 之前: `MutationDone` 的 barrier 要反映「变更完成那一刻」
     // 已经发起过的所有加载, 这次消息自己触发的补跑 (在 `app.update` 之后才会真正 issue) 不该算
@@ -340,7 +345,7 @@ fn process_action(
     stamp_barrier(&mut action, issued);
     if let Action::FetchDone { fetch, .. } = &action {
         if let Some(rerun) = fetches.finished(fetch.kind()) {
-            spawn_fetch(client.clone(), tx.clone(), rerun, issued.next());
+            spawn_fetch(client.clone(), tx.clone(), rerun, issued.next(), s);
         }
     }
     for cmd in app.update(action) {
@@ -348,15 +353,15 @@ fn process_action(
             Cmd::Quit => return true,
             Cmd::Fetch(fetch) => {
                 if fetches.request(&fetch) {
-                    spawn_fetch(client.clone(), tx.clone(), fetch, issued.next());
+                    spawn_fetch(client.clone(), tx.clone(), fetch, issued.next(), s);
                 }
             }
             // `Cmd::Mutate` 的负载是 `Box<Mutation>` (消掉 clippy 的 `large_enum_variant`); `spawn_mutation` 本身不需要跟着改签名, 这里解引用一次拿回
             // 所有权就够了。
-            Cmd::Mutate(mutation) => spawn_mutation(client.clone(), tx.clone(), *mutation),
+            Cmd::Mutate(mutation) => spawn_mutation(client.clone(), tx.clone(), *mutation, s),
             // 同上, `Cmd::Wizard` 的负载也是 `Box`, 同样只是为了避免 `Vec<Cmd>` 的
             // 每个元素都按最大变体分配, 不需要 `spawn_wizard` 跟着收 `Box`。
-            Cmd::Wizard { epoch, cmd } => spawn_wizard(client.clone(), tx.clone(), epoch, *cmd),
+            Cmd::Wizard { epoch, cmd } => spawn_wizard(client.clone(), tx.clone(), epoch, *cmd, s),
         }
     }
     false
@@ -379,7 +384,7 @@ fn key_action(ev: Option<Result<Event, std::io::Error>>, app: &mut App) -> Optio
     }
 }
 
-async fn event_loop(terminal: &mut ratatui::DefaultTerminal, client: Arc<Client>, app: &mut App) -> std::io::Result<()> {
+async fn event_loop(terminal: &mut ratatui::DefaultTerminal, client: Arc<Client>, app: &mut App, s: &'static Strings) -> std::io::Result<()> {
     let (tx, mut rx) = unbounded_channel::<Action>();
     let mut sse = tokio::spawn(sse_loop(client.clone(), tx.clone()));
     // sse_loop 正常情况下永远不返回; 它结束了 (panic 或者提前 return) 说明事件流彻底死了,
@@ -417,7 +422,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, client: Arc<Client>
         };
 
         let Some(action) = action else { continue };
-        if process_action(action, &client, &tx, &mut fetches, &mut issued, app) {
+        if process_action(action, &client, &tx, &mut fetches, &mut issued, app, s) {
             break 'outer;
         }
         // 抽干再画: select! 那一个处理完之后, 把这时已经排在队列里的 action 一并处理掉,
@@ -429,7 +434,7 @@ async fn event_loop(terminal: &mut ratatui::DefaultTerminal, client: Arc<Client>
         for _ in 0..rx.len() {
             match rx.try_recv() {
                 Ok(a) => {
-                    if process_action(a, &client, &tx, &mut fetches, &mut issued, app) {
+                    if process_action(a, &client, &tx, &mut fetches, &mut issued, app, s) {
                         break 'outer;
                     }
                 }
@@ -781,7 +786,7 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_mutation(client.clone(), tx.clone(), Mutation::SetEnabled { id: "1".into(), enabled: false });
+        spawn_mutation(client.clone(), tx.clone(), Mutation::SetEnabled { id: "1".into(), enabled: false }, &crate::i18n::ZH);
         assert_eq!(
             rx.recv().await,
             Some(Action::MutationDone {
@@ -791,7 +796,7 @@ mod tests {
             })
         );
 
-        spawn_mutation(client.clone(), tx.clone(), Mutation::TestConnection { id: "1".into() });
+        spawn_mutation(client.clone(), tx.clone(), Mutation::TestConnection { id: "1".into() }, &crate::i18n::ZH);
         assert_eq!(
             rx.recv().await,
             Some(Action::MutationDone {
@@ -807,7 +812,7 @@ mod tests {
             })
         );
 
-        spawn_mutation(client.clone(), tx.clone(), Mutation::RefreshModels { id: "1".into() });
+        spawn_mutation(client.clone(), tx.clone(), Mutation::RefreshModels { id: "1".into() }, &crate::i18n::ZH);
         assert_eq!(
             rx.recv().await,
             Some(Action::MutationDone {
@@ -817,7 +822,7 @@ mod tests {
             })
         );
 
-        spawn_mutation(client.clone(), tx.clone(), Mutation::RefreshBalance { id: "1".into() });
+        spawn_mutation(client.clone(), tx.clone(), Mutation::RefreshBalance { id: "1".into() }, &crate::i18n::ZH);
         assert_eq!(
             rx.recv().await,
             Some(Action::MutationDone {
@@ -827,7 +832,7 @@ mod tests {
             })
         );
 
-        spawn_mutation(client, tx, Mutation::Delete { id: "1".into() });
+        spawn_mutation(client, tx, Mutation::Delete { id: "1".into() }, &crate::i18n::ZH);
         assert_eq!(
             rx.recv().await,
             Some(Action::MutationDone {
@@ -857,7 +862,7 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_mutation(client, tx, Mutation::TestConnection { id: "1".into() });
+        spawn_mutation(client, tx, Mutation::TestConnection { id: "1".into() }, &crate::i18n::ZH);
         let mut done = rx.recv().await.expect("channel 关闭了");
         let Action::MutationDone { barrier, .. } = &done else { panic!("{done:?}") };
         assert_eq!(*barrier, 0, "spawn_mutation 发出时应该只是占位符, 真正的值由主循环收到时补盖");
@@ -914,8 +919,8 @@ mod tests {
 
         // 1) 两次都会产出 Cmd::Fetch(Subscriptions): `Connected` 与 `Refresh` 各自在订阅页的
         //    `update()` 里映射成一次 Fetch。第一次真的发; 这次请求还没回来时第二次应该被去重。
-        assert!(!process_action(Action::Connected { app_version: "9.9.9-test".into() }, &client, &tx, &mut fetches, &mut issued, &mut app));
-        assert!(!process_action(Action::Refresh, &client, &tx, &mut fetches, &mut issued, &mut app));
+        assert!(!process_action(Action::Connected { app_version: "9.9.9-test".into() }, &client, &tx, &mut fetches, &mut issued, &mut app, &crate::i18n::ZH));
+        assert!(!process_action(Action::Refresh, &client, &tx, &mut fetches, &mut issued, &mut app, &crate::i18n::ZH));
 
         tokio::time::timeout(Duration::from_secs(3), async {
             while count_requests(&server, "list_subscriptions").await < 1 {
@@ -934,12 +939,12 @@ mod tests {
         let first_done = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await.expect("等第一次 FetchDone 超时").expect("channel 关闭了");
         let Action::FetchDone { issued: first_issued, .. } = &first_done else { panic!("{first_done:?}") };
         let first_issued = *first_issued;
-        assert!(!process_action(first_done, &client, &tx, &mut fetches, &mut issued, &mut app));
+        assert!(!process_action(first_done, &client, &tx, &mut fetches, &mut issued, &mut app, &crate::i18n::ZH));
 
         let rerun_done = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await.expect("等补跑的 FetchDone 超时").expect("channel 关闭了");
         let Action::FetchDone { issued: rerun_issued, .. } = &rerun_done else { panic!("{rerun_done:?}") };
         assert!(*rerun_issued > first_issued, "补跑应该带一个比第一次更大的 issued");
-        assert!(!process_action(rerun_done, &client, &tx, &mut fetches, &mut issued, &mut app));
+        assert!(!process_action(rerun_done, &client, &tx, &mut fetches, &mut issued, &mut app, &crate::i18n::ZH));
 
         assert_eq!(count_requests(&server, "list_subscriptions").await, 2, "总共应该只发生过两次 list_subscriptions 请求: 第一次 + 补跑");
 
@@ -951,7 +956,8 @@ mod tests {
             &tx,
             &mut fetches,
             &mut issued,
-            &mut app
+            &mut app,
+            &crate::i18n::ZH
         ));
         assert!(!process_action(
             Action::Mutate(Mutation::SetEnabled { id: "b".into(), enabled: false }),
@@ -959,7 +965,8 @@ mod tests {
             &tx,
             &mut fetches,
             &mut issued,
-            &mut app
+            &mut app,
+            &crate::i18n::ZH
         ));
         assert!(!process_action(
             Action::Mutate(Mutation::SetEnabled { id: "c".into(), enabled: false }),
@@ -967,7 +974,8 @@ mod tests {
             &tx,
             &mut fetches,
             &mut issued,
-            &mut app
+            &mut app,
+            &crate::i18n::ZH
         ));
 
         tokio::time::timeout(Duration::from_secs(3), async {
@@ -1005,8 +1013,8 @@ mod tests {
         let (tx, mut rx) = unbounded_channel::<Action>();
 
         let mutation = Mutation::TestConnection { id: "1".into() };
-        spawn_mutation(client.clone(), tx.clone(), mutation.clone());
-        spawn_mutation(client, tx, mutation);
+        spawn_mutation(client.clone(), tx.clone(), mutation.clone(), &crate::i18n::ZH);
+        spawn_mutation(client, tx, mutation, &crate::i18n::ZH);
 
         assert!(rx.recv().await.is_some());
         assert!(rx.recv().await.is_some());
@@ -1038,7 +1046,7 @@ mod tests {
         let model_slots = ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new() };
         let mut slot_efforts = SlotEfforts::default();
         slot_efforts.set(Slot::Opus, Some("high".into()));
-        spawn_mutation(client, tx, Mutation::UpdateSlots { id: "1".into(), model_slots, slot_efforts });
+        spawn_mutation(client, tx, Mutation::UpdateSlots { id: "1".into(), model_slots, slot_efforts }, &crate::i18n::ZH);
 
         let done = rx.recv().await.expect("channel 关闭了");
         assert!(matches!(done, Action::MutationDone { result: Ok(MutationOutcome::SlotsSaved), .. }), "{done:?}");
@@ -1071,6 +1079,7 @@ mod tests {
                 mode: RoutingMode::RoundRobin,
                 subscription_ids: vec!["1".into(), "2".into()],
             },
+            &crate::i18n::ZH,
         );
 
         let done = rx.recv().await.expect("channel 关闭了");
@@ -1095,7 +1104,7 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_fetch(client, tx, Fetch::VirtualModels, 1);
+        spawn_fetch(client, tx, Fetch::VirtualModels, 1, &crate::i18n::ZH);
 
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::FetchDone { fetch, issued, result } = done else { panic!("{done:?}") };
@@ -1135,7 +1144,7 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_wizard(client, tx, 7, WizardCmd::LoadProviders);
+        spawn_wizard(client, tx, 7, WizardCmd::LoadProviders, &crate::i18n::ZH);
 
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::WizardDone { epoch, result } = done else { panic!("{done:?}") };
@@ -1161,13 +1170,42 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_wizard(client, tx, 7, WizardCmd::LoadProviders);
+        spawn_wizard(client, tx, 7, WizardCmd::LoadProviders, &crate::i18n::ZH);
 
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::WizardDone { epoch, result } = done else { panic!("{done:?}") };
         assert_eq!(epoch, 7, "代次应该原样带回");
         let WizardResult::Providers(providers) = *result else { panic!("{result:?}") };
         assert!(providers.is_err(), "{providers:?}");
+    }
+
+    /// **锁住「一律经 `client_error` 格式化, 不直接用 `ClientError` 的 `Display`」这条纪律**:
+    /// 持续 404 (与 `client/http.rs::persistent_404_or_401_means_disabled` 同一套 mock 手法) 落成
+    /// `ClientError::Disabled`, 它的 `Display` 现在是英文开发者文字 ("terminal UI is disabled"),
+    /// 但 `call_wizard` 交给 `WizardResult` 的必须是 `client_error(&ZH, ..)` 那句中文——如果哪天有人
+    /// 手滑把 `call_wizard` 的某个分支改回 `e.to_string()`, 这条测试会红 (断言的是中文, 不是英文子串)。
+    #[tokio::test]
+    async fn wizard_load_providers_localizes_the_error_via_strings() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/ui/api/cmd/list_providers"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        write_runtime(dir.path(), server.address().port(), "s", "9.9.9-test");
+        let client = Arc::new(Client::connect(dir.path()).unwrap());
+        let (tx, mut rx) = unbounded_channel::<Action>();
+
+        spawn_wizard(client, tx, 7, WizardCmd::LoadProviders, &crate::i18n::ZH);
+
+        let done = rx.recv().await.expect("channel 关闭了");
+        let Action::WizardDone { result, .. } = done else { panic!("{done:?}") };
+        let WizardResult::Providers(providers) = *result else { panic!("{result:?}") };
+        // 写死中文, 不通过 `client_error` 反算期望值——否则 `client_error` 本身被改坏 (比如退回
+        // `e.to_string()`) 时, 断言的两边会一起坏掉, 谁也捉不住谁。
+        assert_eq!(providers, Err("终端界面未启用".to_string()));
     }
 
     /// `call_wizard` 里手写 patch 的 `SaveSlots` 分支, 与 `call_mutation` 的每个分支一样要有
@@ -1203,7 +1241,7 @@ mod tests {
             haiku: "glm-4.6".into(),
             fallback: String::new(),
         };
-        spawn_wizard(client, tx, 7, WizardCmd::SaveSlots { id: "1".into(), model_slots });
+        spawn_wizard(client, tx, 7, WizardCmd::SaveSlots { id: "1".into(), model_slots }, &crate::i18n::ZH);
 
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::WizardDone { epoch, result } = done else { panic!("{done:?}") };
@@ -1229,7 +1267,7 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_wizard(client, tx, 7, WizardCmd::LoadModels { id: "1".into() });
+        spawn_wizard(client, tx, 7, WizardCmd::LoadModels { id: "1".into() }, &crate::i18n::ZH);
 
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::WizardDone { epoch, result } = done else { panic!("{done:?}") };
@@ -1280,12 +1318,12 @@ mod tests {
             virtual_model_name: Some("model-sonnet".into()),
             status: Some(RequestStatus::Error),
         };
-        spawn_fetch(client.clone(), tx.clone(), Fetch::Requests(RequestQuery { page: 2, filters }), 1);
+        spawn_fetch(client.clone(), tx.clone(), Fetch::Requests(RequestQuery { page: 2, filters }), 1, &crate::i18n::ZH);
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::FetchDone { result, .. } = done else { panic!("{done:?}") };
         assert!(matches!(result, Ok(FetchData::Requests(_))), "{result:?}");
 
-        spawn_fetch(client, tx, Fetch::Requests(RequestQuery::default()), 2);
+        spawn_fetch(client, tx, Fetch::Requests(RequestQuery::default()), 2, &crate::i18n::ZH);
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::FetchDone { result, .. } = done else { panic!("{done:?}") };
         assert!(matches!(result, Ok(FetchData::Requests(_))), "{result:?}");

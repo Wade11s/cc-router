@@ -30,15 +30,17 @@ impl Platform {
     }
 }
 
+/// **用户可见文字一律走 `i18n::client_error`, 不看这里的 `Display`**——这个 derive 现在是英文
+/// 开发者文字, 只给日志 / `Debug` 场景用。
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DiscoveryError {
-    #[error("无法确定数据目录: 环境变量 {0} 未设置")]
+    #[error("cannot determine data directory: environment variable {0} is not set")]
     MissingEnv(&'static str),
-    #[error("未找到 {0}")]
+    #[error("not found: {0}")]
     NoRuntimeFile(PathBuf),
-    #[error("{0} 已损坏: {1}")]
+    #[error("{0} is corrupt: {1}")]
     Corrupt(PathBuf, String),
-    #[error("{0} 里没有可用端口")]
+    #[error("{0} has no usable port")]
     NoPort(PathBuf),
 }
 

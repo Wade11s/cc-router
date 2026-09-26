@@ -467,6 +467,46 @@ pub struct Strings {
     pub key_reveal: &'static str,
     /// 表单内容超过可视高度、被截断时最后一行的提示。
     pub form_more: &'static str,
+
+    // ---------- 错误文案 (`ClientError` / `DiscoveryError` → 用户文字, 见 `client_error`) ----------
+    /// `ClientError::NotRunning`。
+    pub err_not_running: &'static str,
+    /// `ClientError::Disabled` (重读密钥重试后仍是 404 / 401)。
+    pub err_disabled: &'static str,
+    /// `ClientError::Transport`。
+    pub err_network: fn(detail: &str) -> String,
+    /// `ClientError::Decode`。
+    pub err_bad_response: fn(detail: &str) -> String,
+    /// `ClientError::ReadFile` (读本地 CA 证书失败)。
+    pub err_read_file: fn(path: &str, detail: &str) -> String,
+    /// `DiscoveryError::MissingEnv`。
+    pub err_data_dir_env: fn(var: &str) -> String,
+    /// `DiscoveryError::NoRuntimeFile`。
+    pub err_file_missing: fn(path: &str) -> String,
+    /// `DiscoveryError::Corrupt`。
+    pub err_file_corrupt: fn(path: &str, detail: &str) -> String,
+    /// `DiscoveryError::NoPort`。
+    pub err_no_port: fn(path: &str) -> String,
+
+    // ---------- 命令行 (`main.rs`: `--help` / 参数错误 / `--check` / 连接前提示) ----------
+    pub cli_help: &'static str,
+    pub cli_err_missing_data_dir_path: &'static str,
+    pub cli_err_unknown_arg: fn(arg: &str) -> String,
+    /// `explain()` 的 `ClientError::Discovery` 分支, 接在 `client_error` 的结果后面另起一行。
+    pub cli_discovery_hint: &'static str,
+    /// `explain()` 的 `ClientError::NotRunning` 分支, 接在 `client_error` 的结果后面 (含前导句号,
+    /// 这样 `main.rs` 不用再拼一个字面的中文句号)。
+    pub cli_not_running_hint: &'static str,
+    /// `explain()` 的 `ClientError::Disabled` 分支, 同上 (含前导句号)。
+    pub cli_disabled_hint: &'static str,
+    pub cli_terminal_init_failed: fn(err: &str) -> String,
+    pub cli_check_connected: fn(app_version: &str, pid: u32) -> String,
+    pub cli_check_addr: fn(base_url: &str) -> String,
+    pub cli_check_mode: fn(mode: &str, listen_all: bool) -> String,
+    pub cli_check_subs: fn(total: usize, dispatchable: usize) -> String,
+    pub cli_check_lang: fn(lang: &str) -> String,
+    pub cli_check_events_ok: &'static str,
+    pub cli_check_version_mismatch: fn(tui: &str, app: &str) -> String,
 }
 
 impl Strings {
@@ -507,6 +547,32 @@ impl Strings {
             RoutingMode::Sticky => self.vm_mode_full_sticky,
             RoutingMode::Unknown => self.vm_mode_full_unknown,
         }
+    }
+}
+
+/// 唯一的「`ClientError` → 用户文字」入口: toast / `--check` 输出 / 连接前提示都必须经过这里,
+/// 不允许在别处直接格式化 `ClientError` (它的 `Display` 现在是英文开发者文字, 只给日志 / `Debug`
+/// 用)。
+pub fn client_error(s: &Strings, e: &crate::client::ClientError) -> String {
+    use crate::client::ClientError;
+    match e {
+        ClientError::Discovery(d) => discovery_error(s, d),
+        ClientError::NotRunning => s.err_not_running.to_string(),
+        ClientError::Disabled => s.err_disabled.to_string(),
+        ClientError::Api { status, code, message } => format!("{message} ({code}, HTTP {status})"),
+        ClientError::Transport(detail) => (s.err_network)(detail),
+        ClientError::Decode(detail) => (s.err_bad_response)(detail),
+        ClientError::ReadFile { path, message } => (s.err_read_file)(path, message),
+    }
+}
+
+fn discovery_error(s: &Strings, e: &crate::client::discovery::DiscoveryError) -> String {
+    use crate::client::discovery::DiscoveryError;
+    match e {
+        DiscoveryError::MissingEnv(var) => (s.err_data_dir_env)(var),
+        DiscoveryError::NoRuntimeFile(path) => (s.err_file_missing)(&path.display().to_string()),
+        DiscoveryError::Corrupt(path, detail) => (s.err_file_corrupt)(&path.display().to_string(), detail),
+        DiscoveryError::NoPort(path) => (s.err_no_port)(&path.display().to_string()),
     }
 }
 
@@ -879,6 +945,43 @@ pub const ZH: Strings = Strings {
     key_next_field: "下一项",
     key_reveal: "显示 / 隐藏",
     form_more: "… 内容放不下",
+
+    err_not_running: "cc-router 未在运行",
+    err_disabled: "终端界面未启用",
+    err_network: |detail| format!("网络错误: {detail}"),
+    err_bad_response: |detail| format!("响应无法解析: {detail}"),
+    err_read_file: |path, detail| format!("读取 {path}: {detail}"),
+    err_data_dir_env: |var| format!("无法确定数据目录: 环境变量 {var} 未设置"),
+    err_file_missing: |path| format!("未找到 {path}"),
+    err_file_corrupt: |path, detail| format!("{path} 已损坏: {detail}"),
+    err_no_port: |path| format!("{path} 里没有可用端口"),
+
+    cli_help: "\
+cc-router-tui — cc-router 的终端界面
+
+用法: cc-router-tui [选项]
+不带参数运行即进入界面 (需要 cc-router 桌面 app 正在运行, 且已在 设置 → 安全与访问 → 终端界面 打开开关)。
+
+选项:
+  --check            连接正在运行的 cc-router 并打印状态, 然后退出
+  --data-dir <路径>  指定 cc-router 的数据目录 (默认按系统规则查找)
+  --no-fx            关闭动效 (也可以设环境变量 CCR_TUI_NO_FX=1)
+  -V, --version      打印版本
+  -h, --help         打印本帮助
+",
+    cli_err_missing_data_dir_path: "--data-dir 需要一个路径",
+    cli_err_unknown_arg: |arg| format!("未知参数: {arg}"),
+    cli_discovery_hint: "请先启动 cc-router 桌面 app。",
+    cli_not_running_hint: "。请先启动桌面 app。",
+    cli_disabled_hint: "。请在桌面 app 的 设置 → 安全与访问 → 终端界面 打开开关。",
+    cli_terminal_init_failed: |err| format!("无法初始化终端: {err}\n请在真正的终端窗口里运行 cc-router-tui。"),
+    cli_check_connected: |app_version, pid| format!("已连接 cc-router {app_version} (pid {pid})"),
+    cli_check_addr: |base_url| format!("  地址     {base_url}"),
+    cli_check_mode: |mode, listen_all| format!("  模式     {mode}{}", if listen_all { " · 监听 0.0.0.0" } else { "" }),
+    cli_check_subs: |total, dispatchable| format!("  订阅     {total} 个, {dispatchable} 个可调度"),
+    cli_check_lang: |lang| format!("  语言     {lang}"),
+    cli_check_events_ok: "  事件流   正常",
+    cli_check_version_mismatch: |tui, app| format!("\n注意: TUI 版本 {tui} 与 app 版本 {app} 不一致。"),
 };
 
 pub fn strings(lang: Lang) -> &'static Strings {
@@ -946,5 +1049,128 @@ mod tests {
             let total: usize = s.tabs.iter().map(|t| t.width() + 4).sum::<usize>() + (s.tabs.len() - 1);
             assert!(total <= 76, "{lang:?}: 标签栏宽 {total}");
         }
+    }
+
+    fn is_cjk(c: char) -> bool {
+        matches!(c as u32,
+            0x3000..=0x303F | 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xFF00..=0xFFEF
+        )
+    }
+
+    /// 去掉 `//` 行注释 (含 `///` / `//!` 文档注释), 但尊重字符串字面量——不能把
+    /// `"http://127.0.0.1:{p}"` 这类内容里的 `//` 误判成注释开始, 否则会漏扫真正的字符串内容。
+    /// 不处理块注释 / 字符字面量: 本仓库当前在「首个 `#[cfg(test)]` 之前」的范围内没有块注释,
+    /// 也没有含 CJK 的字符字面量, 简单实现就够用——扫描红了才需要重新考虑这条取舍。
+    fn strip_line_comments(src: &str) -> String {
+        let mut out = String::with_capacity(src.len());
+        let mut chars = src.chars().peekable();
+        let mut in_string = false;
+        while let Some(c) = chars.next() {
+            if in_string {
+                out.push(c);
+                if c == '\\' {
+                    if let Some(next) = chars.next() {
+                        out.push(next);
+                    }
+                } else if c == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            if c == '"' {
+                in_string = true;
+                out.push(c);
+                continue;
+            }
+            if c == '/' && chars.peek() == Some(&'/') {
+                while let Some(&nc) = chars.peek() {
+                    if nc == '\n' {
+                        break;
+                    }
+                    chars.next();
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
+    }
+
+    /// **锁住 P6 的收编成果**: `i18n.rs` 之外的非测试代码不许再冒出 CJK 字符串字面量——所有
+    /// 用户可见文字都必须经 `Strings`。只看每个文件「第一个 `#[cfg(test)]` 之前」的部分 (测试里
+    /// 用中文断言 / mock 数据是正常的, 不受这条约束); 忽略 `//` 注释 (含文档注释)。读文件失败也算
+    /// 失败 (fail-closed), 不能让扫描本身的问题被静默放过。
+    #[test]
+    fn no_cjk_string_literals_outside_i18n() {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("读不了目录 {dir:?}: {e}"));
+            for entry in entries.filter_map(Result::ok) {
+                let p = entry.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().is_some_and(|e| e == "rs") {
+                    out.push(p);
+                }
+            }
+        }
+
+        let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        walk(&src_dir, &mut files);
+
+        let mut offenders = Vec::new();
+        for path in files {
+            if path.file_name().is_some_and(|n| n == "i18n.rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不了 {path:?}: {e}"));
+            let before_tests = text.split("#[cfg(test)]").next().unwrap_or(&text);
+            let stripped = strip_line_comments(before_tests);
+            for (i, line) in stripped.split('\n').enumerate() {
+                if line.chars().any(is_cjk) {
+                    let rel = path.strip_prefix(&src_dir).unwrap_or(&path);
+                    offenders.push(format!("{}:{}", rel.display(), i + 1));
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "非 i18n.rs 的非测试代码里发现含 CJK 字符的字符串字面量: {offenders:?}");
+    }
+
+    /// 每个 `ClientError` 变体经 `client_error(&ZH, ..)` 得到的文字必须与旧版硬编码 `Display`
+    /// (改英文之前) 逐字节一致——这就是「纯搬运, 中文显示不变」这条纪律的直接证据。
+    #[test]
+    fn client_errors_are_worded_by_strings() {
+        use crate::client::discovery::DiscoveryError;
+        use crate::client::ClientError;
+        use std::path::PathBuf;
+
+        assert_eq!(client_error(&ZH, &ClientError::NotRunning), "cc-router 未在运行");
+        assert_eq!(client_error(&ZH, &ClientError::Disabled), "终端界面未启用");
+        assert_eq!(client_error(&ZH, &ClientError::Transport("x".into())), "网络错误: x");
+        assert_eq!(client_error(&ZH, &ClientError::Decode("x".into())), "响应无法解析: x");
+        assert_eq!(
+            client_error(&ZH, &ClientError::ReadFile { path: "/a/b".into(), message: "denied".into() }),
+            "读取 /a/b: denied"
+        );
+        assert_eq!(
+            client_error(&ZH, &ClientError::Api { status: 400, code: "bad_request".into(), message: "无效 id".into() }),
+            "无效 id (bad_request, HTTP 400)"
+        );
+        assert_eq!(
+            client_error(&ZH, &ClientError::Discovery(DiscoveryError::MissingEnv("HOME"))),
+            "无法确定数据目录: 环境变量 HOME 未设置"
+        );
+        assert_eq!(
+            client_error(&ZH, &ClientError::Discovery(DiscoveryError::NoRuntimeFile(PathBuf::from("/x/runtime.json")))),
+            "未找到 /x/runtime.json"
+        );
+        assert_eq!(
+            client_error(&ZH, &ClientError::Discovery(DiscoveryError::Corrupt(PathBuf::from("/x/runtime.json"), "eof".into()))),
+            "/x/runtime.json 已损坏: eof"
+        );
+        assert_eq!(
+            client_error(&ZH, &ClientError::Discovery(DiscoveryError::NoPort(PathBuf::from("/x/runtime.json")))),
+            "/x/runtime.json 里没有可用端口"
+        );
     }
 }

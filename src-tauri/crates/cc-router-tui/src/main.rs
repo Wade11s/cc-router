@@ -10,24 +10,10 @@ use cc_router_tui::client::discovery::{default_data_dir, read_runtime, Platform}
 use cc_router_tui::client::dto::{ProxyStatus, Settings, Subscription};
 use cc_router_tui::client::{commands, Client, ClientError};
 use cc_router_tui::format::Tz;
-use cc_router_tui::i18n::{strings, Lang};
+use cc_router_tui::i18n::{client_error, strings, Lang};
 use cc_router_tui::runtime;
 use cc_router_tui::theme::{ColorMode, Theme};
 use serde_json::json;
-
-const HELP: &str = "\
-cc-router-tui — cc-router 的终端界面
-
-用法: cc-router-tui [选项]
-不带参数运行即进入界面 (需要 cc-router 桌面 app 正在运行, 且已在 设置 → 安全与访问 → 终端界面 打开开关)。
-
-选项:
-  --check            连接正在运行的 cc-router 并打印状态, 然后退出
-  --data-dir <路径>  指定 cc-router 的数据目录 (默认按系统规则查找)
-  --no-fx            关闭动效 (也可以设环境变量 CCR_TUI_NO_FX=1)
-  -V, --version      打印版本
-  -h, --help         打印本帮助
-";
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Args {
@@ -45,6 +31,9 @@ enum Parsed {
     Invalid(String),
 }
 
+/// 解析到一半就出错时 (缺路径 / 未知参数), 用当时已经拿到的部分 `Args` (比如更早的
+/// `--data-dir` 覆盖) 去算连接前语言——错误提示因此也能跟着 `--data-dir` 指向的那个数据目录里的
+/// `system_locale` 走, 不用等 `Args` 全部解析完。
 fn parse_args(mut argv: impl Iterator<Item = String>) -> Parsed {
     let mut args = Args::default();
     while let Some(a) = argv.next() {
@@ -55,30 +44,28 @@ fn parse_args(mut argv: impl Iterator<Item = String>) -> Parsed {
             "--no-fx" => args.no_fx = true,
             "--data-dir" => match argv.next() {
                 Some(p) => args.data_dir = Some(PathBuf::from(p)),
-                None => return Parsed::Invalid("--data-dir 需要一个路径".into()),
+                None => return Parsed::Invalid(strings(pre_connect_lang(&args)).cli_err_missing_data_dir_path.into()),
             },
-            other => return Parsed::Invalid(format!("未知参数: {other}")),
+            other => return Parsed::Invalid((strings(pre_connect_lang(&args)).cli_err_unknown_arg)(other)),
         }
     }
     Parsed::Run(args)
 }
 
-/// 给人看的一句话 + 下一步该做什么。
-///
-/// `_lang`: 连接前语言 (见 [`pre_connect_lang`])。本任务只接线, 文案仍是硬编码中文——
-/// 下一期把这几行搬进 `Strings` 后, 这个参数才会真正决定语言。
-fn explain(err: &ClientError, _lang: Lang) -> String {
+/// 给人看的一句话 + 下一步该做什么。`lang`: 连接前语言 (见 [`pre_connect_lang`])。
+fn explain(err: &ClientError, lang: Lang) -> String {
+    let s = strings(lang);
     match err {
-        ClientError::Discovery(e) => format!("{e}\n请先启动 cc-router 桌面 app。"),
-        ClientError::NotRunning => "cc-router 未在运行。请先启动桌面 app。".into(),
-        ClientError::Disabled => "终端界面未启用。请在桌面 app 的 设置 → 安全与访问 → 终端界面 打开开关。".into(),
-        other => other.to_string(),
+        ClientError::Discovery(_) => format!("{}\n{}", client_error(s, err), s.cli_discovery_hint),
+        ClientError::NotRunning => format!("{}{}", client_error(s, err), s.cli_not_running_hint),
+        ClientError::Disabled => format!("{}{}", client_error(s, err), s.cli_disabled_hint),
+        _ => client_error(s, err),
     }
 }
 
 /// `ui` 里两类完全不同的失败: 连不上桌面 app (`ClientError`, 走 `explain`) vs 本地终端本身
-/// 初始化不了 (比如没有 tty)。故意不把后者塞进 `ClientError::Transport`——那条分支的 Display
-/// 是「网络错误: …」, 会让「请在真正的终端窗口里运行」被误报成网络问题。
+/// 初始化不了 (比如没有 tty)。故意不把后者塞进 `ClientError::Transport`——那条分支经
+/// `client_error` 显示成「网络错误: …」, 会让「请在真正的终端窗口里运行」被误报成网络问题。
 enum Failure {
     Client(ClientError),
     Terminal(std::io::Error),
@@ -90,11 +77,9 @@ impl From<ClientError> for Failure {
     }
 }
 
-/// 终端初始化失败 (没有可用 tty 等) 时给人看的一句话。
-///
-/// `_lang`: 见 [`explain`] 同一条注释——本任务只接线, 文案不变。
-fn terminal_failure_message(err: &std::io::Error, _lang: Lang) -> String {
-    format!("无法初始化终端: {err}\n请在真正的终端窗口里运行 cc-router-tui。")
+/// 终端初始化失败 (没有可用 tty 等) 时给人看的一句话。`lang`: 见 [`explain`] 同一条注释。
+fn terminal_failure_message(err: &std::io::Error, lang: Lang) -> String {
+    (strings(lang).cli_terminal_init_failed)(&err.to_string())
 }
 
 fn env(key: &str) -> Option<String> {
@@ -127,16 +112,18 @@ async fn check(client: Client) -> Result<(), ClientError> {
     let subs: Vec<Subscription> = client.call(commands::LIST_SUBSCRIPTIONS, json!({})).await?;
     let _events = client.events().await?; // 只验证事件流能建立
     let rt = client.runtime().await;
+    // `--check` 用连接后的界面语言 (与 `ui()` 同一条解析路径), 不是连接前语言。
+    let s = strings(Lang::resolve(&settings.preferred_language, rt.system_locale.as_deref(), env));
 
     let dispatchable = subs.iter().filter(|s| s.is_dispatchable).count();
-    println!("已连接 cc-router {} (pid {})", rt.app_version, rt.pid);
-    println!("  地址     {}", status.base_url);
-    println!("  模式     {}{}", status.mode, if status.listen_all { " · 监听 0.0.0.0" } else { "" });
-    println!("  订阅     {} 个, {} 个可调度", subs.len(), dispatchable);
-    println!("  语言     {}", settings.preferred_language);
-    println!("  事件流   正常");
+    println!("{}", (s.cli_check_connected)(&rt.app_version, rt.pid));
+    println!("{}", (s.cli_check_addr)(&status.base_url));
+    println!("{}", (s.cli_check_mode)(&status.mode, status.listen_all));
+    println!("{}", (s.cli_check_subs)(subs.len(), dispatchable));
+    println!("{}", (s.cli_check_lang)(&settings.preferred_language));
+    println!("{}", s.cli_check_events_ok);
     if rt.app_version != env!("CARGO_PKG_VERSION") {
-        println!("\n注意: TUI 版本 {} 与 app 版本 {} 不一致。", env!("CARGO_PKG_VERSION"), rt.app_version);
+        println!("{}", (s.cli_check_version_mismatch)(env!("CARGO_PKG_VERSION"), &rt.app_version));
     }
     Ok(())
 }
@@ -165,7 +152,9 @@ async fn main() -> ExitCode {
     let args = match parse_args(std::env::args().skip(1)) {
         Parsed::Run(a) => a,
         Parsed::Help => {
-            print!("{HELP}");
+            // `-h`/`--help` 之前不可能出现过 `--data-dir` (它们赢过之后的一切参数), 用默认
+            // `Args` 算连接前语言就够。
+            print!("{}", strings(pre_connect_lang(&Args::default())).cli_help);
             return ExitCode::SUCCESS;
         }
         Parsed::Version => {
@@ -173,7 +162,7 @@ async fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Parsed::Invalid(msg) => {
-            eprintln!("{msg}\n\n{HELP}");
+            eprintln!("{msg}\n\n{}", strings(pre_connect_lang(&Args::default())).cli_help);
             return ExitCode::from(2);
         }
     };

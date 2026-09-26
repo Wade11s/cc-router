@@ -19,22 +19,27 @@ use super::sse::{SseEvent, SseParser};
 pub const LOCAL_HEADER: &str = "x-ccr-local";
 pub const CSRF_HEADER: &str = "x-ccr-ui";
 
+/// **用户可见文字一律走 `i18n::client_error`, 不看这里的 `Display`**——这个 derive 现在是英文
+/// 开发者文字, 只给日志 / `Debug` 场景用。
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error(transparent)]
     Discovery(#[from] DiscoveryError),
     /// 连接被拒: runtime.json 在, 但那个端口上没有进程。
-    #[error("cc-router 未在运行")]
+    #[error("cc-router is not running")]
     NotRunning,
     /// 重读密钥重试后仍是 404 / 401。
-    #[error("终端界面未启用")]
+    #[error("terminal UI is disabled")]
     Disabled,
     #[error("{message} ({code}, HTTP {status})")]
     Api { status: u16, code: String, message: String },
-    #[error("网络错误: {0}")]
+    #[error("network error: {0}")]
     Transport(String),
-    #[error("响应无法解析: {0}")]
+    #[error("response could not be decoded: {0}")]
     Decode(String),
+    /// 读本地 CA 证书失败 (只有走 https 才会碰到)。
+    #[error("failed to read {path}: {message}")]
+    ReadFile { path: String, message: String },
 }
 
 struct Conn {
@@ -52,7 +57,7 @@ fn build_http(info: &RuntimeInfo) -> Result<reqwest::Client, ClientError> {
     // 只有走 https 时才需要信任本地 CA; 只加这一张, 不关证书校验。
     if info.http_port.is_none() {
         if let Some(path) = info.ca_pem_path.as_deref() {
-            let pem = std::fs::read(path).map_err(|e| ClientError::Transport(format!("读取 {path}: {e}")))?;
+            let pem = std::fs::read(path).map_err(|e| ClientError::ReadFile { path: path.to_string(), message: e.to_string() })?;
             let cert = reqwest::Certificate::from_pem(&pem).map_err(|e| ClientError::Transport(e.to_string()))?;
             b = b.add_root_certificate(cert);
         }
