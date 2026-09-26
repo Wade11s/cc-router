@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { Check, Plus, Search } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -7,14 +7,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StatusDot, stateLabel } from "@/components/StatusBadge";
+import { StatusBadge } from "@/components/StatusBadge";
+import { ProviderLogo } from "@/components/ProviderLogo";
 import { SortableSubscriptionList } from "@/components/SortableSubscriptionList";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useVirtualModels, useUpdateVirtualModel } from "@/hooks/useVirtualModels";
 import { isAnthropicPassthrough } from "@/lib/authTypes";
+import { customProviderLabel } from "@/lib/providerLabels";
 import { VM_META, VM_ORDER, vmNameToSlot } from "@/lib/virtualModels";
 import { useT } from "@/i18n";
-import type { RoutingMode, SubscriptionDto, VirtualModelDto } from "@/types";
+import type {
+  RoutingMode,
+  SubscriptionDto,
+  SubscriptionSlot,
+  VirtualModelDto,
+  VirtualModelName,
+} from "@/types";
 
 export function VirtualModelsPage() {
   const { t } = useT();
@@ -166,6 +174,8 @@ function VirtualModelCard({
         onOpenChange={setPickerOpen}
         existingIds={vm.subscription_ids}
         allSubs={allSubs}
+        vmName={vm.name}
+        slot={slot}
         isFallback={isFallback}
         onConfirm={(ids) => {
           addSubs(ids);
@@ -176,11 +186,25 @@ function VirtualModelCard({
   );
 }
 
+/** 候选多于这个数才显示搜索框 */
+const PICKER_SEARCH_THRESHOLD = 6;
+
+/** base_url → 主机名; 解析失败原样返回。用来区分同一厂商下接了不同地址的订阅 */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
 function AddSubscriptionDialog({
   open,
   onOpenChange,
   existingIds,
   allSubs,
+  vmName,
+  slot,
   isFallback,
   onConfirm,
 }: {
@@ -188,13 +212,35 @@ function AddSubscriptionDialog({
   onOpenChange: (v: boolean) => void;
   existingIds: string[];
   allSubs: SubscriptionDto[];
+  vmName: VirtualModelName;
+  /** null = fallback 卡片, 订阅走兜底槽或原样透传 */
+  slot: SubscriptionSlot | null;
   /** fallback 卡片打开时 true: 对「翻译类且未配兜底槽」的候选显示提示 (不禁选) */
   isFallback: boolean;
   onConfirm: (ids: string[]) => void;
 }) {
   const { t } = useT();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
   const candidates = allSubs.filter((s) => s.enabled && !existingIds.includes(s.id));
+
+  const providerName = (sub: SubscriptionDto) =>
+    customProviderLabel(sub.provider_id, t) ?? sub.provider_display_name;
+  // 与 SortableSubscriptionList 同一套规则: 加进来之后这条订阅在本卡片里实际会用的模型
+  const modelFor = (sub: SubscriptionDto) => {
+    if (slot !== null) return sub.model_slots[slot] || "—";
+    return sub.model_slots.fallback?.trim() || t("sortableSub.passthrough");
+  };
+
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? candidates.filter((sub) =>
+        [sub.display_name, providerName(sub), hostOf(sub.base_url), modelFor(sub), sub.oauth_account?.email ?? ""]
+          .join(" ")
+          .toLowerCase()
+          .includes(q),
+      )
+    : candidates;
 
   function toggle(id: string) {
     const next = new Set(selected);
@@ -207,59 +253,99 @@ function AddSubscriptionDialog({
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v) setSelected(new Set());
+        if (!v) {
+          setSelected(new Set());
+          setQuery("");
+        }
         onOpenChange(v);
       }}
     >
-      <DialogContent className="cc-dialog">
+      <DialogContent className="cc-dialog" style={{ maxWidth: 680, width: "92vw" }}>
         <DialogHeader>
           <DialogTitle>{t("virtualModels.dialog.title")}</DialogTitle>
+          <div className="pick-target">
+            {t("virtualModels.dialog.target")} <span className="mono">{vmName}</span>
+          </div>
         </DialogHeader>
         {candidates.length === 0 ? (
           <div className="field-hint">{t("virtualModels.dialog.empty")}</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {candidates.map((sub) => (
-              <label
-                key={sub.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "8px 12px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  background: selected.has(sub.id) ? "var(--surface-2)" : "transparent",
-                  border: "1px solid " + (selected.has(sub.id) ? "var(--line)" : "transparent"),
-                }}
-                onMouseEnter={(e) => {
-                  if (!selected.has(sub.id)) e.currentTarget.style.background = "var(--surface-2)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!selected.has(sub.id)) e.currentTarget.style.background = "transparent";
-                }}
-              >
+          <>
+            {candidates.length > PICKER_SEARCH_THRESHOLD && (
+              <label className="pick-search">
+                <Search size={14} aria-hidden />
                 <input
-                  type="checkbox"
-                  checked={selected.has(sub.id)}
-                  onChange={() => toggle(sub.id)}
-                  style={{ accentColor: "var(--ink)" }}
+                  className="input"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t("virtualModels.dialog.search")}
+                  aria-label={t("virtualModels.dialog.search")}
                 />
-                <StatusDot state={sub.state} />
-                <span style={{ fontSize: 13, flex: 1 }}>{sub.display_name}</span>
-                {isFallback &&
-                  !sub.model_slots.fallback?.trim() &&
-                  !isAnthropicPassthrough(sub.auth_type) && (
-                    <span className="pill warn">{t("virtualModels.dialog.needFallbackSlot")}</span>
-                  )}
-                {sub.state === "auth_failed" && (
-                  <span className="pill err">{stateLabel("auth_failed", t)}</span>
-                )}
               </label>
-            ))}
-          </div>
+            )}
+            <div className="pick-list">
+              {visible.map((sub) => {
+                const on = selected.has(sub.id);
+                const host = hostOf(sub.base_url);
+                const needFallback =
+                  isFallback && !sub.model_slots.fallback?.trim() && !isAnthropicPassthrough(sub.auth_type);
+                return (
+                  <label key={sub.id} className={on ? "pick-row on" : "pick-row"}>
+                    <input
+                      type="checkbox"
+                      className="pick-check-input"
+                      checked={on}
+                      onChange={() => toggle(sub.id)}
+                    />
+                    <span className="pick-check" aria-hidden>
+                      {on && <Check size={12} strokeWidth={3} />}
+                    </span>
+                    <ProviderLogo iconId={sub.provider_icon} size={32} iconSize={20} />
+                    <span className="pick-main">
+                      <span className="pick-name">
+                        {sub.display_name}
+                        <StatusBadge state={sub.state} />
+                        {needFallback && (
+                          <span className="pill warn">{t("virtualModels.dialog.needFallbackSlot")}</span>
+                        )}
+                      </span>
+                      <span className="pick-meta">
+                        {providerName(sub)}
+                        <span className="pick-sep">·</span>
+                        <span className="mono">{sub.oauth_account?.email ?? host}</span>
+                      </span>
+                    </span>
+                    <span className="pick-side">
+                      <span className="pick-label">{t("virtualModels.dialog.slotModel")}</span>
+                      <span className="pick-model mono" title={modelFor(sub)}>
+                        {modelFor(sub)}
+                      </span>
+                      <span className="pick-used">
+                        {sub.referenced_by.length > 0 ? (
+                          <>
+                            {t("virtualModels.dialog.usedBy")}{" "}
+                            {sub.referenced_by.map((n) => (
+                              <span key={n} className="pill tag mono">
+                                {n.replace("model-", "")}
+                              </span>
+                            ))}
+                          </>
+                        ) : (
+                          t("virtualModels.dialog.unused")
+                        )}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+              {visible.length === 0 && <div className="field-hint">{t("virtualModels.dialog.noMatch")}</div>}
+            </div>
+          </>
         )}
-        <DialogFooter>
+        <DialogFooter className="pick-footer">
+          {selected.size > 0 && (
+            <span className="pick-count">{t("virtualModels.dialog.selectedCount", { count: selected.size })}</span>
+          )}
           <button className="btn" onClick={() => onOpenChange(false)} type="button">
             {t("common.cancel")}
           </button>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, ArrowRight } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -7,9 +7,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ClientToolBadge } from "@/components/ClientToolBadge";
+import { ProviderLogo } from "@/components/ProviderLogo";
+import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useT } from "@/i18n";
-import { fmtTime } from "@/lib/format";
-import { customProviderLabel } from "@/lib/providerLabels";
+import { fmtNum, fmtTime } from "@/lib/format";
+import { customProviderLabel, providerIconId } from "@/lib/providerLabels";
 import type { RequestLogDto } from "@/types";
 import { TOOL_NAME_TRUNCATED_MARKER } from "@/types";
 
@@ -81,6 +83,7 @@ function hasToolInfo(r: RequestLogDto): boolean {
 export function RequestDetailDialog({ request, onClose }: Props) {
   const { t } = useT();
   const [copied, setCopied] = useState(false);
+  const subs = useSubscriptions();
 
   useEffect(() => {
     if (!request) setCopied(false);
@@ -99,6 +102,12 @@ export function RequestDetailDialog({ request, onClose }: Props) {
     }
   }, [request]);
 
+  // 订阅可能已被删除: 找不到时退回厂商名
+  const sub = request ? subs.data?.find((s) => s.id === request.subscription_id) : undefined;
+  const providerName = request
+    ? sub?.provider_display_name ?? customProviderLabel(request.provider_id, t) ?? request.provider_id
+    : "";
+
   async function copyAll() {
     if (!request) return;
     const lines = [
@@ -106,6 +115,7 @@ export function RequestDetailDialog({ request, onClose }: Props) {
       `time: ${fmtTime(request.timestamp)}`,
       `virtual_model: ${request.virtual_model_name}`,
       `provider: ${customProviderLabel(request.provider_id, t) ?? request.provider_id}`,
+      `subscription: ${sub?.display_name ?? request.subscription_id}`,
       `real_model: ${request.real_model_name}`,
       `effort: ${effortSummary(request, t) ?? "—"}`,
       `status: ${request.status}`,
@@ -127,157 +137,140 @@ export function RequestDetailDialog({ request, onClose }: Props) {
     }
   }
 
+  const dash = <span className="muted">—</span>;
+  const monoOr = (v?: string | null) => (v ? <span className="mono">{v}</span> : dash);
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent
-        className="cc-dialog"
-        style={{ maxWidth: 720, width: "92vw", maxHeight: "85vh", overflow: "auto" }}
+        className="cc-dialog rd"
+        style={{ maxWidth: 900, width: "94vw", maxHeight: "88vh", overflow: "auto" }}
       >
         <DialogHeader>
           <DialogTitle>{t("requestLogs.detail.title")}</DialogTitle>
         </DialogHeader>
         {request && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "auto 1fr",
-                gap: "6px 12px",
-                fontSize: 12.5,
-              }}
-            >
-              <KV k={t("requestLogs.detail.time")} v={fmtTime(request.timestamp)} mono />
-              <KV k={t("requestLogs.detail.requestId")} v={request.id} mono />
-              <KV
-                k={t("requestLogs.detail.status")}
-                v={
-                  <span className={`pill ${toneOf(request.status)}`}>
-                    <span className="dot" />
-                    {t(`requestLogs.status.${request.status}`)}
+          <div className="rd-body">
+            {/* 抬头: 状态 / HTTP / 流式 + 时间与请求 ID, 右侧复制全部 */}
+            <div className="rd-head">
+              <div className="rd-head-tags">
+                <span className={`pill ${toneOf(request.status)}`}>
+                  <span className="dot" />
+                  {t(`requestLogs.status.${request.status}`)}
+                </span>
+                {request.http_status != null && (
+                  <span className="pill tag mono" title={t("requestLogs.detail.httpStatus")}>
+                    HTTP {request.http_status}
                   </span>
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.httpStatus")}
-                v={
-                  request.http_status != null ? (
-                    <span className="mono">{request.http_status}</span>
-                  ) : (
-                    <span className="muted">—</span>
-                  )
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.virtualModel")}
-                v={<span className="mono">{request.virtual_model_name}</span>}
-              />
-              <KV
-                k={t("requestLogs.detail.realModel")}
-                v={<span className="mono strong">{request.real_model_name}</span>}
-              />
-              <KV
-                k={t("requestLogs.detail.effort")}
-                v={
-                  effortSummary(request, t) ?? <span className="muted">—</span>
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.provider")}
-                v={
-                  <span className="mono">
-                    {customProviderLabel(request.provider_id, t) ?? request.provider_id}
-                  </span>
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.latency")}
-                v={
-                  request.total_latency_ms != null
-                    ? `${(request.total_latency_ms / 1000).toFixed(2)}s`
-                    : "-"
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.clientTool")}
-                v={<ClientToolBadge toolId={request.client_tool} />}
-              />
-              <KV
-                k={t("requestLogs.detail.clientVersion")}
-                v={
-                  request.client_version ? (
-                    <span className="mono">{request.client_version}</span>
-                  ) : (
-                    <span className="muted">—</span>
-                  )
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.clientIp")}
-                v={
-                  request.client_ip ? (
-                    <span className="mono">{request.client_ip}</span>
-                  ) : (
-                    <span className="muted">—</span>
-                  )
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.userAgent")}
-                v={
-                  request.client_user_agent ? (
-                    <span
-                      className="mono"
-                      style={{ fontSize: 11.5, wordBreak: "break-all" }}
-                    >
-                      {request.client_user_agent}
-                    </span>
-                  ) : (
-                    <span className="muted">—</span>
-                  )
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.entryKind")}
-                v={
-                  request.entry_kind ? (
-                    <span className="mono">/v1/{request.entry_kind}</span>
-                  ) : (
-                    <span className="muted">—</span>
-                  )
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.httpVersion")}
-                v={
-                  request.downstream_http_version ? (
-                    <span className="mono">{request.downstream_http_version}</span>
-                  ) : (
-                    <span className="muted">—</span>
-                  )
-                }
-              />
-              <KV
-                k={t("requestLogs.detail.stopReason")}
-                v={
-                  request.stop_reason ? (
-                    <span className="mono">{request.stop_reason}</span>
-                  ) : (
-                    <span className="muted">—</span>
-                  )
-                }
-              />
+                )}
+                <span className="pill tag">
+                  {request.is_streaming ? t("requestLogs.detail.streaming") : t("requestLogs.detail.nonStreaming")}
+                </span>
+                <span className="rd-head-meta">
+                  <span className="mono">{fmtTime(request.timestamp)}</span>
+                  <span className="rd-sep">·</span>
+                  <span className="mono rd-id" title={request.id}>{request.id}</span>
+                </span>
+              </div>
+              <button className="btn sm" type="button" onClick={copyAll}>
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+                {copied ? t("common.copied") : t("requestLogs.detail.copy")}
+              </button>
+            </div>
+
+            {/* 路由路径: 客户端 → 虚拟模型 → 订阅 → 真实模型 */}
+            <section className="rd-route" aria-label={t("requestLogs.detail.section.route")}>
+              <div className="rd-node">
+                <div className="rd-node-label">{t("requestLogs.detail.clientTool")}</div>
+                <div className="rd-node-value">
+                  <ClientToolBadge toolId={request.client_tool} userAgent={request.client_user_agent} />
+                </div>
+                <div className="rd-node-sub mono">{request.client_version ?? "—"}</div>
+              </div>
+              <ArrowRight className="rd-arrow" size={16} aria-hidden />
+              <div className="rd-node">
+                <div className="rd-node-label">{t("requestLogs.detail.virtualModel")}</div>
+                <div className="rd-node-value mono">{request.virtual_model_name}</div>
+                <div className="rd-node-sub mono">
+                  {request.entry_kind ? `/v1/${request.entry_kind}` : "—"}
+                </div>
+              </div>
+              <ArrowRight className="rd-arrow" size={16} aria-hidden />
+              <div className="rd-node">
+                <div className="rd-node-label">{t("requestLogs.detail.subscription")}</div>
+                <div className="rd-node-value rd-node-sub-row">
+                  <ProviderLogo
+                    iconId={sub?.provider_icon ?? providerIconId(request.provider_id)}
+                    size={20}
+                    iconSize={13}
+                  />
+                  <span className="rd-ellipsis">{sub?.display_name ?? providerName}</span>
+                </div>
+                <div className="rd-node-sub">{providerName}</div>
+              </div>
+              <ArrowRight className="rd-arrow" size={16} aria-hidden />
+              <div className="rd-node accent">
+                <div className="rd-node-label">{t("requestLogs.detail.realModel")}</div>
+                <div className="rd-node-value mono strong rd-ellipsis" title={request.real_model_name}>
+                  {request.real_model_name}
+                </div>
+                <div className="rd-node-sub mono rd-ellipsis" title={request.response_model_name}>
+                  {request.response_model_name && request.response_model_name !== request.real_model_name
+                    ? `${t("requestLogs.detail.responseModel")} ${request.response_model_name}`
+                    : effortSummaryShort(request, t) ?? "—"}
+                </div>
+              </div>
+            </section>
+
+            {/* 用量 */}
+            <section className="rd-stats" aria-label={t("requestLogs.detail.section.usage")}>
+              <Stat label={t("requestLogs.detail.latency")}
+                value={request.total_latency_ms != null ? `${(request.total_latency_ms / 1000).toFixed(2)}s` : "—"} />
+              <Stat label={t("stats.daily.tokenTooltipInput")} value={fmtNum(request.input_tokens)} />
+              <Stat label={t("stats.daily.tokenTooltipOutput")} value={fmtNum(request.output_tokens)} strong />
+              <Stat label={t("stats.daily.tokenTooltipCacheRead")} value={fmtNum(request.cache_read_tokens)} />
+              <Stat label={t("stats.daily.tokenTooltipCacheCreate")} value={fmtNum(request.cache_creation_tokens)} />
+            </section>
+
+            {/* 请求 / 客户端 两栏 */}
+            <div className="rd-cols">
+              <section className="rd-card">
+                <h3 className="rd-card-title">{t("requestLogs.detail.section.request")}</h3>
+                <dl className="rd-kv">
+                  <KV k={t("requestLogs.detail.effort")} v={effortSummary(request, t) ?? dash} />
+                  <KV k={t("requestLogs.detail.stopReason")} v={monoOr(request.stop_reason)} />
+                  <KV k={t("requestLogs.detail.entryKind")} v={monoOr(request.entry_kind ? `/v1/${request.entry_kind}` : null)} />
+                  <KV k={t("requestLogs.detail.httpVersion")} v={monoOr(request.downstream_http_version)} />
+                </dl>
+              </section>
+              <section className="rd-card">
+                <h3 className="rd-card-title">{t("requestLogs.detail.section.client")}</h3>
+                <dl className="rd-kv">
+                  <KV k={t("requestLogs.detail.clientVersion")} v={monoOr(request.client_version)} />
+                  <KV k={t("requestLogs.detail.clientIp")} v={monoOr(request.client_ip)} />
+                  <KV
+                    k={t("requestLogs.detail.userAgent")}
+                    v={
+                      request.client_user_agent ? (
+                        <span className="mono" style={{ fontSize: 11.5, wordBreak: "break-all" }}>
+                          {request.client_user_agent}
+                        </span>
+                      ) : (
+                        dash
+                      )
+                    }
+                  />
+                </dl>
+              </section>
             </div>
 
             {hasToolInfo(request) && (() => {
               const { chips, truncated } = parseToolNames(request.tool_use_names);
-              const dash = <span className="muted">—</span>;
               const num = (v?: number | null) => (v != null ? <span className="mono tnum">{v}</span> : dash);
               return (
-                <div>
-                  <div style={{ color: "var(--ink-3)", fontSize: 12.5, marginBottom: 6 }}>
-                    {t("requestLogs.detail.tools.title")}
-                  </div>
-                  <div style={{ display: "flex", gap: 18, fontSize: 12.5, marginBottom: 8 }}>
+                <section className="rd-card">
+                  <h3 className="rd-card-title">{t("requestLogs.detail.tools.title")}</h3>
+                  <div className="rd-tool-counts">
                     <span>{t("requestLogs.detail.tools.offered")} {num(request.tools_offered_count)}</span>
                     <span>{t("requestLogs.detail.tools.results")} {num(request.tool_result_count)}</span>
                     <span>{t("requestLogs.detail.tools.used")} {num(request.tool_use_count)}</span>
@@ -297,61 +290,28 @@ export function RequestDetailDialog({ request, onClose }: Props) {
                       <div className="field-hint">{t("requestLogs.detail.tools.none")}</div>
                     )
                   )}
-                </div>
+                </section>
               );
             })()}
 
             {isError && request.error_message && (
-              <div>
-                <div style={{ color: "var(--ink-3)", fontSize: 12.5, marginBottom: 4 }}>
-                  {t("requestLogs.detail.errorMessage")}
-                </div>
-                <div className="mono" style={{ color: "var(--err)", fontSize: 13 }}>
-                  {request.error_message}
+              <div className="alert err rd-error">
+                <div>
+                  <div className="rd-card-title" style={{ marginBottom: 4 }}>
+                    {t("requestLogs.detail.errorMessage")}
+                  </div>
+                  <div className="mono" style={{ fontSize: 12.5, wordBreak: "break-word" }}>
+                    {request.error_message}
+                  </div>
                 </div>
               </div>
             )}
 
             {prettyBody && (
-              <div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <div style={{ color: "var(--ink-3)", fontSize: 12.5 }}>
-                    {t("requestLogs.detail.upstreamBody")}
-                  </div>
-                  <button
-                    className="btn sm"
-                    type="button"
-                    onClick={copyAll}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
-                  >
-                    {copied ? <Check size={12} /> : <Copy size={12} />}
-                    {copied ? t("common.copied") : t("requestLogs.detail.copy")}
-                  </button>
-                </div>
-                <pre
-                  className="mono"
-                  style={{
-                    background: "var(--surface-2)",
-                    border: "1px solid var(--line)",
-                    borderRadius: 6,
-                    padding: 12,
-                    margin: 0,
-                    fontSize: 12,
-                    maxHeight: 320,
-                    overflow: "auto",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {prettyBody}
-                </pre>
-              </div>
+              <section>
+                <h3 className="rd-card-title">{t("requestLogs.detail.upstreamBody")}</h3>
+                <pre className="mono rd-pre">{prettyBody}</pre>
+              </section>
             )}
 
             {!isError && !prettyBody && (
@@ -364,21 +324,25 @@ export function RequestDetailDialog({ request, onClose }: Props) {
   );
 }
 
-function KV({
-  k,
-  v,
-  mono,
-}: {
-  k: string;
-  v: React.ReactNode;
-  mono?: boolean;
-}) {
+/** 路由卡「真实模型」下方的一行小字: 实际发往上游的思考强度 (没有则不显示) */
+function effortSummaryShort(r: RequestLogDto, t: (key: string) => string): string | null {
+  return r.effective_effort ? `${t("requestLogs.detail.effort")} ${r.effective_effort}` : null;
+}
+
+function Stat({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className={strong ? "rd-stat strong" : "rd-stat"}>
+      <div className="rd-stat-label">{label}</div>
+      <div className="rd-stat-value mono tnum">{value}</div>
+    </div>
+  );
+}
+
+function KV({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <>
-      <div style={{ color: "var(--ink-3)", whiteSpace: "nowrap" }}>{k}</div>
-      <div className={mono ? "mono" : undefined} style={{ wordBreak: "break-word" }}>
-        {v}
-      </div>
+      <dt>{k}</dt>
+      <dd>{v}</dd>
     </>
   );
 }
