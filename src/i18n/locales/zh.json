@@ -538,6 +538,7 @@
   "virtualModels.title": "虚拟模型",
   "virtualModels.subtitle1": "四个固定虚拟模型对应 Claude Code 的模型槽位;",
   "virtualModels.subtitle2": " 是兜底,任何其他 model 请求都走这里。",
+  "virtualModels.dragHint": "拖一拖，排出优先级",
   "virtualModels.endpointsSuffix": " 端点",
   "virtualModels.mode.label": "调度模式",
   "virtualModels.mode.sequentialHint": "按优先级,失败下降",

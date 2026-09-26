@@ -2,7 +2,7 @@ import { ExternalLink, Globe, TriangleAlert } from "lucide-react";
 import Github from "@lobehub/icons/es/Github";
 import { runtime } from "@/runtime";
 import { version as VERSION } from "../../package.json";
-import logoUrl from "@/assets/logo.png";
+import { LogoMark } from "@/components/sketch/LogoMark";
 import { useT } from "@/i18n";
 
 const REPO_URL = "https://github.com/finch-xu/cc-router";
@@ -25,9 +25,7 @@ export function AboutPage() {
         </div>
         <div className="card-body">
           <div className="about-hero">
-            <div className="app-mark">
-              <img src={logoUrl} alt="cc-router" />
-            </div>
+            <LogoMark size={64} tile label="cc-router" className="app-mark" />
             <div style={{ minWidth: 0 }}>
               <div className="about-name">cc-router</div>
               <div className="about-meta">

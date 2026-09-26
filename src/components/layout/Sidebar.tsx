@@ -1,19 +1,5 @@
 import { NavLink } from "react-router";
 import { useEffect, useState } from "react";
-import {
-  Layers,
-  Key,
-  ScrollText,
-  BarChart3,
-  Receipt,
-  Settings as SettingsIcon,
-  Info,
-  BookOpen,
-  Activity,
-  RefreshCw,
-  LogOut,
-  type LucideIcon,
-} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useVirtualModels } from "@/hooks/useVirtualModels";
@@ -21,12 +7,13 @@ import { useProxyStatus } from "@/hooks/useSettings";
 import { useUpdater } from "@/hooks/useUpdater";
 import { useT } from "@/i18n";
 import { runtime, webLogout, webSession } from "@/runtime";
-import logoUrl from "@/assets/logo.png";
+import { LogoMark } from "@/components/sketch/LogoMark";
+import { SidebarIcon, type SidebarIconName } from "@/components/sketch/SidebarIcon";
 
 interface NavItem {
   to: string;
   label: string;
-  icon: LucideIcon;
+  icon: SidebarIconName;
   badge?: string | (() => string | null);
   dot?: boolean;
   /** 点的语义: 默认 err(红, 有更新) / ok(绿, 代理在跑) */
@@ -47,11 +34,11 @@ export function Sidebar() {
   const hasUpdate = detected !== null;
 
   const items: NavItem[] = [
-    { to: "/guide", label: t("sidebar.nav.guide"), icon: BookOpen },
+    { to: "/guide", label: t("sidebar.nav.guide"), icon: "guide" },
     {
       to: "/live-routing",
       label: t("sidebar.nav.liveRouting"),
-      icon: Activity,
+      icon: "live",
       dot: running,
       dotTone: "ok",
       dotLabelKey: "sidebar.proxyRunning",
@@ -59,22 +46,22 @@ export function Sidebar() {
     {
       to: "/virtual-models",
       label: t("sidebar.nav.virtualModels"),
-      icon: Layers,
+      icon: "vm",
       badge: String(vms.data?.length ?? 5),
     },
-    { to: "/subscriptions", label: t("sidebar.nav.subscriptions"), icon: Key, badge: subsCount > 0 ? String(subsCount) : undefined },
-    { to: "/request-logs", label: t("sidebar.nav.requestLogs"), icon: ScrollText },
-    { to: "/statistics", label: t("sidebar.nav.statistics"), icon: BarChart3 },
-    { to: "/receipts", label: t("sidebar.nav.receipts"), icon: Receipt },
+    { to: "/subscriptions", label: t("sidebar.nav.subscriptions"), icon: "subs", badge: subsCount > 0 ? String(subsCount) : undefined },
+    { to: "/request-logs", label: t("sidebar.nav.requestLogs"), icon: "logs" },
+    { to: "/statistics", label: t("sidebar.nav.statistics"), icon: "stats" },
+    { to: "/receipts", label: t("sidebar.nav.receipts"), icon: "receipts" },
     {
       to: "/updates",
       label: t("sidebar.nav.updates"),
-      icon: RefreshCw,
+      icon: "updates",
       dot: hasUpdate,
       dotLabelKey: "sidebar.updateAvailable",
     },
-    { to: "/settings", label: t("sidebar.nav.settings"), icon: SettingsIcon },
-    { to: "/about", label: t("sidebar.nav.about"), icon: Info },
+    { to: "/settings", label: t("sidebar.nav.settings"), icon: "settings" },
+    { to: "/about", label: t("sidebar.nav.about"), icon: "about" },
   ];
 
   const [showLogout, setShowLogout] = useState(false);
@@ -86,18 +73,19 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brand-mark">
-          <img src={logoUrl} alt="cc-router" />
-        </div>
+        <LogoMark size={44} variant="compact" className="brand-mark" />
         <div className="brand-text">
           <div className="brand-name">cc-router</div>
           <div className="brand-tag">{t("sidebar.brand.tag")}</div>
         </div>
       </div>
+      {/* 手画波浪分隔线 */}
+      <svg className="brand-rule" viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 5 C 15 1, 45 9, 60 5 C 75 1, 105 9, 120 5 C 135 1, 165 9, 180 5 C 195 1, 225 9, 240 5" />
+      </svg>
       {/* 代理地址/端口与版本号不在这里展示: 地址在「实时路由」页可复制,
        * 版本号在「关于」/「检查更新」页 —— 侧边栏只留导航。 */}
       {items.map((it) => {
-        const Ico = it.icon;
         const badge = typeof it.badge === "function" ? it.badge() : it.badge;
         return (
           <NavLink
@@ -106,15 +94,14 @@ export function Sidebar() {
             className={({ isActive }) => cn("nav-item", isActive && "active")}
           >
             <span className="nav-icon">
-              <Ico size={16} strokeWidth={1.6} />
+              <SidebarIcon name={it.icon} size={28} />
             </span>
             <span className="nav-label">{it.label}</span>
             {badge && <span className="badge mono">{badge}</span>}
             {!badge && it.dot && (
-              <span
-                className={it.dotTone === "ok" ? "nav-dot ok" : "nav-dot"}
-                aria-label={t(it.dotLabelKey ?? "sidebar.updateAvailable")}
-                title={t(it.dotLabelKey ?? "sidebar.updateAvailable")}
+              <NavDot
+                tone={it.dotTone ?? "err"}
+                label={t(it.dotLabelKey ?? "sidebar.updateAvailable")}
               />
             )}
           </NavLink>
@@ -129,11 +116,30 @@ export function Sidebar() {
           }}
         >
           <span className="nav-icon">
-            <LogOut size={16} strokeWidth={1.6} />
+            <SidebarIcon name="logout" size={28} />
           </span>
           <span className="nav-label">{t("sidebar.logout")}</span>
         </button>
       )}
     </aside>
+  );
+}
+
+/** 侧栏状态点: ok = 绿色手画圆点带放射短线 (代理在跑), err = 陶土色星号 (有可用更新) */
+function NavDot({ tone, label }: { tone: "ok" | "err"; label: string }) {
+  if (tone === "ok") {
+    return (
+      <svg className="nav-dot ok" viewBox="0 0 18 18" width="18" height="18" role="img" aria-label={label}>
+        <title>{label}</title>
+        <path className="nav-dot-fill" d="M8 5 C 10.3 4.9, 11.7 6.5, 11.6 8.6 C 11.5 10.7, 9.9 12.1, 7.9 12 C 5.8 11.9, 4.4 10.3, 4.5 8.3 C 4.6 6.4, 6.1 5.1, 8 5 Z" />
+        <path className="nav-dot-rays" d="M13.4 4.2 L15 2.6 M14.4 8.4 L16.6 8.3 M13.4 12.6 L15 14.2" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="nav-dot err" viewBox="0 0 16 16" width="15" height="15" role="img" aria-label={label}>
+      <title>{label}</title>
+      <path d="M8 1.8 L8 14.2 M2.6 4.6 L13.4 11.4 M2.6 11.4 L13.4 4.6" />
+    </svg>
   );
 }

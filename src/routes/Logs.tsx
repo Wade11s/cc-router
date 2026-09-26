@@ -12,14 +12,7 @@ export function LogsPage() {
 
   return (
     <>
-      <div
-        style={{
-          display: "flex",
-          gap: 4,
-          borderBottom: "1px solid var(--line)",
-          marginBottom: 16,
-        }}
-      >
+      <div className="tabs">
         <TabButton active={tab === "requests"} onClick={() => setTab("requests")}>
           {t("logs.tab.requests")}
         </TabButton>
@@ -54,21 +47,7 @@ function TabButton({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "8px 16px",
-        background: "transparent",
-        border: "none",
-        borderBottom: active ? "2px solid var(--ink)" : "2px solid transparent",
-        marginBottom: -1,
-        color: active ? "var(--ink)" : "var(--ink-3)",
-        fontSize: 13,
-        fontWeight: active ? 600 : 400,
-        cursor: "pointer",
-      }}
-    >
+    <button type="button" onClick={onClick} className={active ? "tab active" : "tab"}>
       {children}
     </button>
   );

@@ -5,9 +5,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { I18nProvider } from "@/i18n";
 import { WebAuthGate } from "@/components/layout/WebAuthGate";
+import { SketchDefs } from "@/components/sketch/SketchDefs";
 import { ThemeProvider } from "@/hooks/useTheme";
 import { applyPlatformAttr } from "@/lib/platform";
 import { runtime } from "@/runtime";
+import "./fonts";
 import "./styles.css";
 
 // 首帧前打平台标记: 拖窗带高度 / 窗口三键的排版靠 <html data-platform> 分流
@@ -29,6 +31,8 @@ const queryClient = new QueryClient({
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
+    {/* 手绘抖动滤镜: 放在所有页面之外, 登录门禁 / 免责声明页里的 Logo 也能引用 */}
+    <SketchDefs />
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <I18nProvider>

@@ -511,6 +511,7 @@
   "virtualModels.title": "Virtual models",
   "virtualModels.subtitle1": "Four fixed virtual models map to Claude Code's model slots; ",
   "virtualModels.subtitle2": " is the catch-all — any other model request goes here.",
+  "virtualModels.dragHint": "drag to set priority",
   "virtualModels.endpointsSuffix": " endpoints",
   "virtualModels.mode.label": "Mode",
   "virtualModels.mode.sequentialHint": "By priority, fail over on error",

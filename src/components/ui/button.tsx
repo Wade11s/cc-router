@@ -4,21 +4,22 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+  // 与 styles.css 的 .btn 同一套手绘外形: 墨线 + 不规则圆角, 悬停歪一下并落出硬投影
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-(--r-sketch) border-[1.8px] border-(--stroke) text-sm font-medium transition-[transform,box-shadow,background-color] duration-150 hover:-translate-x-px hover:-translate-y-px hover:-rotate-[0.6deg] hover:shadow-[3px_3px_0_var(--fill-oat)] active:translate-x-px active:translate-y-px active:rotate-0 active:shadow-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent) disabled:pointer-events-none disabled:opacity-50 motion-reduce:hover:transform-none",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
-        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
-        link: "text-primary underline-offset-4 hover:underline",
+        default: "bg-(--accent) font-semibold text-[#141413] hover:shadow-[3px_3px_0_var(--stroke)]",
+        destructive: "rounded-(--r-sketch-alt) bg-(--fill-coral) font-semibold text-(--ink) hover:shadow-[3px_3px_0_var(--err)]",
+        outline: "bg-(--surface) text-(--ink)",
+        secondary: "bg-(--surface-3) text-(--ink)",
+        ghost: "border-transparent text-(--ink-2) hover:bg-(--surface-3) hover:text-(--ink) hover:shadow-none hover:transform-none",
+        link: "border-transparent text-(--accent-ink) underline-offset-4 hover:underline hover:shadow-none hover:transform-none",
       },
       size: {
         default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-6",
+        sm: "h-8 px-3 text-xs",
+        lg: "h-10 px-6",
         icon: "h-9 w-9",
       },
     },

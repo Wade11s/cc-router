@@ -511,6 +511,7 @@
   "virtualModels.title": "仮想モデル",
   "virtualModels.subtitle1": "4 つの固定仮想モデルが Claude Code のモデルスロットに対応します。",
   "virtualModels.subtitle2": " はフォールバックで、その他すべての model リクエストはここを通ります。",
+  "virtualModels.dragHint": "ドラッグで優先度を入れ替え",
   "virtualModels.endpointsSuffix": " エンドポイント",
   "virtualModels.mode.label": "ディスパッチモード",
   "virtualModels.mode.sequentialHint": "優先順位順、失敗時に降下",

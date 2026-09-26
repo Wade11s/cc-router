@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AUTH_REQUIRED_EVENT, resetWebEventSource, runtime, webLogin, webSession } from "@/runtime";
 import { useT } from "@/i18n";
-import logoUrl from "@/assets/logo.png";
+import { LogoMark } from "@/components/sketch/LogoMark";
 
 type Phase = "checking" | "login" | "ready";
 
@@ -88,7 +88,7 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   return (
     <div className="web-login-shell">
       <form className="web-login-card" onSubmit={submit}>
-        <img src={logoUrl} alt="cc-router" className="web-login-logo" />
+        <LogoMark size={48} variant="compact" label="cc-router" className="web-login-logo" />
         <h1>{t("webAuth.title")}</h1>
         <p className="desc">{t("webAuth.desc")}</p>
         <input
