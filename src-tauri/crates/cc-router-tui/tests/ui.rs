@@ -18,7 +18,7 @@ use cc_router_tui::client::dto::{
 };
 use cc_router_tui::client::events::{ROUTE_ATTEMPT_FINISHED, ROUTE_ATTEMPT_STARTED};
 use cc_router_tui::format::{fit, Tz};
-use cc_router_tui::i18n::{strings, Lang, Strings, EN, ZH};
+use cc_router_tui::i18n::{strings, Lang, Strings, EN, JA, ZH};
 use cc_router_tui::pages::Pages;
 use cc_router_tui::secret::Secret;
 use cc_router_tui::theme::{ColorMode, Theme};
@@ -5886,6 +5886,19 @@ fn routing_mode_names_are_not_truncated_in_any_language() {
     }
 }
 
+/// 80 列日志表的模型列在每种语言下至少放得下表头——其余定宽列的表头更宽的语言 (日文) 从订阅列借差额。
+#[test]
+fn logs_model_header_is_not_truncated_at_80x24_in_any_language() {
+    for lang in LANGS {
+        use_lang(lang);
+        let s = s();
+        let mut a = logs_app(false);
+        a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+        let out = render(&mut a, 80, 24);
+        assert!(out.contains(&format!(" {} ", s.lg_col_model)), "{lang:?}: 模型列表头「{}」被截断\n{out}", s.lg_col_model);
+    }
+}
+
 /// 请求详情弹窗的字段标签在每种语言下都完整显示 (标签列随最宽的标签放宽)。
 #[test]
 fn request_detail_labels_are_not_truncated_in_any_language() {
@@ -5954,4 +5967,64 @@ fn en_sticky_mode_summary_fits_at_80x24() {
     let out = render(&mut a, 80, 24);
     let summary = (EN.vm_members_summary)(EN.vm_mode_full_sticky, 3);
     assert!(out.contains(&format!(" {summary} ")), "底部摘要「{summary}」应该完整显示\n{out}");
+}
+
+// ---------- 日文界面 ----------
+
+#[test]
+fn ja_overview_80x24() {
+    use_lang(Lang::Ja);
+    insta::assert_snapshot!(render(&mut loaded(false), 80, 24));
+}
+
+#[test]
+fn ja_subscriptions_120x40() {
+    use_lang(Lang::Ja);
+    insta::assert_snapshot!(render(&mut subs_app(false), 120, 40));
+}
+
+#[test]
+fn ja_wizard_custom_80x24() {
+    use_lang(Lang::Ja);
+    insta::assert_snapshot!(render(&mut custom_wizard_probed_and_filled(), 80, 24));
+}
+
+#[test]
+fn ja_delete_confirm_80x24() {
+    use_lang(Lang::Ja);
+    let mut a = subs_app(false);
+    render(&mut a, 80, 24);
+    let action = a.handle_key(key(KeyCode::Char('d'))).expect("应该产出确认弹窗");
+    a.update(action);
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+#[test]
+fn ja_help_subscriptions_80x24() {
+    use_lang(Lang::Ja);
+    let mut a = subs_app(false);
+    a.update(Action::ToggleHelp);
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+#[test]
+fn ja_logs_120x40() {
+    use_lang(Lang::Ja);
+    let mut a = logs_app(false);
+    a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+    insta::assert_snapshot!(render(&mut a, 120, 40));
+}
+
+/// 日文虚拟模型页, 选中 `model-fallback` (同英文那张): 「スキップ対象」、左栏模式短名、右栏底部摘要
+/// 都完整显示。
+#[test]
+fn ja_virtual_models_80x24() {
+    use_lang(Lang::Ja);
+    let mut a = vm_app(false);
+    for _ in 0..4 {
+        a.handle_key(key(KeyCode::Down));
+    }
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(JA.vm_will_skip), "「スキップ対象」应该完整显示\n{out}");
+    insta::assert_snapshot!(out);
 }

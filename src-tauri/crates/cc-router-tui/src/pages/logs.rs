@@ -31,6 +31,8 @@ const STATUS_COL: usize = 6;
 const VM_COL: usize = 14;
 const SUB_COL: usize = 12;
 const SUB_COL_WIDE: usize = 16;
+/// 订阅列借给模型列之后的下限 (见 `draw_table`)。
+const SUB_COL_MIN: usize = 8;
 const CLIENT_COL: usize = 10;
 const LATENCY_COL: usize = 6;
 /// Token 列要放的「12.3K/3.4K」这一级数值; 表头更宽时按表头 (中文「Token 入/出」是 11)。
@@ -347,7 +349,7 @@ impl Logs {
             return;
         }
 
-        let cols = Cols::new(s, wide);
+        let mut cols = Cols::new(s, wide);
         // `Constraint::Fill(1)` (模型名) 的实际宽度: `inner.width` 已经减掉了边框 + 内距, 再减选中
         // 前缀 (`HIGHLIGHT_COL`)、其余定宽列、以及列间距 (`column_spacing(1)`, 列数 - 1 个间隔)——
         // 不这样算的话 `format::fit` 不知道该截到多宽, 模型名超长时 ratatui 会不带省略号地硬切
@@ -360,7 +362,13 @@ impl Logs {
             + cols.latency as u16
             + cols.tokens as u16;
         let gap_count: u16 = if wide { 7 } else { 6 }; // 8 (wide) / 7 (窄) 列各少 1 个间隔
-        let model_col = inner.width.saturating_sub(HIGHLIGHT_COL).saturating_sub(fixed_cols).saturating_sub(gap_count) as usize;
+        let mut model_col = inner.width.saturating_sub(HIGHLIGHT_COL).saturating_sub(fixed_cols).saturating_sub(gap_count) as usize;
+        // 模型列至少放得下自己的表头: 定宽列的表头 / 「✕ 超时」更宽的语言 (日文) 在 80 列上会把它挤到
+        // 连表头都截成片段, 差额从订阅列借——订阅名本来就按 `fit` 截断, 模型列放不下时连一个有意义的
+        // 字都显示不出来。中英文的模型列本来就不窄于表头, 不借。
+        let borrow = widest([s.lg_col_model]).saturating_sub(model_col).min(cols.sub.saturating_sub(SUB_COL_MIN));
+        cols.sub -= borrow;
+        model_col += borrow;
         let mut header_cells =
             vec![Cell::from(fit(s.lg_col_time, cols.time)), Cell::from(fit(s.lg_col_status, cols.status)), Cell::from(fit(s.lg_col_vm, cols.vm)), Cell::from(fit(s.lg_col_sub, cols.sub))];
         if wide {
