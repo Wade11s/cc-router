@@ -50,7 +50,8 @@
       "binaries/cc-router-tui"
     ],
     "resources": [
-      "../LICENSE"
+      "../LICENSE",
+      "../THIRD-PARTY-NOTICES.md"
     ],
     "category": "DeveloperTool",
     "copyright": "Copyright © 2026 finch-xu. MIT License.",

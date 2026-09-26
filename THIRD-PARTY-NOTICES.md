@@ -8,40 +8,44 @@ cc-router 本体以 MIT 许可证发布 (见 [LICENSE](LICENSE))。本文件声�
 
 ## 字体 (Fonts)
 
-小票主题 (`src/components/receipts/themes/`) 使用以下 9 款字体,
-**全部为 SIL Open Font License 1.1 (OFL-1.1)**, 均取自 [Google Fonts](https://github.com/google/fonts)
-经由 [Fontsource](https://fontsource.org) 分发。
+cc-router 使用以下 12 款字体, **全部为 SIL Open Font License 1.1 (OFL-1.1)**,
+均取自 [Google Fonts](https://github.com/google/fonts) 经由 [Fontsource](https://fontsource.org) 分发。
 
-| 字体 | 版权声明 |
-| --- | --- |
-| Archivo | Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo) |
-| Archivo Narrow | Copyright 2019 The Archivo Narrow Project Authors (https://github.com/Omnibus-Type/ArchivoNarrow) |
-| Caveat | Copyright 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat) |
-| Cormorant Garamond | Copyright 2015 The Cormorant Project Authors (github.com/CatharsisFonts/Cormorant) |
-| Courier Prime | Copyright 2015 The Courier Prime Project Authors (https://github.com/quoteunquoteapps/CourierPrime). |
-| DotGothic16 | Copyright 2020 The DotGothic16 Project Authors (https://github.com/fontworks-fonts/DotGothic16/) |
-| IBM Plex Mono | Copyright 2017 IBM Corp. All rights reserved. |
-| Oswald | Copyright 2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont) |
-| Space Mono | Copyright 2016 The Space Mono Project Authors (https://github.com/googlefonts/spacemono) |
+| 字体 | 用途 | 版权声明 |
+| --- | --- | --- |
+| Archivo | 小票 (CDN 按需加载) | Copyright 2020 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo) |
+| Archivo Narrow | 小票 (CDN 按需加载) | Copyright 2019 The Archivo Narrow Project Authors (https://github.com/Omnibus-Type/ArchivoNarrow) |
+| Caveat | 界面 (随安装包分发)<br>小票 (CDN 按需加载) | Copyright 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat) |
+| Cormorant Garamond | 小票 (CDN 按需加载) | Copyright 2015 The Cormorant Project Authors (github.com/CatharsisFonts/Cormorant) |
+| Courier Prime | 小票 (CDN 按需加载) | Copyright 2015 The Courier Prime Project Authors (https://github.com/quoteunquoteapps/CourierPrime). |
+| DotGothic16 | 小票 (CDN 按需加载) | Copyright 2020 The DotGothic16 Project Authors (https://github.com/fontworks-fonts/DotGothic16/) |
+| IBM Plex Mono | 小票 (CDN 按需加载) | Copyright 2017 IBM Corp. All rights reserved. |
+| Instrument Sans | 界面 (随安装包分发) | Copyright 2022 The Instrument Sans Project Authors (https://github.com/Instrument/instrument-sans) |
+| JetBrains Mono | 界面 (随安装包分发) | Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono) |
+| Newsreader | 界面 (随安装包分发) | Copyright 2020 The Newsreader Project Authors (http://github.com/productiontype/Newsreader) |
+| Oswald | 小票 (CDN 按需加载) | Copyright 2016 The Oswald Project Authors (https://github.com/googlefonts/OswaldFont) |
+| Space Mono | 小票 (CDN 按需加载) | Copyright 2016 The Space Mono Project Authors (https://github.com/googlefonts/spacemono) |
 
-**当前分发方式**: 字体文件既不在本仓库中, 也不随安装包分发 —— `src/receipt-fonts.css`
-的 `@font-face` 仅引用公共 CDN (jsDelivr 主源 / npmmirror 兜底), 由 WebView 按需加载,
-离线时回退系统字体; 导出的小票 HTML 同样只内嵌 `@font-face` 规则而非字体数据。
-`@fontsource/*` 只列在 `devDependencies`, 供上述生成脚本读取, 不进构建产物。
+**分发方式**:
 
-保留本声明有两个目的: (a) 向字体作者署名; (b) 若将来把 woff2 打进安装包 (例如为了
-离线可用), 那一刻起即构成 OFL 意义上的字体再分发, 其第 2 条要求随附版权声明与许可证
-全文 —— 本文件届时已满足该要求, 无需再补。
+- **界面字体** (`src/fonts.ts`): 拉丁子集的 woff2 由 Vite 打进前端构建产物, 随安装包
+  分发 (网页界面也从同一份产物提供), 离线可用。这构成 OFL 意义上的字体再分发, 其第 2
+  条要求随附版权声明与许可证全文 —— 即本文件; 本文件同时经 `tauri.conf.json` 的
+  `bundle.resources` 随安装包分发。
+- **小票字体** (`src/components/receipts/themes/`): 字体文件既不在本仓库中, 也不随安装包
+  分发 —— `src/receipt-fonts.css` 的 `@font-face` 仅引用公共 CDN (jsDelivr 主源 /
+  npmmirror 兜底), 由 WebView 按需加载, 离线时回退系统字体; 导出的小票 HTML 同样只内嵌
+  `@font-face` 规则而非字体数据。此处列出是为了向字体作者署名。
 
-以上字体**均未声明 Reserved Font Name (RFN)**, 因此衍生版本 (例如为减小体积做字符
-子集化) 可继续使用原字体名。
+以上字体**均未声明 Reserved Font Name (RFN)** (生成脚本逐一检查), 因此衍生版本 (例如
+界面字体所用的拉丁字符子集) 可继续使用原字体名。
 
 OFL 同时明确豁免了用字体产出的文档 (见正文 PREAMBLE 末句): 用户从 cc-router 导出的
 小票 HTML / PNG / PDF 不受 OFL 约束。
 
 ## 许可证全文 (OFL-1.1)
 
-以下正文为上述 9 款字体共用, 逐字取自 `node_modules/@fontsource/*/LICENSE`。
+以下正文为上述 12 款字体共用, 逐字取自 `node_modules/@fontsource/*/LICENSE`。
 
 ```
 -----------------------------------------------------------
