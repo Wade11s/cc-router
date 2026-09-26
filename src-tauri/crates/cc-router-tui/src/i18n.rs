@@ -1,8 +1,8 @@
 //! 界面文案。`struct Strings` + 每种语言一个 `const`: 加字段时漏填任何一种语言都是编译错误,
 //! 不需要运行时的「缺 key」检查。带参数的文案用 `fn` 指针, 各语言自己决定语序。
 //!
-//! 文案与桌面端独立一份 (TUI 用语更短), 但状态名等术语沿用桌面端 `src/i18n/locales/zh.json` 的叫法。
-//! **en / ja 译文在 P6 补**: 现在 [`strings`] 对三种语言都返回 [`ZH`], 语言解析逻辑已经是最终形态。
+//! 文案与桌面端独立一份 (TUI 用语更短), 但状态名等术语沿用桌面端 `src/i18n/locales/{zh,en}.json` 的叫法。
+//! 日文译文还没补, [`strings`] 对 `Ja` 暂时返回 [`ZH`]。
 
 use crate::client::dto::{QuotaPeriod, RoutingMode, SubscriptionState};
 
@@ -993,10 +993,436 @@ cc-router-tui — cc-router 的终端界面
     cli_check_version_mismatch: |tui, app| format!("\n注意: TUI 版本 {tui} 与 app 版本 {app} 不一致。"),
 };
 
+/// 术语沿用桌面端 `src/i18n/locales/en.json` (Subscription / Virtual model / Provider / Endpoint /
+/// Reasoning effort / Fallback / Quota / Balance / Live routing / Request logs …)。英文普遍比中文宽,
+/// 定宽列都由布局按实际文字宽度推导, 这里不为了塞进中文的列宽去缩写。
+pub const EN: Strings = Strings {
+    tabs: ["Overview", "Subscriptions", "Virtual models", "Live routing", "Logs"],
+    conn_connecting: "Connecting",
+    conn_connected: "Connected",
+    conn_reconnecting: "Reconnecting",
+
+    key_switch_tab: "Tabs",
+    key_refresh: "Refresh",
+    key_help: "Help",
+    key_quit: "Quit",
+    key_close: "Close",
+    key_select: "Select",
+    key_detail: "Details",
+    key_back: "Back",
+    key_toggle: "On/off",
+    key_test: "Test",
+    key_models: "Models",
+    key_balance: "Balance",
+    key_edit_model: "Model",
+    key_edit_effort: "Effort",
+    key_save: "Save",
+    key_discard: "Discard",
+    key_move: "Move",
+    key_add: "Add",
+    key_remove: "Remove",
+    key_mode: "Mode",
+    key_members: "Members",
+    key_new: "New",
+    key_delete: "Delete",
+    key_cancel: "Cancel",
+
+    help_title: "Keys",
+    help_rows: &[
+        ("1-5", "Jump to a page"),
+        ("Tab / Shift+Tab", "Next / previous page"),
+        ("r", "Refresh this page"),
+        ("?", "Show / hide this help"),
+        ("Esc", "Close popup"),
+        ("q / Ctrl+C", "Quit"),
+    ],
+
+    confirm_title: "Confirm",
+    confirm_keys: "y Yes   n No",
+    confirm_discard: "You have unsaved changes. Discard them?",
+
+    picker_use_typed: |text| format!("Use \"{text}\""),
+    picker_empty: "No matches",
+    picker_type_to_enter: "Type a value and press ⏎ to use it",
+    picker_keys: "⏎ Select   Esc Cancel",
+    pick_model_title: |slot| format!("Model for {slot}"),
+    pick_effort_title: |slot| format!("Reasoning effort for {slot}"),
+    pick_clear_fallback: "(Clear fallback slot)",
+
+    detail_keys: "↑↓ Scroll   Esc Close",
+
+    too_small: "Please enlarge the terminal (at least 80×24)",
+    loading: "Loading",
+    version_mismatch: |tui, app| format!("TUI {tui} does not match app {app}; add it to PATH again in the desktop app's Settings"),
+
+    ov_today: "Today",
+    ov_requests: "Requests",
+    ov_success_rate: "Success rate",
+    ov_tokens: "Tokens",
+    ov_hourly: "Requests per hour",
+    ov_health: "Subscription health",
+    ov_auth_on: "Auth on",
+    ov_auth_off: "Auth off",
+    ov_listen_all: "0.0.0.0 · LAN",
+    ov_subs_summary: |total, ok| {
+        let noun = if total == 1 { "subscription" } else { "subscriptions" };
+        format!("{total} {noun} · {ok} ready")
+    },
+    ov_no_subs: "No subscriptions yet. Add one in the desktop app first",
+    ov_more_rows: |n| format!("… {n} more"),
+
+    st_healthy: "Healthy",
+    st_rate_limited: "Rate limited",
+    st_quota_exhausted: "Quota exhausted",
+    st_transient_error: "Transient error",
+    st_auth_failed: "Auth failed",
+    st_disabled: "Disabled",
+    st_unknown: "Unknown",
+    st_quota_reached: "Quota reached",
+
+    q_daily: "Daily",
+    q_weekly: "Weekly",
+    q_monthly: "Monthly",
+    q_total: "Total",
+
+    toast_reconnected: "Reconnected",
+    toast_load_failed: |reason| format!("Failed to load: {reason}"),
+    toast_offline: "Not connected; try again later",
+    toast_busy: |name| format!("{name}: the previous action is still running, please wait"),
+    toast_enabled: |name| format!("Enabled {name}"),
+    toast_disabled: |name| format!("Disabled {name}"),
+    toast_test_ok: |name, model| match model {
+        Some(model) => format!("{name}: connection OK ({model})"),
+        None => format!("{name}: connection OK"),
+    },
+    toast_test_failed: |name, message| format!("{name}: {message}"),
+    toast_models_ok: |name, n| {
+        let noun = if n == 1 { "model" } else { "models" };
+        format!("{name}: fetched {n} {noun}")
+    },
+    toast_models_manual: |name, reason| format!("{name}: could not fetch models automatically ({reason})"),
+    toast_balance_ok: |name| format!("{name}: balance refreshed"),
+    toast_balance_failed: |name, reason| format!("{name}: balance query failed ({reason})"),
+    toast_mutation_failed: |name, message| format!("{name}: action failed ({message})"),
+    toast_slots_saved: |name| format!("{name}: slots saved"),
+    toast_vm_saved: |vm| format!("{vm}: saved"),
+
+    sub_title: |n| format!("Subscriptions ({n})"),
+    sub_col_name: "Name",
+    sub_col_provider: "Provider",
+    sub_col_sonnet: "sonnet",
+    sub_col_state: "Status",
+    sub_f_state: "Status",
+    sub_f_provider: "Provider",
+    sub_f_endpoint: "Endpoint",
+    sub_f_slots: "Slots",
+    sub_f_quota: "Quota",
+    sub_f_balance: "Balance",
+    sub_f_models: "Models",
+    sub_f_referenced: "Used by",
+    sub_f_last_error: "Last error",
+    sub_f_last_action: "Last action",
+    sub_slot_fallback: "fallback",
+    sub_slot_unset: "(not set)",
+    sub_effort_auto: "auto",
+    sub_balance_unsupported: "This provider does not support balance queries",
+    sub_balance_never: "Not fetched yet, press b to refresh",
+    sub_balance_unavailable: "Account unavailable (unpaid or restricted)",
+    sub_models_cached: |n| {
+        let noun = if n == 1 { "model" } else { "models" };
+        format!("{n} {noun} cached")
+    },
+    sub_models_never: "Not fetched yet, press m to refresh",
+    sub_unreferenced: "Not used by any virtual model",
+    sub_help_rows: &[
+        ("↑↓ / j k", "Previous / next"),
+        ("g / G", "First / last"),
+        ("PgUp / PgDn", "Page up / down"),
+        ("⏎ / → / l", "Open details"),
+        ("Esc / ← / h", "Close details"),
+        ("⏎ / o (details)", "Edit model / reasoning effort"),
+        ("s", "Save slot changes"),
+        ("e", "Enable / disable"),
+        ("t", "Test connection"),
+        ("m", "Refresh model list"),
+        ("b", "Refresh balance"),
+        ("n", "New subscription"),
+        ("d", "Delete subscription"),
+    ],
+    sub_busy_toggling: "Switching…",
+    sub_busy_testing: "Testing connection…",
+    sub_busy_models: "Fetching models…",
+    sub_busy_balance: "Checking balance…",
+    sub_busy_saving: "Saving…",
+    sub_busy_deleting: "Deleting…",
+    sub_slot_modified: "modified",
+    sub_save_first: "Press s to save or Esc to discard your changes first",
+    sub_effort_na_fallback: "The fallback slot has no reasoning effort",
+    sub_effort_na_kiro: "Kiro does not support reasoning effort",
+    sub_model_required: "Model cannot be empty",
+    sub_gone: "This subscription no longer exists",
+    saving_in_progress: "Saving, please wait",
+
+    sub_confirm_delete: |name| format!("Delete subscription \"{name}\"?"),
+    sub_delete_refs: |n| {
+        let noun = if n == 1 { "virtual model" } else { "virtual models" };
+        format!("Used by {n} {noun}, which will be unbound automatically:")
+    },
+    sub_delete_refs_more: |n| format!(" and {n} more"),
+    toast_deleted: |name| format!("Deleted \"{name}\""),
+    list_sep: ", ",
+
+    vm_title: "Virtual models",
+    vm_mode_seq: "Sequential",
+    vm_mode_rr: "Round-robin",
+    vm_mode_sticky: "Sticky",
+    vm_mode_unknown: "Unknown",
+    vm_mode_full_seq: "Sequential",
+    vm_mode_full_rr: "Round-robin",
+    vm_mode_full_sticky: "Session affinity (sticky)",
+    vm_mode_full_unknown: "Unknown",
+    vm_members_summary: |mode, n| {
+        let noun = if n == 1 { "subscription" } else { "subscriptions" };
+        format!("{mode} · {n} {noun}")
+    },
+    vm_empty: "No subscriptions bound yet, press a to add one",
+    vm_missing: "(deleted)",
+    vm_will_skip: "will be skipped",
+    vm_nothing_to_add: "Every subscription is already in the list",
+    vm_remove_ghosts_first: "The list contains deleted subscriptions; press x to remove them first",
+    vm_pick_add_title: |vm| format!("Add a subscription to {vm}"),
+    vm_unknown_mode: "This version does not recognize the routing mode; change it in the desktop app",
+    vm_subs_not_loaded: "Subscriptions are still loading, please wait",
+    vm_help_rows: &[
+        ("↑↓ / j k", "Previous / next"),
+        ("⏎ / → / l", "Open its subscriptions"),
+        ("Esc / ← / h", "Back to virtual models"),
+        ("J / K", "Move subscription down / up"),
+        ("a", "Add subscription"),
+        ("x", "Remove subscription"),
+        ("m", "Switch routing mode"),
+        ("s", "Save changes"),
+    ],
+
+    live_spark_title: "Last 60 seconds",
+    live_spark_total: |n| format!("{n} total"),
+    live_title: "Live routing",
+    live_empty: "No routing events yet. Requests from Claude Code will show up here",
+    live_empty_filtered: "No events match the filter · Esc to clear",
+    live_following: "Following latest",
+    live_paused: |n| format!("Paused · {n} new"),
+    live_count: |n| format!("{n} total"),
+    live_gap: "Disconnected; events missed",
+    live_interrupted: "Aborted",
+    live_filter_title: "Filter by virtual model or subscription",
+    live_filter_all: "All (clear filter)",
+    filter_summary: |what| format!("Filter: {what}"),
+    filter_dim_vm: "Virtual model",
+    filter_dim_sub: "Subscription",
+    key_space: "Space",
+    key_pause: "Pause",
+    key_resume: "Resume",
+    key_latest: "Latest",
+    key_filter: "Filter",
+    key_clear_filter: "Clear filter",
+    live_help_rows: &[
+        ("Space", "Pause / resume (new events are buffered)"),
+        ("↑↓ / j k", "Select a row (stops following latest)"),
+        ("PgUp / PgDn", "Page up / down"),
+        ("g / G", "Oldest row / back to latest and follow"),
+        ("⏎", "Request logs of that subscription"),
+        ("/", "Filter by virtual model or subscription"),
+        ("Esc", "Clear filter / back to latest"),
+        ("Latency", "Streaming: until upstream responds; else: until done"),
+        ("Concurrency", "Same virtual model + subscription pair up in order"),
+    ],
+
+    lg_title: "Request logs",
+    lg_col_time: "Time",
+    lg_col_status: "Status",
+    lg_col_vm: "Virtual model",
+    lg_col_sub: "Subscription",
+    lg_col_model: "Model",
+    lg_col_latency: "Latency",
+    lg_col_tokens: "Tokens i/o",
+    lg_col_client: "Client",
+    lg_page: |page, pages, total| format!("Page {page}/{pages} · {total} total"),
+    lg_empty: "No requests yet",
+    lg_empty_filtered: "No requests match the filter · Esc to clear",
+    lg_filter_title: "Filter request logs",
+    lg_filter_clear: "Clear all filters",
+    filter_dim_status: "Status",
+    filter_active: "active · select again to clear",
+    lg_status_success: "Success",
+    lg_status_error: "Error",
+    lg_status_timeout: "Timeout",
+    lg_status_unknown: "Unknown",
+    key_page: "Page",
+    key_logs: "Logs",
+    lg_help_rows: &[
+        ("↑↓ / j k", "Previous / next"),
+        ("g / G", "First / last on this page"),
+        ("PgUp / PgDn", "Scroll within this page"),
+        ("n / p", "Next / previous page"),
+        ("⏎", "View details"),
+        ("/", "Filter by subscription / virtual model / status"),
+        ("Esc", "Clear filters"),
+        ("Auto refresh", "Page 1 only, every 5 seconds"),
+    ],
+    lg_d_title: "Request detail",
+    lg_d_basic: "Basic info",
+    lg_d_effort: "Reasoning effort",
+    lg_d_tools: "Tool calls",
+    lg_d_error: "Error message",
+    lg_d_body: "Upstream response",
+    lg_d_time: "Time",
+    lg_d_id: "Request ID",
+    lg_d_status: "Status",
+    lg_d_vm: "Virtual model",
+    lg_d_real_model: "Real model",
+    lg_d_resp_model: "Response model",
+    lg_d_sub: "Subscription",
+    lg_d_provider: "Provider / endpoint",
+    lg_d_latency: "Latency",
+    lg_d_streaming: "Streaming",
+    lg_d_tokens: "Tokens",
+    lg_d_client: "Client",
+    lg_d_ip: "Caller IP",
+    lg_d_ua: "User-Agent",
+    lg_d_entry: "Entry endpoint",
+    lg_d_http_version: "Downstream HTTP",
+    lg_d_status_value: |status, http| match http {
+        Some(code) => format!("{status} · HTTP {code}"),
+        None => status.to_string(),
+    },
+    lg_d_tokens_value: |i, o, cw, cr| format!("input {i} · output {o} · cache write {cw} · cache read {cr}"),
+    lg_yes: "Yes",
+    lg_no: "No",
+    lg_d_effort_client: "Client",
+    lg_d_effort_effective: "Effective",
+    lg_d_effort_upstream: "Upstream echo",
+    lg_d_effort_upstream_none: "Not echoed by upstream",
+    lg_effort_source: |src| match src {
+        "slot" => "Forced by subscription slot".to_string(),
+        "client" => "Passed through from client".to_string(),
+        "yaml" => "Provider default".to_string(),
+        other => other.to_string(),
+    },
+    lg_d_effort_source_suffix: |label| format!(" ({label})"),
+    lg_d_stop_reason: "Stop reason",
+    lg_d_tools_offered: "Tools offered",
+    lg_d_tool_results: "Results returned",
+    lg_d_tool_uses: "Called this turn",
+    lg_d_tool_names: "Tool names",
+    lg_d_truncated: "(truncated)",
+    lg_d_unnamed: "(unnamed)",
+
+    wiz_title: "New subscription",
+    wiz_loading_providers: "Fetching providers…",
+    wiz_load_failed: |reason| format!("Failed to fetch providers: {reason}"),
+
+    wiz_steps: ["① Basic info", "② Bind models"],
+    wiz_f_provider: "Provider",
+    wiz_f_endpoint: "Endpoint",
+    wiz_f_api_key: "API key",
+    wiz_f_display_name: "Note",
+    wiz_btn_next: "Next",
+    wiz_pick_provider: "Select provider",
+    wiz_pick_endpoint: "Select endpoint",
+    wiz_pick_provider_first: "Select a provider first",
+    wiz_desktop_only: "Desktop app only",
+    wiz_custom_labels: [
+        "Custom · Anthropic compatible",
+        "Custom · Gemini",
+        "Custom · OpenAI Responses",
+        "Custom · OpenAI Chat Completions",
+        "Custom · Gemini Interactions",
+    ],
+    wiz_err_api_key: "API key cannot be empty",
+    wiz_err_display_name: "Note cannot be empty",
+    wiz_err_provider: "Select a provider",
+    wiz_err_endpoint: "Select an endpoint",
+    wiz_creating: "Creating subscription…",
+    wiz_created: |name| format!("Created \"{name}\""),
+    wiz_create_failed: |reason| format!("Create failed: {reason}"),
+
+    wiz_loading_models: "Fetching model list…",
+    wiz_save_failed: |reason| format!("Save failed: {reason}"),
+    wiz_models_manual: |reason| format!("Could not fetch the model list, please enter models manually: {reason}"),
+    wiz_pick_model: |slot| format!("Choose a model for {slot}"),
+    wiz_btn_save: "Save",
+    wiz_err_slot: "Enter a model",
+    wiz_confirm_exit_pending: "Subscription created, but its model slots are still (pending).\nLeave the wizard? (You can set them later on the Subscriptions page)",
+    wiz_saving: "Saving…",
+
+    wiz_custom_title: "New subscription · Custom",
+    wiz_f_protocol: "Protocol",
+    wiz_f_provider_name: "Provider name",
+    wiz_f_base_url: "Base URL",
+    wiz_f_messages_path: "Request path",
+    wiz_f_auth: "Auth",
+    wiz_btn_probe: "Fetch model list",
+    wiz_btn_create: "Create",
+    wiz_pick_protocol: "Select protocol",
+    wiz_pick_auth: "Select authentication",
+    wiz_auth_labels: ["Authorization: Bearer <key>", "x-api-key: <key>"],
+    wiz_err_provider_name: "Enter a provider name",
+    wiz_err_base_url_empty: "Enter the base URL",
+    wiz_err_base_url_scheme: "Base URL must start with http:// or https://",
+    wiz_err_messages_path: "Request path must start with /",
+    wiz_err_gemini_placeholder: "Gemini request path must contain {model}",
+    wiz_probing: "Fetching model list…",
+    wiz_protocol_names: ["Anthropic compatible", "Gemini", "OpenAI Responses", "OpenAI Chat Completions", "Gemini Interactions"],
+
+    key_field: "Field",
+    key_pick: "Choose",
+    key_next_field: "Next",
+    key_reveal: "Show / hide",
+    form_more: "… more below",
+
+    err_not_running: "cc-router is not running",
+    err_disabled: "The terminal UI is not enabled",
+    err_network: |detail| format!("Network error: {detail}"),
+    err_bad_response: |detail| format!("Could not parse the response: {detail}"),
+    err_read_file: |path, detail| format!("reading {path}: {detail}"),
+    err_data_dir_env: |var| format!("Cannot determine the data directory: environment variable {var} is not set"),
+    err_file_missing: |path| format!("{path} not found"),
+    err_file_corrupt: |path, detail| format!("{path} is corrupt: {detail}"),
+    err_no_port: |path| format!("No usable port in {path}"),
+
+    cli_help: "\
+cc-router-tui — terminal UI for cc-router
+
+Usage: cc-router-tui [options]
+Run without arguments to open the UI (the cc-router desktop app must be running, with the switch on in Settings → Security & Access → Terminal UI).
+
+Options:
+  --check            Connect to the running cc-router, print its status and exit
+  --data-dir <path>  cc-router data directory (found by platform rules by default)
+  --no-fx            Turn off animations (or set the environment variable CCR_TUI_NO_FX=1)
+  -V, --version      Print the version
+  -h, --help         Print this help
+",
+    cli_err_missing_data_dir_path: "--data-dir needs a path",
+    cli_err_unknown_arg: |arg| format!("Unknown argument: {arg}"),
+    cli_discovery_hint: "Start the cc-router desktop app first.",
+    cli_not_running_hint: ". Start the desktop app first.",
+    cli_disabled_hint: ". Turn it on in the desktop app under Settings → Security & Access → Terminal UI.",
+    cli_terminal_init_failed: |err| format!("Could not initialize the terminal: {err}\nRun cc-router-tui in a real terminal window."),
+    cli_check_connected: |app_version, pid| format!("Connected to cc-router {app_version} (pid {pid})"),
+    cli_check_addr: |base_url| format!("  Address        {base_url}"),
+    cli_check_mode: |mode, listen_all| format!("  Mode           {mode}{}", if listen_all { " · listening on 0.0.0.0" } else { "" }),
+    cli_check_subs: |total, dispatchable| format!("  Subscriptions  {total} total, {dispatchable} ready"),
+    cli_check_lang: |lang| format!("  Language       {lang}"),
+    cli_check_events_ok: "  Event stream   OK",
+    cli_check_version_mismatch: |tui, app| format!("\nNote: TUI version {tui} does not match app version {app}."),
+};
+
 pub fn strings(lang: Lang) -> &'static Strings {
     match lang {
-        // P6 在这里接上 EN / JA 两个 const; 在那之前三种语言都显示中文。
-        Lang::Zh | Lang::En | Lang::Ja => &ZH,
+        Lang::En => &EN,
+        // JA 译文补上之前日文环境仍显示中文。
+        Lang::Zh | Lang::Ja => &ZH,
     }
 }
 
@@ -1057,6 +1483,21 @@ mod tests {
             let s = strings(lang);
             let total: usize = s.tabs.iter().map(|t| t.width() + 4).sum::<usize>() + (s.tabs.len() - 1);
             assert!(total <= 76, "{lang:?}: 标签栏宽 {total}");
+        }
+    }
+
+    /// 固定文案的确认弹窗每行都放得下最小终端 (弹窗最宽 80 − 4, 减边框与内距 6 = 70 列)。更宽的
+    /// 行会被按字符折行, 英文会从单词中间断开, 所以英文译文要自己用 `\n` 在词间换好行; 中日文
+    /// 按字符折行不会断词, 不在此列。
+    #[test]
+    fn english_confirm_prompts_fit_in_80_columns_without_breaking_words() {
+        let s = strings(Lang::En);
+        let prompts =
+            [s.confirm_discard.to_string(), s.wiz_confirm_exit_pending.to_string(), (s.sub_confirm_delete)("0123456789"), (s.sub_delete_refs)(99)];
+        for prompt in prompts {
+            for line in prompt.lines() {
+                assert!(line.width() <= 70, "确认弹窗一行 {} 列, 超过 70: {line:?}", line.width());
+            }
         }
     }
 

@@ -20,11 +20,11 @@ use super::{Component, DrawCtx};
 use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation, OnYes};
 use crate::client::dto::{BalanceSeverity, ModelSlots, QuotaUsage, Slot, SlotEfforts, Subscription, EFFORT_CHOICES, PENDING_MODEL};
 use crate::client::events::SUBSCRIPTION_CHANGES;
-use crate::format::{compact, fit, slot_label};
+use crate::format::{compact, fit, slot_label, widest};
 use crate::i18n::Strings;
 use crate::store::Store;
 use crate::theme::Theme;
-use crate::widgets::badge::{badge, status_text};
+use crate::widgets::badge::{badge, status_text, COUNTDOWN_WIDTH};
 use crate::widgets::gauge::quota_gauge;
 use crate::widgets::keybar::Hint;
 use crate::widgets::picker::{PickerChoice, PickerItem, PickerSpec, PickerTag};
@@ -34,23 +34,20 @@ use crate::widgets::{pane_border_style, spinner_state};
 /// 达到才用左表右详情双栏; 以下只画一栏, 靠 [`Focus`] 在列表/详情之间切换 (两种宽度下 `⏎` 都能
 /// 切换焦点, 区别只在窄屏一次只画一栏、宽屏两栏都画但边框颜色跟着焦点走)。
 const WIDE_THRESHOLD: u16 = 120;
-/// 达到这个宽度, 左栏从 58 列放宽到 [`LIST_WIDTH_140`] 并显示状态列 (120–139 仍是 58 列
-/// 无状态列, 与 [`WIDE_THRESHOLD`] 那档保持不变)。
+/// 达到这个宽度, 左栏从 58 列再放宽一个状态列 ([`status_col`] + 1 格间隔) 并显示状态列 (120–139
+/// 仍是 58 列无状态列, 与 [`WIDE_THRESHOLD`] 那档保持不变)。
 const WIDE_140_THRESHOLD: u16 = 140;
 const LIST_WIDTH: u16 = 58;
-const LIST_WIDTH_140: u16 = 72;
 /// 表的选中前缀 (`highlight_symbol`) 固定宽度, 用于手算列宽给 `format::fit`。
 const HIGHLIGHT_COL: u16 = 2;
 const SYMBOL_COL: u16 = 2;
 const NAME_COL: usize = 20;
 const PROVIDER_COL: usize = 12;
-/// 状态列 (badge 文案 + 冷却倒计时), 紧跟在备注名后面; 只在宽度够 (仍能留给 sonnet 列至少
-/// 12 列) 才显示, 放不下就整列省略, 不挤压 name / provider / sonnet 的下限。
-const STATUS_COL: usize = 14;
+/// 状态列 (badge 文案 + 冷却倒计时) 的下限, 紧跟在备注名后面; 只在宽度够 (仍能留给 sonnet 列至少
+/// 12 列) 才显示, 放不下就整列省略, 不挤压 name / provider / sonnet 的下限。实际宽度见 [`status_col`]。
+const STATUS_MIN_COL: usize = 14;
 /// 列表左右各留一列空白, 不让内容贴着边框 (block 用 `Padding::horizontal`)。
 const LIST_PADDING: u16 = 1;
-const FIELD_LABEL_COL: usize = 10;
-const SLOT_NAME_COL: usize = 8;
 /// 槽位 effort 那一列的定宽 (最长的档位文案是 "medium"/"xhigh", 5~6 列, 8 留了余量)。
 /// 模型名列不是常量, 按可用宽度算 (见 [`slot_model_col`])。
 const EFFORT_COL: usize = 8;
@@ -63,6 +60,38 @@ const DEFAULT_PAGE_ROWS: usize = 10;
 /// 删除确认弹窗里最多直接列出的引用方 (虚拟模型) 个数, 超出的部分折成
 /// `s.sub_delete_refs_more`——确认弹窗最宽只有 `screen - 4`, 不控制长度会被硬切。
 const MAX_REFS_SHOWN: usize = 4;
+
+/// 状态列宽: 放得下「限流 · mm:ss」(冷却倒计时最常见的场合), 不低于 [`STATUS_MIN_COL`]; 更长的
+/// 状态文案带倒计时时由 `fit` 截断。
+fn status_col(s: &Strings) -> usize {
+    (s.st_rate_limited.width() + COUNTDOWN_WIDTH).max(STATUS_MIN_COL)
+}
+
+/// 详情面板字段标签列: 最宽的字段名 + 2 格间隔, 所有字段的值左对齐到同一条竖线。
+fn field_label_col(s: &Strings) -> usize {
+    widest([
+        s.sub_f_state,
+        s.sub_f_provider,
+        s.sub_f_endpoint,
+        s.sub_f_slots,
+        s.sub_f_quota,
+        s.sub_f_balance,
+        s.sub_f_models,
+        s.sub_f_referenced,
+        s.sub_f_last_error,
+        s.sub_f_last_action,
+    ]) + 2
+}
+
+/// 槽位名一列 (四个主槽的英文原名与兜底槽的译名): 最宽的名字 + 2 格间隔。
+fn slot_name_col(s: &'static Strings) -> usize {
+    widest(MAIN_SLOTS.iter().chain([&Slot::Fallback]).map(|slot| slot_label(*slot, s))) + 2
+}
+
+/// 限额行里周期名一段: 最宽的周期名 + 2 格间隔。
+fn quota_period_col(s: &Strings) -> u16 {
+    widest([s.q_daily, s.q_weekly, s.q_monthly, s.q_total]) as u16 + 2
+}
 
 /// 详情面板的一行: 大多数是普通文本, 限额行要嵌一个真正的 `LineGauge` widget (不是文本能表示
 /// 的), 「上次操作」/「最近错误」这类自由文本可能超宽折成好几行 (`Wrapped`)。`height` 在构造
@@ -153,9 +182,9 @@ impl Subscriptions {
     }
 
     /// 宽屏左栏的列宽——140 列起放宽到 72 (放得下状态列), 120–139 是 58。
-    fn list_width(&self) -> u16 {
+    fn list_width(&self, s: &Strings) -> u16 {
         if self.last_width >= WIDE_140_THRESHOLD {
-            LIST_WIDTH_140
+            LIST_WIDTH + status_col(s) as u16 + 1
         } else {
             LIST_WIDTH
         }
@@ -444,14 +473,15 @@ impl Subscriptions {
         let columns_width = inner_width.saturating_sub(HIGHLIGHT_COL);
         const MIN_SONNET_COL: u16 = 12;
         let base_fixed = SYMBOL_COL + 1 + NAME_COL as u16 + 1 + PROVIDER_COL as u16 + 1;
-        let with_status_fixed = base_fixed + STATUS_COL as u16 + 1;
+        let status_col = status_col(s);
+        let with_status_fixed = base_fixed + status_col as u16 + 1;
         let show_status = columns_width >= with_status_fixed + MIN_SONNET_COL;
         let fixed = if show_status { with_status_fixed } else { base_fixed };
         let sonnet_col = columns_width.saturating_sub(fixed) as usize;
 
         let mut header_cells = vec![Cell::from(""), Cell::from(fit(s.sub_col_name, NAME_COL))];
         if show_status {
-            header_cells.push(Cell::from(fit(s.sub_col_state, STATUS_COL)));
+            header_cells.push(Cell::from(fit(s.sub_col_state, status_col)));
         }
         header_cells.push(Cell::from(fit(s.sub_col_provider, PROVIDER_COL)));
         header_cells.push(Cell::from(fit(s.sub_col_sonnet, sonnet_col)));
@@ -482,7 +512,7 @@ impl Subscriptions {
                     let b = badge(sub, ctx.theme, s);
                     let text = status_text(sub, &b, ctx.now_ms);
                     let style = if muted { muted_style } else { Style::new().fg(b.color) };
-                    cells.push(Cell::from(Span::styled(fit(&text, STATUS_COL), style)));
+                    cells.push(Cell::from(Span::styled(fit(&text, status_col), style)));
                 }
                 cells.push(Cell::from(Span::styled(
                     fit(&sub.provider_display_name, PROVIDER_COL),
@@ -506,7 +536,7 @@ impl Subscriptions {
 
         let mut widths = vec![Constraint::Length(SYMBOL_COL), Constraint::Length(NAME_COL as u16)];
         if show_status {
-            widths.push(Constraint::Length(STATUS_COL as u16));
+            widths.push(Constraint::Length(status_col as u16));
         }
         widths.push(Constraint::Length(PROVIDER_COL as u16));
         widths.push(Constraint::Length(sonnet_col as u16));
@@ -750,7 +780,7 @@ impl Component for Subscriptions {
         let Some(idx) = self.resolve_selection(subs) else { return };
 
         if self.is_wide() {
-            let [left, right] = Layout::horizontal([Constraint::Length(self.list_width()), Constraint::Min(0)]).areas(area);
+            let [left, right] = Layout::horizontal([Constraint::Length(self.list_width(ctx.s)), Constraint::Min(0)]).areas(area);
             let list_border = self.pane_border_style(ctx.theme, true);
             let detail_border = self.pane_border_style(ctx.theme, false);
             self.draw_list(frame, left, ctx, subs, idx, &flash_rows, list_border);
@@ -870,8 +900,8 @@ impl Component for Subscriptions {
     }
 }
 
-fn field_line(label: &'static str, mut value: Vec<Span<'static>>) -> Line<'static> {
-    let mut spans = vec![Span::raw(fit(label, FIELD_LABEL_COL))];
+fn field_line(s: &Strings, label: &'static str, mut value: Vec<Span<'static>>) -> Line<'static> {
+    let mut spans = vec![Span::raw(fit(label, field_label_col(s)))];
     spans.append(&mut value);
     Line::from(spans)
 }
@@ -911,8 +941,8 @@ fn longest_model_width(model_slots: &ModelSlots) -> usize {
 /// 实际内容定宽, 让 effort 列贴着模型名。
 /// 宽度小到连 24 都算不出来时仍然钳制在 24 (`.max(24)` 排在 `.min(available)` 之后), 不会因为
 /// 窄而给出更小 (甚至溢出成 0) 的值——80 列的最小终端保证了这种极端情况不会真的溢出面板。
-fn slot_model_col(width: u16, model_slots: &ModelSlots) -> usize {
-    let available = width.saturating_sub(2 + SLOT_NAME_COL as u16 + EFFORT_COL as u16) as usize;
+fn slot_model_col(width: u16, model_slots: &ModelSlots, s: &'static Strings) -> usize {
+    let available = width.saturating_sub(2 + slot_name_col(s) as u16 + EFFORT_COL as u16) as usize;
     (longest_model_width(model_slots) + 2).min(available).max(24)
 }
 
@@ -936,7 +966,7 @@ fn slot_line(
     };
     let effort_style = if effort.is_some_and(|e| !e.is_empty()) { Style::default() } else { theme.muted_style() };
     let mut spans = vec![
-        Span::raw(format!("  {}", fit(name, SLOT_NAME_COL))),
+        Span::raw(format!("  {}", fit(name, slot_name_col(s)))),
         Span::styled(fit(model, model_col), model_style(model, theme)),
         Span::styled(effort_text, effort_style),
     ];
@@ -952,7 +982,7 @@ fn slot_line(
 }
 
 fn fallback_slot_line(model: &str, theme: &Theme, s: &'static Strings, modified: bool, focused: bool) -> Line<'static> {
-    let name = format!("  {}", fit(s.sub_slot_fallback, SLOT_NAME_COL));
+    let name = format!("  {}", fit(s.sub_slot_fallback, slot_name_col(s)));
     let mut spans = if model.is_empty() {
         vec![Span::raw(name), Span::styled(s.sub_slot_unset, theme.muted_style())]
     } else {
@@ -969,16 +999,16 @@ fn fallback_slot_line(model: &str, theme: &Theme, s: &'static Strings, modified:
     line
 }
 
-/// `value_width`: 字段值那一列还剩多少显示宽度 (详情内宽 - `FIELD_LABEL_COL`), 长文本 (URL /
+/// `value_width`: 字段值那一列还剩多少显示宽度 (详情内宽 - [`field_label_col`]), 长文本 (URL /
 /// 被引用列表 / 余额条目) 超出时截断成省略号收尾, 不能硬裁到贴着边框。
 fn balance_rows(sub: &Subscription, theme: &Theme, s: &'static Strings, value_width: usize) -> Vec<DetailRow> {
     let mut out = Vec::new();
     if !sub.balance_supported {
-        out.push(DetailRow::Line(field_line(s.sub_f_balance, vec![Span::styled(s.sub_balance_unsupported, theme.muted_style())])));
+        out.push(DetailRow::Line(field_line(s, s.sub_f_balance, vec![Span::styled(s.sub_balance_unsupported, theme.muted_style())])));
         return out;
     }
     let Some(cache) = &sub.balance_cache else {
-        out.push(DetailRow::Line(field_line(s.sub_f_balance, vec![Span::styled(s.sub_balance_never, theme.muted_style())])));
+        out.push(DetailRow::Line(field_line(s, s.sub_f_balance, vec![Span::styled(s.sub_balance_never, theme.muted_style())])));
         return out;
     };
     let snapshot = &cache.snapshot;
@@ -986,11 +1016,11 @@ fn balance_rows(sub: &Subscription, theme: &Theme, s: &'static Strings, value_wi
     if snapshot.is_available == Some(false) {
         let label = if first { s.sub_f_balance } else { "" };
         first = false;
-        out.push(DetailRow::Line(field_line(label, vec![Span::styled(s.sub_balance_unavailable, Style::new().fg(theme.err))])));
+        out.push(DetailRow::Line(field_line(s, label, vec![Span::styled(clip(s.sub_balance_unavailable, value_width), Style::new().fg(theme.err))])));
     }
     if snapshot.entries.is_empty() {
         if first {
-            out.push(DetailRow::Line(field_line(s.sub_f_balance, vec![Span::styled(s.sub_balance_never, theme.muted_style())])));
+            out.push(DetailRow::Line(field_line(s, s.sub_f_balance, vec![Span::styled(s.sub_balance_never, theme.muted_style())])));
         }
         return out;
     }
@@ -1011,7 +1041,7 @@ fn balance_rows(sub: &Subscription, theme: &Theme, s: &'static Strings, value_wi
             spans.push(Span::raw(" "));
             spans.push(Span::styled(hint.clone(), theme.muted_style()));
         }
-        out.push(DetailRow::Line(field_line(label, spans)));
+        out.push(DetailRow::Line(field_line(s, label, spans)));
     }
     out
 }
@@ -1030,7 +1060,7 @@ fn detail_rows(
 ) -> Vec<DetailRow> {
     let s = ctx.s;
     let theme = ctx.theme;
-    let value_width = width.saturating_sub(FIELD_LABEL_COL as u16) as usize;
+    let value_width = width.saturating_sub(field_label_col(s) as u16) as usize;
     let mut rows = Vec::new();
 
     // 状态: `badge()` 的符号 + 文案, 冷却倒计时规则与总览页共用 (`widgets::badge::status_text`)。
@@ -1054,7 +1084,7 @@ fn detail_rows(
         status_spans.push(Span::raw(" · "));
         status_spans.push(Span::styled(busy_text, theme.muted_style()));
     }
-    rows.push(DetailRow::Line(field_line(s.sub_f_state, status_spans)));
+    rows.push(DetailRow::Line(field_line(s, s.sub_f_state, status_spans)));
 
     // 上次操作的结果 (与对应 toast 同一份文本), 紧跟在状态后面; 没有条目就不画这一行。
     // 发起新操作那一刻 `App::start_mutation` 就会把这里清掉, 所以正忙的订阅不会同时既显示
@@ -1070,18 +1100,19 @@ fn detail_rows(
 
     // 厂商
     rows.push(DetailRow::Line(field_line(
+        s,
         s.sub_f_provider,
         vec![Span::raw(format!("{} · {}", sub.provider_display_name, sub.auth_type))],
     )));
 
     // 端点
-    rows.push(DetailRow::Line(field_line(s.sub_f_endpoint, vec![Span::raw(clip(&sub.base_url, value_width))])));
+    rows.push(DetailRow::Line(field_line(s, s.sub_f_endpoint, vec![Span::raw(clip(&sub.base_url, value_width))])));
 
     // 槽位: 标签独占一行, 四个槽 + 兜底各自缩进一行 (兜底没有 effort 列)。有草稿时显示草稿值;
     // 与 `Store` (`sub` 自己的字段) 不同的槽位行末尾加 muted 的「已修改」, 焦点落在的槽位整行
     // REVERSED。
-    rows.push(DetailRow::Line(Line::from(Span::raw(fit(s.sub_f_slots, FIELD_LABEL_COL)))));
-    let model_col = slot_model_col(width, model_slots);
+    rows.push(DetailRow::Line(Line::from(Span::raw(fit(s.sub_f_slots, field_label_col(s))))));
+    let model_col = slot_model_col(width, model_slots, s);
     for slot in MAIN_SLOTS {
         let name = slot_label(slot, s);
         let model = model_slots.get(slot);
@@ -1100,7 +1131,7 @@ fn detail_rows(
     // `limit.is_some()`——否则会显示一条 "0%  n / 0" 的假限额行。
     let limited: Vec<&QuotaUsage> = sub.quota_usage.iter().filter(|q| q.ratio().is_some()).collect();
     if limited.is_empty() {
-        rows.push(DetailRow::Line(field_line(s.sub_f_quota, vec![Span::styled("—", theme.muted_style())])));
+        rows.push(DetailRow::Line(field_line(s, s.sub_f_quota, vec![Span::styled("—", theme.muted_style())])));
     } else {
         for (i, q) in limited.iter().enumerate() {
             let label = if i == 0 { s.sub_f_quota } else { "" };
@@ -1116,7 +1147,7 @@ fn detail_rows(
         Some(cache) => (s.sub_models_cached)(cache.models.len()),
         None => s.sub_models_never.to_string(),
     };
-    rows.push(DetailRow::Line(field_line(s.sub_f_models, vec![Span::raw(models_text)])));
+    rows.push(DetailRow::Line(field_line(s, s.sub_f_models, vec![Span::raw(models_text)])));
 
     // 被引用
     let referenced = if sub.referenced_by.is_empty() {
@@ -1124,7 +1155,7 @@ fn detail_rows(
     } else {
         Span::raw(clip(&sub.referenced_by.join(", "), value_width))
     };
-    rows.push(DetailRow::Line(field_line(s.sub_f_referenced, vec![referenced])));
+    rows.push(DetailRow::Line(field_line(s, s.sub_f_referenced, vec![referenced])));
 
     // 最近错误: 永远是最后一条, 按实际折行数占 1..=4 行 (见 [`wrapped_row`]), 不再单独占死 4 行。
     let error_text = match &sub.last_error_message {
@@ -1181,8 +1212,9 @@ fn draw_detail_row(frame: &mut Frame, rect: Rect, ctx: &DrawCtx, row: &DetailRow
         // 这样续行天然从 value_area.x (与其它字段的值列完全相同的一列) 开始, 不会像"标签+正文拼成
         // 一整条字符串再整体 Wrap"那样, 续行找不到标签占的那几列, 缩回列 0。
         DetailRow::Wrapped { label, text, style, .. } => {
-            let [label_area, value_area] = Layout::horizontal([Constraint::Length(FIELD_LABEL_COL as u16), Constraint::Min(0)]).areas(rect);
-            frame.render_widget(Line::raw(fit(label, FIELD_LABEL_COL)), Rect::new(label_area.x, label_area.y, label_area.width, 1));
+            let label_col = field_label_col(ctx.s);
+            let [label_area, value_area] = Layout::horizontal([Constraint::Length(label_col as u16), Constraint::Min(0)]).areas(rect);
+            frame.render_widget(Line::raw(fit(label, label_col)), Rect::new(label_area.x, label_area.y, label_area.width, 1));
             frame.render_widget(Paragraph::new(text.as_str()).style(*style).wrap(Wrap { trim: true }), value_area);
         }
     }
@@ -1229,12 +1261,13 @@ fn draw_quota_row(frame: &mut Frame, area: Rect, ctx: &DrawCtx, label: &str, q: 
     // 先把标签切出来 (不带 spacing, 与 `field_line` 的值列起点严格一致), 再在剩下的宽度里给
     // 周期名/进度条/百分比/用量四段各自留一点呼吸间距 (标签不能算进 `.spacing(1)` 里, 否则所有
     // 字段行的值都会因此错位一列)。
-    let [label_area, value_area] = Layout::horizontal([Constraint::Length(FIELD_LABEL_COL as u16), Constraint::Min(0)]).areas(area);
-    frame.render_widget(Line::raw(fit(label, FIELD_LABEL_COL)), label_area);
+    let label_col = field_label_col(s);
+    let [label_area, value_area] = Layout::horizontal([Constraint::Length(label_col as u16), Constraint::Min(0)]).areas(area);
+    frame.render_widget(Line::raw(fit(label, label_col)), label_area);
 
     let ratio = q.ratio().unwrap_or(0.0);
     let [period_area, gauge_area, pct_area, used_area] =
-        Layout::horizontal([Constraint::Length(8), Constraint::Min(6), Constraint::Length(5), Constraint::Length(16)])
+        Layout::horizontal([Constraint::Length(quota_period_col(s)), Constraint::Min(6), Constraint::Length(5), Constraint::Length(16)])
             .spacing(1)
             .areas(value_area);
     frame.render_widget(Line::styled(s.quota_period(q.period), theme.muted_style()), period_area);
@@ -1382,14 +1415,14 @@ mod tests {
     /// 列远在天边。
     #[test]
     fn slot_model_col_uses_the_longest_model_name_capped_by_available_width_and_a_floor() {
-        // 80 列窄屏详情面板: inner=76, 可用=76-2-8(SLOT_NAME_COL)-8(EFFORT_COL)=58。
+        // 80 列窄屏详情面板: inner=76, 可用=76-2-8(中文 slot_name_col)-8(EFFORT_COL)=58。
         // 短模型名 (mock 惯用的 "d"/"a"/"c" 单字符): 1+2=3, 远小于下限 24, 钳到 24。
-        assert_eq!(slot_model_col(76, &slots_with_sonnet("b")), 24);
+        assert_eq!(slot_model_col(76, &slots_with_sonnet("b"), &ZH), 24);
         // 30 字符的真实模型 id: 30+2=32, 小于可用宽度 58, 直接用 32——effort 列贴着模型名,
         // 不再吃掉整段 58 列的可用宽度。
         let real = slots_with_sonnet("qwen3-coder-480b-a35b-instruct");
-        assert_eq!(slot_model_col(76, &real), 32);
+        assert_eq!(slot_model_col(76, &real, &ZH), 32);
         // 宽度小到连 24 都算不出来时, 仍然钳制在 24, 不会因为窄而给出更小 (甚至溢出成 0) 的值。
-        assert_eq!(slot_model_col(20, &slots_with_sonnet("b")), 24);
+        assert_eq!(slot_model_col(20, &slots_with_sonnet("b"), &ZH), 24);
     }
 }

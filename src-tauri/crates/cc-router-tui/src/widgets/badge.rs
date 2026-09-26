@@ -31,6 +31,14 @@ pub fn badge(sub: &Subscription, theme: &Theme, s: &Strings) -> Badge {
     Badge { symbol: state_symbol(state), label: s.state(state), color: theme.state_color(state) }
 }
 
+/// [`status_text`] 追加的冷却倒计时 ` · mm:ss` 的显示宽度 (`mmss` 恒为 5 列)。
+pub const COUNTDOWN_WIDTH: usize = 8;
+
+/// 全部状态文案 (含「已达限额」), 按语言推导状态列宽时用。
+pub fn state_labels(s: &Strings) -> [&'static str; 8] {
+    [s.st_healthy, s.st_rate_limited, s.st_quota_exhausted, s.st_transient_error, s.st_auth_failed, s.st_disabled, s.st_unknown, s.st_quota_reached]
+}
+
 /// `badge()` 选出的文案再叠一条冷却规则: `enabled && cooldown_until > now` 才追加 ` · mm:ss`
 /// 倒计时。总览页 (健康度面板一行) 与订阅页 (详情面板「状态」行) 共用同一条判定, 不要各写一份。
 pub fn status_text(sub: &Subscription, badge: &Badge, now_ms: i64) -> String {

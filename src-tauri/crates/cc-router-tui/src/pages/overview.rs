@@ -13,10 +13,10 @@ use super::{Component, DrawCtx};
 use crate::action::{Action, Cmd, Fetch, FetchData, OverviewData};
 use crate::client::dto::{hourly_buckets, OverallStats, ProxyStatus, Subscription};
 use crate::client::events::SUBSCRIPTION_CHANGES;
-use crate::format::{compact, fit, percent, thousands};
+use crate::format::{compact, fit, percent, thousands, widest};
 use crate::i18n::Strings;
 use crate::store::Store;
-use crate::widgets::badge::{badge, severity, status_text};
+use crate::widgets::badge::{badge, severity, state_labels, status_text, COUNTDOWN_WIDTH};
 use crate::widgets::gauge::quota_gauge;
 use crate::widgets::keybar::Hint;
 use crate::widgets::spinner_state;
@@ -25,15 +25,34 @@ const LOGO_TEXT: &str = "cc-router";
 /// Quadrant 像素: 8×8 字模横竖各减半 → 每字 4 列 × 4 行。
 const LOGO_WIDTH: u16 = LOGO_TEXT.len() as u16 * 4;
 const LOGO_HEIGHT: u16 = 4;
-const TODAY_WIDTH: u16 = 23;
+/// 「今日」面板宽度下限; 标签更宽的语言按 [`today_width`] 放宽。
+const TODAY_MIN_WIDTH: u16 = 23;
+/// 「今日」面板里数值列的宽度 (放得下 `999,999,999` 这一级)。
+const TODAY_VALUE_COL: u16 = 9;
 const MID_HEIGHT: u16 = 5;
 /// 健康度面板至少留 5 行 (边框 2 + 3 条订阅), 不够就先让 logo 让位 (spec §5.1)。
 const MIN_HEALTH_HEIGHT: u16 = 5;
 
-/// 健康度一行的定宽列 (显示列数)。状态列要放得下「限流 · 00:42」; P6 加 en / ja 后要按最长译文重新量。
-const STATUS_COL: usize = 22;
-const QUOTA_LABEL_COL: usize = 8;
+/// 健康度一行的定宽列 (显示列数)。状态列下限 22; 最长的状态文案带上冷却倒计时放不下时按
+/// [`status_col`] 放宽。
+const STATUS_MIN_COL: usize = 22;
 const PERCENT_COL: usize = 5;
+
+/// 「今日」面板宽度: 边框 2 + 内距 2 + 最宽标签 + 1 格间隔 + 数值列, 不低于 [`TODAY_MIN_WIDTH`]。
+fn today_width(s: &Strings) -> u16 {
+    let label = widest([s.ov_requests, s.ov_success_rate, s.ov_tokens]) as u16;
+    (4 + label + 1 + TODAY_VALUE_COL).max(TODAY_MIN_WIDTH)
+}
+
+/// 状态列要放得下「最长的状态文案 · mm:ss」。
+fn status_col(s: &Strings) -> usize {
+    (widest(state_labels(s)) + COUNTDOWN_WIDTH).max(STATUS_MIN_COL)
+}
+
+/// 限额周期名一列: 最宽的周期名 + 2 格间隔。
+fn quota_label_col(s: &Strings) -> usize {
+    widest([s.q_daily, s.q_weekly, s.q_monthly, s.q_total]) + 2
+}
 
 #[derive(Default)]
 pub struct Overview {
@@ -139,7 +158,7 @@ impl Overview {
         let rows = [("requests", s.ov_requests, requests), ("success", s.ov_success_rate, success), ("tokens", s.ov_tokens, tokens)];
         for (i, (key, label, value)) in rows.into_iter().enumerate() {
             let row = Rect::new(inner.x, inner.y + i as u16, inner.width, 1).intersection(inner);
-            let [l, v] = Layout::horizontal([Constraint::Min(0), Constraint::Length(9)]).areas(row);
+            let [l, v] = Layout::horizontal([Constraint::Min(0), Constraint::Length(TODAY_VALUE_COL)]).areas(row);
             frame.render_widget(Line::styled(label, ctx.theme.muted_style()), l);
             frame.render_widget(Line::raw(value).right_aligned(), v);
             if flash_values.contains(&key) {
@@ -196,15 +215,17 @@ impl Overview {
         let shown = if overflow { capacity.saturating_sub(1) } else { subs.len() };
         // 窄终端名字列 18, 宽终端多给一些; 其余列定宽, 进度条吃掉剩下的。
         let name_col: usize = if inner.width >= 110 { 28 } else { 18 };
+        let status_col = status_col(s);
+        let quota_label_col = quota_label_col(s);
 
         for (i, sub) in subs.iter().take(shown).enumerate() {
             let row = Rect::new(inner.x, inner.y + i as u16, inner.width, 1);
             let b = badge(sub, ctx.theme, s);
             let status = status_text(sub, &b, ctx.now_ms);
-            let left_width = (2 + name_col + 2 + STATUS_COL + 2) as u16;
+            let left_width = (2 + name_col + 2 + status_col + 2) as u16;
             let [left, label, gauge, pct] = Layout::horizontal([
                 Constraint::Length(left_width),
-                Constraint::Length(QUOTA_LABEL_COL as u16 + 1),
+                Constraint::Length(quota_label_col as u16 + 1),
                 Constraint::Min(0),
                 Constraint::Length(PERCENT_COL as u16 + 1),
             ])
@@ -215,7 +236,7 @@ impl Overview {
                     Span::styled(format!("{} ", b.symbol), Style::new().fg(b.color)),
                     Span::raw(fit(&sub.display_name, name_col)),
                     Span::raw("  "),
-                    Span::styled(fit(&status, STATUS_COL), Style::new().fg(b.color)),
+                    Span::styled(fit(&status, status_col), Style::new().fg(b.color)),
                 ]),
                 left,
             );
@@ -275,7 +296,7 @@ impl Component for Overview {
         let hero_height = if show_logo { LOGO_HEIGHT } else { 2 };
         let [hero, mid, health] =
             Layout::vertical([Constraint::Length(hero_height), Constraint::Length(MID_HEIGHT), Constraint::Min(0)]).areas(area);
-        let [today, hourly] = Layout::horizontal([Constraint::Length(TODAY_WIDTH), Constraint::Min(0)]).areas(mid);
+        let [today, hourly] = Layout::horizontal([Constraint::Length(today_width(ctx.s)), Constraint::Min(0)]).areas(mid);
 
         self.draw_hero(frame, hero, show_logo, ctx);
         self.draw_today(frame, today, ctx, &flash_values);

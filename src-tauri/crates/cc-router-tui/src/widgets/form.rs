@@ -4,7 +4,7 @@
 //!
 //! 画法细节 (决定渲染字节, 与 `widgets::picker::draw` 保持一致的地方都直接照抄):
 //! - 聚焦行前缀 `"▌ "`, 非聚焦行 `"  "` (与列表选中符号一致)。
-//! - 标签用 [`crate::format::fit`] 定宽到 [`LABEL_COL`]; 聚焦行 `accent_bold`, 否则 `muted`。
+//! - 标签用 [`crate::format::fit`] 定宽到 [`label_col`]; 聚焦行 `accent_bold`, 否则 `muted`。
 //! - 值列宽度用 `Layout` 的 `Constraint::Min(0)` 自动吃掉 "剩余宽度 - hint 宽度 - 1 格间隔",
 //!   不手算——超长的值交给 [`crate::format::fit`] 截断 (无光标行) 或 `Paragraph::scroll` 裁切
 //!   (有光标行)。
@@ -32,7 +32,7 @@ use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::format::{fit, wrap};
+use crate::format::{fit, widest, wrap};
 use crate::i18n::Strings;
 use crate::theme::Theme;
 use crate::widgets::spinner_state;
@@ -40,8 +40,8 @@ use crate::widgets::spinner_state;
 /// `Note` 行最多画几行, 超出截断收尾补 `…` —— 与订阅详情页「最近错误」同一套上限规则。
 const NOTE_MAX_ROWS: usize = 3;
 
-/// 标签列的显示宽度; 所有字段的值左对齐到同一条竖线。
-pub const LABEL_COL: usize = 12;
+/// 标签列宽度下限; 所有字段的值左对齐到同一条竖线。实际宽度见 [`label_col`]。
+const LABEL_COL: usize = 12;
 
 /// 聚焦/非聚焦行前缀 (`"▌ "` / `"  "`) 的显示宽度。
 const PREFIX_COL: u16 = 2;
@@ -220,12 +220,13 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'
 
     // `last_visible` 从 `first_visible` 起步、只增不减 (上面那个 for 循环的初值与推进方式保证),
     // 减法不会下溢。
+    let label_col = label_col(view.rows);
     let mut focus_rect = None;
     let visible_count = last_visible + 1 - first_visible;
     for (i, row) in view.rows.iter().enumerate().skip(first_visible).take(visible_count) {
         let needed = heights[i];
         let row_rect = Rect::new(inner.x, y, inner.width, needed);
-        draw_row(frame, row_rect, row, i == view.focus, theme, view.tick, view.show_cursor);
+        draw_row(frame, row_rect, row, label_col, i == view.focus, theme, view.tick, view.show_cursor);
         if i == view.focus {
             focus_rect = Some(row_rect);
         }
@@ -237,6 +238,16 @@ pub fn draw(frame: &mut Frame, area: Rect, view: &FormView, theme: &Theme, s: &'
     }
 
     focus_rect
+}
+
+/// 标签列宽度: 这张表单里最宽的字段标签 + 2 格间隔, 不低于 [`LABEL_COL`]。按表单自己的行算 (不是
+/// 全局常量), 英文标签比中文宽时整列一起右移, 值仍然对齐。
+fn label_col(rows: &[FormRow]) -> usize {
+    let labels = rows.iter().filter_map(|row| match row {
+        FormRow::Field { label, .. } => Some(*label),
+        FormRow::Button { .. } | FormRow::Note { .. } | FormRow::Spacer => None,
+    });
+    (widest(labels) + 2).max(LABEL_COL)
 }
 
 fn step_bar(current: usize, steps: &[&str], theme: &Theme) -> Line<'static> {
@@ -255,14 +266,16 @@ fn step_bar(current: usize, steps: &[&str], theme: &Theme) -> Line<'static> {
     Line::from(spans)
 }
 
-fn draw_row(frame: &mut Frame, area: Rect, row: &FormRow, focused: bool, theme: &Theme, tick: u64, show_cursor: bool) {
+#[allow(clippy::too_many_arguments)]
+fn draw_row(frame: &mut Frame, area: Rect, row: &FormRow, label_col: usize, focused: bool, theme: &Theme, tick: u64, show_cursor: bool) {
     match row {
         FormRow::Field { label, value, placeholder, hint, cursor, error, locked } => {
             let line_area = Rect { height: 1, ..area };
-            draw_field_line(frame, line_area, label, value, placeholder, *hint, *cursor, *locked, focused, theme, show_cursor);
+            let cell = FieldCell { label, label_col, value, placeholder, hint: *hint, cursor: *cursor, locked: *locked };
+            draw_field_line(frame, line_area, &cell, focused, theme, show_cursor);
             if let Some(err) = error {
                 let error_area = Rect { y: area.y + 1, height: 1, ..area };
-                draw_field_error(frame, error_area, err, theme);
+                draw_field_error(frame, error_area, err, label_col, theme);
             }
         }
         FormRow::Button { label, busy } => draw_button(frame, area, label, *busy, focused, tick),
@@ -309,27 +322,26 @@ fn draw_note(frame: &mut Frame, area: Rect, text: &str, theme: &Theme) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_field_line(
-    frame: &mut Frame,
-    area: Rect,
-    label: &str,
-    value: &str,
-    placeholder: &str,
-    hint: Option<&str>,
+/// 一个字段行要画的内容 (标签列宽由整张表单统一算好传进来)。
+struct FieldCell<'a> {
+    label: &'a str,
+    label_col: usize,
+    value: &'a str,
+    placeholder: &'a str,
+    hint: Option<&'a str>,
     cursor: Option<usize>,
     locked: bool,
-    focused: bool,
-    theme: &Theme,
-    show_cursor: bool,
-) {
+}
+
+fn draw_field_line(frame: &mut Frame, area: Rect, cell: &FieldCell, focused: bool, theme: &Theme, show_cursor: bool) {
+    let FieldCell { label, label_col, value, placeholder, hint, cursor, locked } = *cell;
     let prefix = if focused { "▌ " } else { "  " };
     let hint_width = hint.map(|h| h.width() as u16).unwrap_or(0);
     let label_style = if focused { theme.accent_bold() } else { theme.muted_style() };
 
     let [prefix_area, label_area, value_area, _gap_area, hint_area] = Layout::horizontal([
         Constraint::Length(PREFIX_COL),
-        Constraint::Length(LABEL_COL as u16),
+        Constraint::Length(label_col as u16),
         Constraint::Min(0),
         Constraint::Length(HINT_GAP),
         Constraint::Length(hint_width),
@@ -337,7 +349,7 @@ fn draw_field_line(
     .areas(area);
 
     frame.render_widget(Span::raw(prefix), prefix_area);
-    frame.render_widget(Span::styled(fit(label, LABEL_COL), label_style), label_area);
+    frame.render_widget(Span::styled(fit(label, label_col), label_style), label_area);
 
     let show_placeholder = value.is_empty();
     let text = if show_placeholder { placeholder } else { value };
@@ -380,8 +392,8 @@ fn visual_scroll(text: &str, pos: usize, width: usize) -> usize {
     consumed
 }
 
-fn draw_field_error(frame: &mut Frame, area: Rect, error: &str, theme: &Theme) {
-    let indent = PREFIX_COL + LABEL_COL as u16;
+fn draw_field_error(frame: &mut Frame, area: Rect, error: &str, label_col: usize, theme: &Theme) {
+    let indent = PREFIX_COL + label_col as u16;
     let text_area = Rect { x: area.x + indent.min(area.width), width: area.width.saturating_sub(indent), ..area };
     frame.render_widget(Line::raw(format!("⚠ {error}")).style(Style::new().fg(theme.warn)), text_area);
 }

@@ -13,6 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Cell, HighlightSpacing, Padding, Row, Sparkline, Table, TableState};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
+use unicode_width::UnicodeWidthStr;
 
 use super::{Component, DrawCtx, StreamEvent};
 use crate::action::{Action, Cmd, Fetch};
@@ -36,7 +37,12 @@ const DEFAULT_PAGE_ROWS: usize = 10;
 
 const TIME_COL: usize = 8;
 const VM_COL: usize = 14;
-const ELAPSED_COL: usize = 7;
+/// 耗时列下限 (放得下 `59m59s`); 「中断」的译文更宽时按 [`elapsed_col`] 放宽。
+const ELAPSED_MIN_COL: usize = 7;
+
+fn elapsed_col(s: &Strings) -> usize {
+    s.live_interrupted.width().max(ELAPSED_MIN_COL)
+}
 /// 表的选中前缀 (`highlight_symbol("▌ ")`, `HighlightSpacing::Always`) 固定宽度, 用于手算
 /// `Constraint::Fill(1)` 那一列 (订阅名) 的实际宽度给 `format::fit`——与订阅页 `draw_list` 手算
 /// `sonnet_col`、日志页 `draw_table` 手算 `model_col` 同一个公式。
@@ -478,7 +484,8 @@ impl Live {
         // 前缀 (`HIGHLIGHT_COL`)、其余四个定宽列、以及列间距 (`column_spacing(2)`, 5 列 4 个间隔)——
         // 不这样算的话 `format::fit` 不知道该截到多宽, 订阅名超长时 ratatui 会不带省略号地硬切
         // (Finding 5)。
-        let fixed_cols = TIME_COL as u16 + VM_COL as u16 + 1 /* 结果符号列 */ + ELAPSED_COL as u16;
+        let elapsed_col = elapsed_col(s);
+        let fixed_cols = TIME_COL as u16 + VM_COL as u16 + 1 /* 结果符号列 */ + elapsed_col as u16;
         let sub_col = inner.width.saturating_sub(HIGHLIGHT_COL).saturating_sub(fixed_cols).saturating_sub(4 * 2) as usize;
 
         let end = (start + capacity).min(idx.len());
@@ -488,7 +495,7 @@ impl Live {
             Constraint::Length(VM_COL as u16),
             Constraint::Fill(1),
             Constraint::Length(1),
-            Constraint::Length(ELAPSED_COL as u16),
+            Constraint::Length(elapsed_col as u16),
         ];
         let table = Table::new(rows, widths)
             .column_spacing(2)

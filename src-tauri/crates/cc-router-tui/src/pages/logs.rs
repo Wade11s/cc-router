@@ -16,7 +16,7 @@ use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
 use super::{Component, DrawCtx};
 use crate::action::{Action, Cmd, Fetch, FetchData};
 use crate::client::dto::{RequestFilters, RequestLog, RequestPage, RequestQuery, RequestStatus, REQUEST_PAGE_SIZE};
-use crate::format::{compact, duration, fit, short_stamp, thousands};
+use crate::format::{compact, duration, fit, short_stamp, thousands, widest};
 use crate::i18n::Strings;
 use crate::store::Store;
 use crate::theme::Theme;
@@ -25,6 +25,7 @@ use crate::widgets::keybar::Hint;
 use crate::widgets::picker::{PickerChoice, PickerItem, PickerSpec, PickerTag};
 use crate::widgets::spinner_state;
 
+/// 各定宽列按内容量出来的下限; 表头 (或状态列里的「✕ 超时」) 更宽的语言按 [`Cols::new`] 放宽。
 const TIME_COL: usize = 11;
 const STATUS_COL: usize = 6;
 const VM_COL: usize = 14;
@@ -32,8 +33,37 @@ const SUB_COL: usize = 12;
 const SUB_COL_WIDE: usize = 16;
 const CLIENT_COL: usize = 10;
 const LATENCY_COL: usize = 6;
-const TOKENS_COL: usize = 11;
+/// Token 列要放的「12.3K/3.4K」这一级数值; 表头更宽时按表头 (中文「Token 入/出」是 11)。
+const TOKENS_VALUE_COL: usize = 10;
 const WIDE_THRESHOLD: u16 = 120;
+/// 表格定宽列的实际宽度: 每列取「下限」与「这一列在当前语言下要放的最宽文字」中的较大者, 表头与
+/// 内容不会被截成无意义的片段; 中文下每一列都与按中文量出来的旧列宽相同。
+struct Cols {
+    time: usize,
+    status: usize,
+    vm: usize,
+    sub: usize,
+    client: usize,
+    latency: usize,
+    tokens: usize,
+}
+
+impl Cols {
+    fn new(s: &Strings, wide: bool) -> Self {
+        let at_least = |min: usize, texts: &[&str]| widest(texts.iter().copied()).max(min);
+        let timeout_cell = timeout_cell(s);
+        Self {
+            time: at_least(TIME_COL, &[s.lg_col_time]),
+            status: at_least(STATUS_COL, &[s.lg_col_status, &timeout_cell]),
+            vm: at_least(VM_COL, &[s.lg_col_vm]),
+            sub: at_least(if wide { SUB_COL_WIDE } else { SUB_COL }, &[s.lg_col_sub]),
+            client: at_least(CLIENT_COL, &[s.lg_col_client]),
+            latency: at_least(LATENCY_COL, &[s.lg_col_latency]),
+            tokens: at_least(TOKENS_VALUE_COL, &[s.lg_col_tokens]),
+        }
+    }
+}
+
 /// 表的选中前缀 (`highlight_symbol("▌ ")`, `HighlightSpacing::Always`) 固定宽度, 用于手算
 /// `Constraint::Fill(1)` 那一列 (模型名) 的实际宽度给 `format::fit`——与订阅页 `draw_list` 手算
 /// `sonnet_col`、实时路由页 `draw_table` 手算 `sub_col` 同一个公式。
@@ -317,40 +347,40 @@ impl Logs {
             return;
         }
 
-        let sub_col = if wide { SUB_COL_WIDE } else { SUB_COL };
+        let cols = Cols::new(s, wide);
         // `Constraint::Fill(1)` (模型名) 的实际宽度: `inner.width` 已经减掉了边框 + 内距, 再减选中
         // 前缀 (`HIGHLIGHT_COL`)、其余定宽列、以及列间距 (`column_spacing(1)`, 列数 - 1 个间隔)——
         // 不这样算的话 `format::fit` 不知道该截到多宽, 模型名超长时 ratatui 会不带省略号地硬切
         // (Finding 5)。
-        let fixed_cols = TIME_COL as u16
-            + STATUS_COL as u16
-            + VM_COL as u16
-            + sub_col as u16
-            + if wide { CLIENT_COL as u16 } else { 0 }
-            + LATENCY_COL as u16
-            + TOKENS_COL as u16;
+        let fixed_cols = cols.time as u16
+            + cols.status as u16
+            + cols.vm as u16
+            + cols.sub as u16
+            + if wide { cols.client as u16 } else { 0 }
+            + cols.latency as u16
+            + cols.tokens as u16;
         let gap_count: u16 = if wide { 7 } else { 6 }; // 8 (wide) / 7 (窄) 列各少 1 个间隔
         let model_col = inner.width.saturating_sub(HIGHLIGHT_COL).saturating_sub(fixed_cols).saturating_sub(gap_count) as usize;
         let mut header_cells =
-            vec![Cell::from(fit(s.lg_col_time, TIME_COL)), Cell::from(fit(s.lg_col_status, STATUS_COL)), Cell::from(fit(s.lg_col_vm, VM_COL)), Cell::from(fit(s.lg_col_sub, sub_col))];
+            vec![Cell::from(fit(s.lg_col_time, cols.time)), Cell::from(fit(s.lg_col_status, cols.status)), Cell::from(fit(s.lg_col_vm, cols.vm)), Cell::from(fit(s.lg_col_sub, cols.sub))];
         if wide {
-            header_cells.push(Cell::from(fit(s.lg_col_client, CLIENT_COL)));
+            header_cells.push(Cell::from(fit(s.lg_col_client, cols.client)));
         }
         header_cells.push(Cell::from(fit(s.lg_col_model, model_col)));
-        header_cells.push(Cell::from(fit(s.lg_col_latency, LATENCY_COL)));
-        header_cells.push(Cell::from(fit(s.lg_col_tokens, TOKENS_COL)));
+        header_cells.push(Cell::from(fit(s.lg_col_latency, cols.latency)));
+        header_cells.push(Cell::from(fit(s.lg_col_tokens, cols.tokens)));
         let header = Row::new(header_cells).style(theme.muted_style().add_modifier(Modifier::BOLD));
 
         let mut widths =
-            vec![Constraint::Length(TIME_COL as u16), Constraint::Length(STATUS_COL as u16), Constraint::Length(VM_COL as u16), Constraint::Length(sub_col as u16)];
+            vec![Constraint::Length(cols.time as u16), Constraint::Length(cols.status as u16), Constraint::Length(cols.vm as u16), Constraint::Length(cols.sub as u16)];
         if wide {
-            widths.push(Constraint::Length(CLIENT_COL as u16));
+            widths.push(Constraint::Length(cols.client as u16));
         }
         widths.push(Constraint::Fill(1));
-        widths.push(Constraint::Length(LATENCY_COL as u16));
-        widths.push(Constraint::Length(TOKENS_COL as u16));
+        widths.push(Constraint::Length(cols.latency as u16));
+        widths.push(Constraint::Length(cols.tokens as u16));
 
-        let rows: Vec<Row> = items.iter().map(|item| build_row(item, store, theme, s, ctx.now_ms, ctx.tz, wide, sub_col, model_col)).collect();
+        let rows: Vec<Row> = items.iter().map(|item| build_row(item, store, theme, s, ctx.now_ms, ctx.tz, wide, &cols, model_col)).collect();
 
         let idx = self.selected_id.as_deref().and_then(|id| items.iter().position(|r| r.id == id));
         self.table_state.select(idx);
@@ -397,12 +427,17 @@ fn status_label(status: RequestStatus, s: &'static Strings) -> &'static str {
     }
 }
 
+/// 状态列里超时那一格的文字; 它是状态列里最宽的内容, [`Cols::new`] 按它量列宽。
+fn timeout_cell(s: &Strings) -> String {
+    format!("✕ {}", s.lg_status_timeout)
+}
+
 fn status_cell_text(item: &RequestLog, s: &'static Strings) -> String {
     let http = || item.http_status.map(|c| c.to_string()).unwrap_or_else(|| "—".to_string());
     match item.status {
         RequestStatus::Success => format!("✓ {}", http()),
         RequestStatus::Error => format!("✕ {}", http()),
-        RequestStatus::Timeout => format!("✕ {}", s.lg_status_timeout),
+        RequestStatus::Timeout => timeout_cell(s),
         RequestStatus::Unknown => "? —".to_string(),
     }
 }
@@ -444,26 +479,26 @@ fn build_row(
     now_ms: i64,
     tz: crate::format::Tz,
     wide: bool,
-    sub_col: usize,
+    cols: &Cols,
     model_col: usize,
 ) -> Row<'static> {
-    let time_cell = Cell::from(fit(&short_stamp(item.timestamp, now_ms, tz), TIME_COL));
+    let time_cell = Cell::from(fit(&short_stamp(item.timestamp, now_ms, tz), cols.time));
     let status_style = status_cell_style(item.status, theme);
-    let status_cell = Cell::from(ratatui::text::Span::styled(fit(&status_cell_text(item, s), STATUS_COL), status_style));
-    let vm_cell = Cell::from(fit(&item.virtual_model_name, VM_COL));
+    let status_cell = Cell::from(ratatui::text::Span::styled(fit(&status_cell_text(item, s), cols.status), status_style));
+    let vm_cell = Cell::from(fit(&item.virtual_model_name, cols.vm));
     let (sub_text, sub_muted) = subscription_text(item, store);
     let sub_style = if sub_muted { theme.muted_style() } else { Style::default() };
-    let sub_cell = Cell::from(ratatui::text::Span::styled(fit(&sub_text, sub_col), sub_style));
+    let sub_cell = Cell::from(ratatui::text::Span::styled(fit(&sub_text, cols.sub), sub_style));
 
     let mut cells = vec![time_cell, status_cell, vm_cell, sub_cell];
     if wide {
         let client = item.client_tool.as_deref().unwrap_or("—");
-        cells.push(Cell::from(fit(client, CLIENT_COL)));
+        cells.push(Cell::from(fit(client, cols.client)));
     }
     cells.push(Cell::from(fit(&item.real_model_name, model_col)));
     let latency = item.total_latency_ms.map(duration).unwrap_or_else(|| "—".to_string());
-    cells.push(Cell::from(fit(&latency, LATENCY_COL)));
-    cells.push(Cell::from(fit(&tokens_text(item), TOKENS_COL)));
+    cells.push(Cell::from(fit(&latency, cols.latency)));
+    cells.push(Cell::from(fit(&tokens_text(item), cols.tokens)));
     Row::new(cells)
 }
 

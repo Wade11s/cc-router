@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, BorderType, Padding, Paragraph, Scrollbar, Scrollb
 use ratatui::Frame;
 
 use crate::action::Action;
-use crate::format::{fit, full_stamp, wrap, Tz};
+use crate::format::{fit, full_stamp, widest, wrap, Tz};
 use crate::i18n::Strings;
 use crate::theme::Theme;
 
@@ -22,7 +22,7 @@ use crate::theme::Theme;
 const BORDER_PAD_H: u16 = 6;
 const BORDER_PAD_V: u16 = 4;
 
-/// 定宽标签列——字段值从这一列开始, 折行的续行也从这一列开始对齐。
+/// 标签列宽度下限——字段值从标签列之后开始, 折行的续行也从那一列开始对齐。实际宽度见 [`label_col`]。
 const LABEL_COL: usize = 12;
 /// 画过一帧之前 `PageUp`/`PageDown` 用的默认步长 (仿 `picker::DEFAULT_LIST_ROWS`)。
 const DEFAULT_ROWS: usize = 10;
@@ -116,8 +116,19 @@ enum Content {
     Text { text: String, tone: Tone },
 }
 
+/// 标签列宽度: 最宽的字段标签 + 1 格间隔, 不低于 [`LABEL_COL`]——标签由调用方按语言给出, 英文标签
+/// 比中文宽, 写死的宽度会把它们截成片段。
+fn label_col(spec: &DetailSpec) -> usize {
+    let labels = spec.rows.iter().filter_map(|row| match row {
+        DetailRow::Field { label, .. } | DetailRow::Stamp { label, .. } => Some(label.as_str()),
+        DetailRow::Section(_) | DetailRow::Text { .. } => None,
+    });
+    (widest(labels) + 1).max(LABEL_COL)
+}
+
 /// `width`: 正文可用宽度 (不含边框/内距)。
 fn layout(spec: &DetailSpec, width: usize, tz: Tz) -> Vec<Content> {
+    let label_col = label_col(spec);
     let mut out = Vec::new();
     for (i, row) in spec.rows.iter().enumerate() {
         match row {
@@ -129,7 +140,7 @@ fn layout(spec: &DetailSpec, width: usize, tz: Tz) -> Vec<Content> {
                 out.push(Content::Section(title.clone()));
             }
             DetailRow::Field { label, value, tone } => {
-                let value_width = width.saturating_sub(LABEL_COL);
+                let value_width = width.saturating_sub(label_col);
                 for (j, part) in wrap(value, value_width).into_iter().enumerate() {
                     if j == 0 {
                         out.push(Content::FieldFirst { label: label.clone(), text: part, tone: *tone });
@@ -140,7 +151,7 @@ fn layout(spec: &DetailSpec, width: usize, tz: Tz) -> Vec<Content> {
             }
             DetailRow::Stamp { label, ms } => {
                 let value = full_stamp(*ms, tz);
-                let value_width = width.saturating_sub(LABEL_COL);
+                let value_width = width.saturating_sub(label_col);
                 for (j, part) in wrap(&value, value_width).into_iter().enumerate() {
                     if j == 0 {
                         out.push(Content::FieldFirst { label: label.clone(), text: part, tone: Tone::Normal });
@@ -172,15 +183,16 @@ fn tone_style(tone: Tone, theme: &Theme) -> ratatui::style::Style {
 /// 折好行的全部内容 (纯函数, `area` / `draw` / 测试共用)。`width` = 正文可用宽度。`tz`: `Stamp`
 /// 行按它格式化, 其余行忽略。
 pub fn lines(spec: &DetailSpec, width: u16, theme: &Theme, tz: Tz) -> Vec<Line<'static>> {
+    let label_col = label_col(spec);
     layout(spec, width as usize, tz)
         .into_iter()
         .map(|c| match c {
             Content::Blank => Line::raw(""),
             Content::Section(title) => Line::styled(title, theme.accent_bold()),
             Content::FieldFirst { label, text, tone } => {
-                Line::from(vec![Span::styled(fit(&label, LABEL_COL), theme.muted_style()), Span::styled(text, tone_style(tone, theme))])
+                Line::from(vec![Span::styled(fit(&label, label_col), theme.muted_style()), Span::styled(text, tone_style(tone, theme))])
             }
-            Content::FieldCont { text, tone } => Line::from(vec![Span::raw(" ".repeat(LABEL_COL)), Span::styled(text, tone_style(tone, theme))]),
+            Content::FieldCont { text, tone } => Line::from(vec![Span::raw(" ".repeat(label_col)), Span::styled(text, tone_style(tone, theme))]),
             Content::Text { text, tone } => Line::styled(text, tone_style(tone, theme)),
         })
         .collect()

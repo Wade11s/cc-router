@@ -19,7 +19,7 @@ use super::{Component, DrawCtx};
 use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation, OnYes};
 use crate::client::dto::{RoutingMode, VirtualModel};
 use crate::client::events::SUBSCRIPTION_CHANGES;
-use crate::format::fit;
+use crate::format::{fit, widest};
 use crate::i18n::Strings;
 use crate::store::Store;
 use crate::theme::Theme;
@@ -29,17 +29,25 @@ use crate::widgets::picker::{PickerChoice, PickerItem, PickerSpec, PickerTag};
 use crate::widgets::toast::ToastKind;
 use crate::widgets::{pane_border_style, spinner_state};
 
-/// 左栏固定宽度 (brief: 「所有宽度同一种：左 32 列，右吃剩余」)——虚拟模型固定只有 5 个,
-/// 不需要像订阅页那样按终端宽度切一栏/两栏。
-const LEFT_WIDTH: u16 = 32;
 /// 最长的虚拟模型名是 "model-fallback" (14 列) + 草稿标记 " *" (2 列) = 16, 留 1 列余量 (V5,
 /// fix round P3b: 草稿存在时左栏列表行也要显示 `*`, 因为 toast 会挡住右栏标题上的那颗)。
 const MODEL_NAME_COL: usize = 17;
-/// 模式短名 (顺序/轮询/会话/未知) 都是 2 个 CJK 字符 (显示宽度 4), 留 1 列余量。
-const MODE_COL: usize = 5;
+/// 成员数一列 (`{:>3}`)。
+const COUNT_COL: u16 = 3;
 const MEMBER_SYMBOL_COL: usize = 2;
 const MEMBER_NAME_COL: usize = 18;
 const MEMBER_PROVIDER_COL: usize = 10;
+
+/// 模式短名一列: 最宽的短名 + 1 格间隔 (中文四个短名都是 4 列, 即 5)。
+fn mode_col(s: &Strings) -> usize {
+    widest([s.vm_mode_seq, s.vm_mode_rr, s.vm_mode_sticky, s.vm_mode_unknown]) + 1
+}
+
+/// 左栏宽度 = 边框 2 + 内距 2 + 选中前缀 2 + 名字列 + 1 + 模式列 + 成员数列 (中文 32 列), 右栏吃
+/// 剩余——虚拟模型固定只有 5 个, 不需要像订阅页那样按终端宽度切一栏/两栏。
+fn left_width(s: &Strings) -> u16 {
+    2 + 2 + 2 + MODEL_NAME_COL as u16 + 1 + mode_col(s) as u16 + COUNT_COL
+}
 
 /// 两栏的键盘焦点。左右两栏一直都画 (不像订阅页窄屏时只画一栏), 焦点只影响哪一栏的边框是
 /// `theme.accent`, 以及方向键作用在哪个列表上。
@@ -275,7 +283,7 @@ impl VirtualModels {
                 let line = Line::from(vec![
                     Span::raw(fit(&name, MODEL_NAME_COL)),
                     Span::raw(" "),
-                    Span::raw(fit(s.vm_mode_short(mode), MODE_COL)),
+                    Span::raw(fit(s.vm_mode_short(mode), mode_col(s))),
                     Span::raw(format!("{count:>3}")),
                 ]);
                 ListItem::new(line)
@@ -581,7 +589,7 @@ impl Component for VirtualModels {
         }
         let idx = self.selected_index.min(vms.len() - 1);
 
-        let [left, right] = Layout::horizontal([Constraint::Length(LEFT_WIDTH), Constraint::Min(0)]).areas(area);
+        let [left, right] = Layout::horizontal([Constraint::Length(left_width(ctx.s)), Constraint::Min(0)]).areas(area);
         let left_border = self.pane_border_style(ctx.theme, true);
         let right_border = self.pane_border_style(ctx.theme, false);
         self.draw_models(frame, left, ctx, vms, idx, left_border);

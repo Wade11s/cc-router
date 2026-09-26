@@ -4,6 +4,7 @@
 //!   INSTA_UPDATE=always cargo test -p cc-router-tui --test ui
 //! 动效在快照里一律关闭 (`fx_enabled: false`), 否则第一帧是启动动效的中间态。
 
+use std::cell::Cell;
 use std::time::Duration;
 
 use cc_router_tui::action::{Action, Cmd, Fetch, FetchData, Mutation, MutationOutcome, OnYes, OverviewData, Tab, WizardCmd, WizardResult};
@@ -17,7 +18,7 @@ use cc_router_tui::client::dto::{
 };
 use cc_router_tui::client::events::{ROUTE_ATTEMPT_FINISHED, ROUTE_ATTEMPT_STARTED};
 use cc_router_tui::format::Tz;
-use cc_router_tui::i18n::ZH;
+use cc_router_tui::i18n::{strings, Lang, Strings, ZH};
 use cc_router_tui::pages::Pages;
 use cc_router_tui::secret::Secret;
 use cc_router_tui::theme::{ColorMode, Theme};
@@ -33,10 +34,27 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const NOW: i64 = 1_700_000_000_000;
 const VERSION: &str = "9.9.9";
+const LANGS: [Lang; 3] = [Lang::Zh, Lang::En, Lang::Ja];
+
+thread_local! {
+    /// 这个测试用哪种语言构造 `App`; 默认中文。每个测试跑在自己的线程里, 设了也不会影响别的测试。
+    static STRINGS: Cell<&'static Strings> = const { Cell::new(&ZH) };
+}
+
+/// 当前测试的界面文案 (见 [`use_lang`])。按文案找行 / 断言文字的辅助函数都经它取, 同一份驱动
+/// 路径在任何语言下都能用。
+fn s() -> &'static Strings {
+    STRINGS.with(Cell::get)
+}
+
+/// 之后 [`app`] 构造的 `App` 都用 `lang` 的文案。
+fn use_lang(lang: Lang) {
+    STRINGS.with(|c| c.set(strings(lang)));
+}
 
 fn app(fx_enabled: bool) -> App {
     App::new(AppOptions {
-        strings: &ZH,
+        strings: s(),
         theme: Theme::new(ColorMode::TrueColor),
         fx_enabled,
         now_ms: NOW,
@@ -508,7 +526,7 @@ fn slot_row(slot: Slot) -> &'static str {
         Slot::Opus => "opus",
         Slot::Sonnet => "sonnet",
         Slot::Haiku => "haiku",
-        Slot::Fallback => ZH.sub_slot_fallback,
+        Slot::Fallback => s().sub_slot_fallback,
     }
 }
 
@@ -532,11 +550,11 @@ fn relay_fill() -> CustomFill<'static> {
 /// 跟随出来的值。
 fn fill_custom(a: &mut App, f: CustomFill) {
     let fields = [
-        (ZH.wiz_f_provider_name, f.provider_name),
-        (ZH.wiz_f_base_url, f.base_url),
-        (ZH.wiz_f_messages_path, f.messages_path),
-        (ZH.wiz_f_api_key, f.api_key),
-        (ZH.wiz_f_display_name, f.display_name),
+        (s().wiz_f_provider_name, f.provider_name),
+        (s().wiz_f_base_url, f.base_url),
+        (s().wiz_f_messages_path, f.messages_path),
+        (s().wiz_f_api_key, f.api_key),
+        (s().wiz_f_display_name, f.display_name),
     ];
     for (label, value) in fields {
         if let Some(value) = value {
@@ -1200,6 +1218,11 @@ fn wizard_slots_80x24() {
 /// 手动给四个核心槽选了模型 (探测成功**不**自动预填, 与桌面端一致), 兜底槽留空。
 #[test]
 fn wizard_custom_80x24() {
+    insta::assert_snapshot!(render(&mut custom_wizard_probed_and_filled(), 80, 24));
+}
+
+/// `wizard_custom_80x24` 的画面 (各语言的快照共用同一条驱动路径)。
+fn custom_wizard_probed_and_filled() -> App {
     let mut a = wizard_custom(CustomProtocol::Anthropic);
     // 备注名跟着厂商名自动生成, 不用再手填一遍——打厂商名的同时备注名就已经是
     // "我的中转" 了。
@@ -1208,7 +1231,7 @@ fn wizard_custom_80x24() {
         &mut a,
         CustomFill { provider_name: Some("我的中转"), base_url: Some("https://api.example.com"), api_key: Some("abcdef"), ..Default::default() },
     );
-    focus_row(&mut a, ZH.wiz_btn_probe);
+    focus_row(&mut a, s().wiz_btn_probe);
     let probe_action = a.handle_key(key(KeyCode::Enter)).expect("Probe 应该产出 Action");
     a.update(probe_action); // 探测在飞
 
@@ -1227,8 +1250,7 @@ fn wizard_custom_80x24() {
     pick_core_slots(&mut a, |slot| PickerChoice::Item(if slot == Slot::Haiku { "claude-haiku-4" } else { "claude-sonnet-4" }.into()));
     // 兜底槽留空 (焦点停在它上面, 不操作它)。
     focus_row(&mut a, slot_row(Slot::Fallback));
-
-    insta::assert_snapshot!(render(&mut a, 80, 24));
+    a
 }
 
 /// 同上, 120×40: 自定义表单是三张表单里最长的一份, 宽终端下确认它不会因为值列
@@ -2430,10 +2452,76 @@ fn a_clean_page_never_asks() {
 #[test]
 fn every_page_help_fits_the_minimum_terminal() {
     let pages = Pages::default();
-    for tab in Tab::ALL {
-        let rows = pages.get(tab).help(&ZH);
-        let total = ZH.help_rows.len() + 1 + rows.len() + 4;
-        assert!(total <= usize::from(MIN_HEIGHT), "{tab:?}: 帮助弹窗需要 {total} 行, 超过最小终端高度 {MIN_HEIGHT}\n{rows:?}");
+    for lang in LANGS {
+        let s = strings(lang);
+        for tab in Tab::ALL {
+            let rows = pages.get(tab).help(s);
+            let total = s.help_rows.len() + 1 + rows.len() + 4;
+            assert!(total <= usize::from(MIN_HEIGHT), "{lang:?} {tab:?}: 帮助弹窗需要 {total} 行, 超过最小终端高度 {MIN_HEIGHT}\n{rows:?}");
+        }
+    }
+}
+
+/// 帮助弹窗在最小终端 (80×24) 上, 每种语言、每一页的每条说明都完整显示——说明比弹窗宽时弹窗
+/// 跟着放宽, 不能被右边框截断。
+#[test]
+fn every_help_row_is_shown_in_full_at_80x24() {
+    for lang in LANGS {
+        use_lang(lang);
+        let s = s();
+        let mut a = every_page_loaded();
+        for tab in Tab::ALL {
+            a.update(Action::SwitchTab(tab));
+            a.update(Action::ToggleHelp);
+            let out = render(&mut a, 80, 24);
+            let page_rows = Pages::default().get(tab).help(s);
+            for (key, desc) in s.help_rows.iter().chain(page_rows) {
+                assert!(out.contains(key) && out.contains(desc), "{lang:?} {tab:?}: 帮助行「{key} {desc}」没有完整显示\n{out}");
+            }
+            a.update(Action::ToggleHelp);
+        }
+    }
+}
+
+/// 每一页都有数据的 `App` (总览 / 订阅 / 虚拟模型 / 实时路由 / 日志), 停在总览页——跨页面的守卫
+/// 测试用。数据沿用各页快照的夹具。
+fn every_page_loaded() -> App {
+    let mut a = loaded(false);
+    a.update(Action::SwitchTab(Tab::Subscriptions));
+    a.update(subs_done(2, detail_subs()));
+    a.update(Action::SwitchTab(Tab::VirtualModels));
+    a.update(vm_done(3, vm_list()));
+    a.update(Action::SwitchTab(Tab::Live));
+    a.update(sse_started("model-sonnet", "1", NOW - 50_000));
+    a.update(sse_finished("model-sonnet", "1", true, NOW - 48_200));
+    a.update(Action::SwitchTab(Tab::Logs));
+    a.update(requests_done(4, RequestQuery::default(), logs_fixture_rows(), 4));
+    a.update(Action::SwitchTab(Tab::Overview));
+    a
+}
+
+/// 80 列底栏在每种语言、每一页都保留 `? 帮助` / `q 退出` 两项全局键, 以及 `1-5` 与这一页的第一个
+/// 键位 (页面键位放不下时从右往左丢, 丢到连第一个都放不下就说明译文太长了)。
+#[test]
+fn every_footer_keeps_help_and_quit_in_80_columns() {
+    for lang in LANGS {
+        use_lang(lang);
+        let s = s();
+        let mut a = every_page_loaded();
+        for tab in Tab::ALL {
+            a.update(Action::SwitchTab(tab));
+            let out = render(&mut a, 80, 24);
+            let footer = out.lines().last().unwrap_or_else(|| panic!("{out}"));
+            let (first_key, first_desc) = Pages::default().get(tab).hints(s)[0];
+            for must in [
+                format!("? {}", s.key_help),
+                format!("q {}", s.key_quit),
+                format!("1-5 {}", s.key_switch_tab),
+                format!("{first_key} {first_desc}"),
+            ] {
+                assert!(footer.contains(&must), "{lang:?} {tab:?}: 80 列底栏缺了「{must}」\n{footer}");
+            }
+        }
     }
 }
 
@@ -5669,4 +5757,82 @@ fn a_failed_requests_fetch_toasts_and_returns_no_cmd() {
     let out = render(&mut a, 80, 24);
     assert!(out.contains(&(ZH.toast_load_failed)("网络错误")), "应该弹出错误 toast\n{out}");
     assert!(out.contains(ZH.loading), "还没有任何结果落地过, 应该继续显示加载中, 不能误报「没有记录」\n{out}");
+}
+
+// ---------- 英文界面 ----------
+
+#[test]
+fn en_overview_80x24() {
+    use_lang(Lang::En);
+    insta::assert_snapshot!(render(&mut loaded(false), 80, 24));
+}
+
+#[test]
+fn en_subscriptions_120x40() {
+    use_lang(Lang::En);
+    insta::assert_snapshot!(render(&mut subs_app(false), 120, 40));
+}
+
+#[test]
+fn en_wizard_custom_80x24() {
+    use_lang(Lang::En);
+    insta::assert_snapshot!(render(&mut custom_wizard_probed_and_filled(), 80, 24));
+}
+
+#[test]
+fn en_delete_confirm_80x24() {
+    use_lang(Lang::En);
+    let mut a = subs_app(false);
+    render(&mut a, 80, 24);
+    let action = a.handle_key(key(KeyCode::Char('d'))).expect("应该产出确认弹窗");
+    a.update(action);
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+/// 订阅页的帮助是所有页面里最长的一份 (刚好顶满 24 行)。
+#[test]
+fn en_help_subscriptions_80x24() {
+    use_lang(Lang::En);
+    let mut a = subs_app(false);
+    a.update(Action::ToggleHelp);
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
+#[test]
+fn en_logs_120x40() {
+    use_lang(Lang::En);
+    let mut a = logs_app(false);
+    a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+    insta::assert_snapshot!(render(&mut a, 120, 40));
+}
+
+/// 虚拟模型页左栏的模式短名在每种语言下都完整显示 (左栏宽度随最长的短名放宽)。
+#[test]
+fn routing_mode_names_are_not_truncated_in_any_language() {
+    for lang in LANGS {
+        use_lang(lang);
+        let s = s();
+        let out = render(&mut vm_app(false), 80, 24);
+        for name in [s.vm_mode_seq, s.vm_mode_rr, s.vm_mode_sticky] {
+            assert!(out.contains(name), "{lang:?}: 模式短名「{name}」被截断\n{out}");
+        }
+    }
+}
+
+/// 请求详情弹窗的字段标签在每种语言下都完整显示 (标签列随最宽的标签放宽)。
+#[test]
+fn request_detail_labels_are_not_truncated_in_any_language() {
+    for lang in LANGS {
+        use_lang(lang);
+        let s = s();
+        let mut a = logs_app(false);
+        a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+        a.handle_key(key(KeyCode::Down)); // 选中「失败」那一行
+        let action = a.handle_key(key(KeyCode::Enter)).expect("⏎ 应该产出 Action::OpenDetail");
+        a.update(action);
+        let out = render(&mut a, 80, 40);
+        for label in [s.lg_d_time, s.lg_d_id, s.lg_d_status, s.lg_d_vm, s.lg_d_real_model, s.lg_d_sub, s.lg_d_provider, s.lg_d_latency] {
+            assert!(out.contains(&format!("{label} ")), "{lang:?}: 字段标签「{label}」被截断或贴着值\n{out}");
+        }
+    }
 }

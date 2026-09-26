@@ -2,7 +2,8 @@
 //! `App::handle_key` 里, 这里只画)。
 //!
 //! **支持多行 prompt** (删除订阅要列出引用它的虚拟模型): 按 `'\n'` 拆行, 宽度取最宽一行 + 8,
-//! 高度是 `行数 + 4`——单行时是 5。
+//! 高度是 `行数 + 4`——单行时是 5。弹窗宽度有上限 (屏幕宽减 4), 比上限还宽的一行按显示宽度折行,
+//! 不被右边框截断。
 
 use ratatui::layout::{Constraint, Rect};
 use ratatui::text::{Line, Text};
@@ -10,6 +11,7 @@ use ratatui::widgets::{Block, BorderType, Padding, Paragraph};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
+use crate::format::wrap;
 use crate::i18n::Strings;
 use crate::popup::ConfirmState;
 use crate::theme::Theme;
@@ -20,16 +22,24 @@ const MIN_WIDTH: u16 = 30;
 const SCREEN_MARGIN: u16 = 4;
 /// 单行提示的高度 (行数 1 + 4)。
 const HEIGHT: u16 = 5;
+/// 左右边框各 1 + `Padding::new(2, 2, 1, 1)` 的左右内距各 2。
+const BORDER_PAD_H: u16 = 6;
 
-/// `prompt` 里最宽一行的显示宽度 (按 `'\n'` 拆行)。
-fn widest_line(prompt: &str) -> u16 {
-    prompt.lines().map(|l| l.width()).max().unwrap_or(0) as u16
+/// 按 `'\n'` 拆行, 超过 `max_width` 列的行再按显示宽度折行。`area` 与 `draw` 用同一个函数, 几何与
+/// 内容不会对不上: `area` 按上限折好后定宽, `draw` 按这个宽度再折一次得到同样的行。
+fn prompt_lines(prompt: &str, max_width: u16) -> Vec<String> {
+    wrap(prompt, usize::from(max_width))
 }
 
-/// 弹窗高度 = 行数 + 4, 用 [`HEIGHT`] (单行的既有高度 5) 当基准往上加——单行 (含空字符串,
-/// `lines()` 产出 0 行) 时钳到 1 行, 加 0, 恰好等于既有的 5, 不用另外重复一份 "+4"。
-fn height_for(prompt: &str) -> u16 {
-    let extra_lines = prompt.lines().count().max(1) as u16 - 1;
+/// 最宽一行的显示宽度。
+fn widest_line(lines: &[String]) -> u16 {
+    lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16
+}
+
+/// 弹窗高度 = 行数 + 4, 用 [`HEIGHT`] (单行的既有高度 5) 当基准往上加——单行时加 0, 恰好等于
+/// 既有的 5, 不用另外重复一份 "+4"。
+fn height_for(lines: &[String]) -> u16 {
+    let extra_lines = lines.len().max(1) as u16 - 1;
     HEIGHT + extra_lines
 }
 
@@ -43,8 +53,9 @@ fn height_for(prompt: &str) -> u16 {
 /// 这里只是让函数本身对任意输入都是全函数 (total function), 不依赖调用方守规矩。
 pub fn area(screen: Rect, prompt: &str) -> Rect {
     let upper = screen.width.saturating_sub(SCREEN_MARGIN).max(MIN_WIDTH);
-    let width = (widest_line(prompt) + 8).clamp(MIN_WIDTH, upper);
-    screen.centered(Constraint::Length(width), Constraint::Length(height_for(prompt)))
+    let lines = prompt_lines(prompt, upper.saturating_sub(BORDER_PAD_H));
+    let width = (widest_line(&lines) + 8).clamp(MIN_WIDTH, upper);
+    screen.centered(Constraint::Length(width), Constraint::Length(height_for(&lines)))
 }
 
 pub fn draw(frame: &mut Frame, area: Rect, state: &ConfirmState, theme: &Theme, s: &Strings) {
@@ -55,7 +66,8 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &ConfirmState, theme: &Theme, 
         .title_bottom(Line::from(format!(" {} ", s.confirm_keys)).right_aligned())
         .padding(Padding::new(2, 2, 1, 1));
     super::clear_popup_area(frame, area);
-    let text = Text::from(state.prompt.lines().map(Line::from).collect::<Vec<_>>());
+    let lines = prompt_lines(&state.prompt, area.width.saturating_sub(BORDER_PAD_H));
+    let text = Text::from(lines.into_iter().map(Line::from).collect::<Vec<_>>());
     frame.render_widget(Paragraph::new(text).block(block), area);
 }
 
@@ -73,10 +85,10 @@ mod tests {
         let expect_short = screen.centered(Constraint::Length(MIN_WIDTH), Constraint::Length(HEIGHT));
         assert_eq!(short, expect_short, "短提示应该夹到下限 30 并居中");
 
-        // 超长提示的宽度应该夹到上限 screen.width - SCREEN_MARGIN。
+        // 超长提示的宽度应该夹到上限 screen.width - SCREEN_MARGIN, 内容按 76 - 6 = 70 列折成 3 行。
         let long = area(screen, &"x".repeat(200));
-        let expect_long = screen.centered(Constraint::Length(screen.width - SCREEN_MARGIN), Constraint::Length(HEIGHT));
-        assert_eq!(long, expect_long, "超长提示应该夹到上限 screen-4 并居中");
+        let expect_long = screen.centered(Constraint::Length(screen.width - SCREEN_MARGIN), Constraint::Length(HEIGHT + 2));
+        assert_eq!(long, expect_long, "超长提示应该夹到上限 screen-4、折行后居中");
 
         // 中等长度的提示 (30 + 8 = 38) 落在 30..=76 区间内, 应该正好等于「宽度+8」, 不被夹到任一端。
         let mid = area(screen, &"x".repeat(30));

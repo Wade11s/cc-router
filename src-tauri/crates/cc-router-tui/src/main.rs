@@ -33,8 +33,7 @@ enum Parsed {
 
 /// 解析出错时 (缺路径 / 未知参数) 用**默认** `Args` 去算连接前语言, 不是当时已经拿到的那部分——
 /// 与 `main()` 里给 `Parsed::Help`/`Parsed::Invalid` 追加 `cli_help` 时用的是同一个假设, 这样
-/// 「错误那句」与「后面追加的帮助文本」永远是同一种语言, 不会各算各的。目前 `strings()` 三语都
-/// 返回 `ZH`, 这条一致性还看不出差异, 但不需要等 `Args` 全部解析完这一点已经先做对了。
+/// 「错误那句」与「后面追加的帮助文本」永远是同一种语言, 不会各算各的。
 fn parse_args(mut argv: impl Iterator<Item = String>) -> Parsed {
     let mut args = Args::default();
     let lang = pre_connect_lang(&Args::default());
@@ -214,10 +213,12 @@ mod tests {
         assert_eq!(parse(&["--version"]), Parsed::Version);
     }
 
+    /// 连接前语言取自运行测试的环境变量, 期望值按同一条规则取, 不绑定某一种语言。
     #[test]
     fn bad_input_is_reported_not_ignored() {
-        assert_eq!(parse(&["--data-dir"]), Parsed::Invalid("--data-dir 需要一个路径".into()));
-        assert_eq!(parse(&["--wat"]), Parsed::Invalid("未知参数: --wat".into()));
+        let s = strings(pre_connect_lang(&Args::default()));
+        assert_eq!(parse(&["--data-dir"]), Parsed::Invalid(s.cli_err_missing_data_dir_path.into()));
+        assert_eq!(parse(&["--wat"]), Parsed::Invalid((s.cli_err_unknown_arg)("--wat")));
     }
 
     /// H1: 终端初始化失败 (没有 tty 等) 不该被当成「网络错误」报出来——那是 `ClientError::Transport`
@@ -225,8 +226,12 @@ mod tests {
     #[test]
     fn terminal_failure_message_is_not_reported_as_a_network_error() {
         let err = std::io::Error::other("x");
-        let msg = terminal_failure_message(&err, Lang::En);
-        assert!(msg.contains("无法初始化终端"), "{msg}");
-        assert!(!msg.contains("网络错误"), "{msg}");
+        for lang in [Lang::Zh, Lang::En, Lang::Ja] {
+            let s = strings(lang);
+            let msg = terminal_failure_message(&err, lang);
+            assert_eq!(msg, (s.cli_terminal_init_failed)("x"), "{lang:?}");
+            let network_prefix = (s.err_network)("");
+            assert!(!msg.contains(network_prefix.trim_end()), "{lang:?}: {msg}");
+        }
     }
 }

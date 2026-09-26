@@ -116,6 +116,12 @@ pub fn mmss(remaining_ms: i64) -> String {
     format!("{:02}:{:02}", secs / 60, secs % 60)
 }
 
+/// 一组文字里最宽的那个的显示宽度 (CJK 占两列)。定宽列按当前语言的实际文案推导宽度时用——
+/// 英文普遍比中文宽, 写死成按中文量出来的列宽会把英文截成无意义的片段。
+pub fn widest<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
+    texts.into_iter().map(UnicodeWidthStr::width).max().unwrap_or(0)
+}
+
 /// 按**显示宽度**截断或右补空格到恰好 `width` 列。CJK 字符占两列, 不能用 `{:<16}`。
 /// 截断时以 `…` 结尾; 宽字符放不下时用空格补齐那一列。
 pub fn fit(text: &str, width: usize) -> String {
