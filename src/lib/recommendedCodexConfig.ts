@@ -20,11 +20,17 @@ export interface CodexSnapshot {
 /**
  * 生成完整的 config.toml 推荐内容 (含注释).
  * 注意 base_url 后缀必须是 `/v1`, Codex 会在此基础上拼 `/responses` 走 OpenAI Responses 协议.
+ *
+ * `comment` 是文件头注释 (按界面语言, 由调用方经 i18n 传入), 每行自动加 `# `.
+ * 注释不影响 inspect 的 in_sync 判定 (后端按 TOML 解析), 但会影响「插入」时与文件原文的逐字比较:
+ * 换了界面语言再插入会被视为有改动, 这是可接受的。
  */
-export function buildRecommendedCodexConfig(snap: CodexSnapshot): string {
-  return `# cc-router 推荐配置 — 由 cc-router 接入指南生成
-# 使用: codex -p cc-router "你的提问"
-# 修改后保存即可生效, codex 下次启动会读取此文件.
+export function buildRecommendedCodexConfig(snap: CodexSnapshot, comment: string): string {
+  const header = comment
+    .split("\n")
+    .map((line) => `# ${line}`)
+    .join("\n");
+  return `${header}
 
 [model_providers.cc-router]
 name = "cc-router"

@@ -75,7 +75,7 @@ export function CodexSettingsEditor() {
       return;
     }
     // 已是 in_sync 状态点 Insert: 生成的内容与文件完全一致, 不再 setDraft 避免假 dirty.
-    const cfg = buildRecommendedCodexConfig(recommended);
+    const cfg = buildRecommendedCodexConfig(recommended, t("guide.codex.configComment"));
     if (cfg !== (configRead.data?.content ?? "")) setConfigDraft(cfg);
     const auth = buildRecommendedCodexAuth(recommended);
     if (auth !== (authRead.data?.content ?? "")) setAuthDraft(auth);

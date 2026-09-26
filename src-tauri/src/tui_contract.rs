@@ -202,6 +202,10 @@ fn subscription_detail_fields_match() {
             unit: "CNY".into(),
             hint: None,
             severity: BalanceSeverity::Low,
+            detail: Some(crate::subscription::model::BalanceDetail::TopupGranted {
+                topped_up: "9.99".into(),
+                granted: "0.00".into(),
+            }),
         }],
         fetched_at: chrono::Utc::now(),
     });
@@ -254,6 +258,8 @@ fn test_connection_result_matches() {
         http_status: Some(200),
         model_used: Some("glm-4.6".into()),
         state_reset: true,
+        // 桌面端专用的结构化字段; TUI 视图不认它, 反序列化必须照样成功。
+        note: Some(crate::subscription::ping::ProbeNote::Ok),
     };
     let view: dto::TestConnectionResult = through_json(&real);
     assert_eq!(
@@ -268,7 +274,7 @@ fn test_connection_result_matches() {
     );
 
     // 网络错误时两个 Option 字段都缺省。
-    let real_absent = TestConnectionResult { ok: false, message: "网络错误".into(), http_status: None, model_used: None, state_reset: false };
+    let real_absent = TestConnectionResult { ok: false, message: "网络错误".into(), http_status: None, model_used: None, state_reset: false, note: None };
     let view_absent: dto::TestConnectionResult = through_json(&real_absent);
     assert_eq!(
         view_absent,

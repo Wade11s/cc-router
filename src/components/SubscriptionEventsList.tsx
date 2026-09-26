@@ -7,6 +7,7 @@ import { useEvents } from "@/hooks/useEvents";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useT } from "@/i18n";
 import { fmtTime } from "@/lib/format";
+import { lastErrorText } from "@/lib/backendText";
 import type { EventDto, QuotaReachedPayload, StateChangePayload } from "@/types";
 
 const PAGE_SIZE = 20;
@@ -121,6 +122,9 @@ function SubscriptionEventRow({ ev, subName }: { ev: EventDto; subName?: string 
   const payload = (ev.payload as StateChangePayload | null | undefined) ?? null;
   const fromState = payload?.from;
   const toState = payload?.to;
+  const lastError = payload?.last_error
+    ? lastErrorText(payload.last_error_code, payload.last_error, t)
+    : null;
 
   return (
     <div
@@ -144,13 +148,13 @@ function SubscriptionEventRow({ ev, subName }: { ev: EventDto; subName?: string 
         <ArrowRight size={12} style={{ color: "var(--ink-3)" }} />
         {toState && <StatusBadge state={toState} />}
       </div>
-      {payload?.last_error && (
+      {lastError && (
         <span
           className="mono"
           style={{ fontSize: 12, color: "var(--err)", maxWidth: 280, textAlign: "right" }}
-          title={payload.last_error}
+          title={lastError}
         >
-          {payload.last_error}
+          {lastError}
         </span>
       )}
     </div>

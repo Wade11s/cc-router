@@ -160,10 +160,11 @@ function BalanceEntryRow({
   const effective = effectiveSeverity(entry.severity, accountUnavailable);
   const meta = SEVERITY_META[effective];
   const prefix = currencyPrefix(entry.unit);
+  const { label, hint } = entryText(entry, t);
 
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="text-sm text-muted-foreground">{entry.label}</span>
+      <span className="text-sm text-muted-foreground">{label}</span>
       <div className="flex flex-col items-end">
         <span className={cn("font-mono text-lg font-semibold tabular-nums", meta.text)}>
           {prefix}
@@ -172,9 +173,7 @@ function BalanceEntryRow({
             <span className="ml-1 text-xs text-muted-foreground">{entry.unit}</span>
           )}
         </span>
-        {entry.hint && (
-          <span className="text-[11px] text-muted-foreground">{entry.hint}</span>
-        )}
+        {hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
         {meta.labelKey && (
           <span className={cn("text-[11px]", meta.text)}>{t(meta.labelKey)}</span>
         )}
@@ -188,6 +187,7 @@ function BalanceEntryRow({
  * returns null when no cache is available (the list page never auto-fetches).
  */
 export function BalanceBadge({ subscription }: { subscription: SubscriptionDto }) {
+  const { t } = useT();
   if (!subscription.balance_supported || !subscription.balance_cache) return null;
 
   const snapshot = subscription.balance_cache.snapshot;
@@ -203,7 +203,7 @@ export function BalanceBadge({ subscription }: { subscription: SubscriptionDto }
         "inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10.5px] tabular-nums",
         meta.badge,
       )}
-      title={entry.hint}
+      title={entryText(entry, t).hint}
     >
       {currencyPrefix(entry.unit) || `${entry.unit} `}
       {entry.value_text}
@@ -216,6 +216,32 @@ function effectiveSeverity(
   accountUnavailable: boolean,
 ): BalanceSeverity {
   return accountUnavailable ? "critical" : raw;
+}
+
+/** 按界面语言生成条目的标签与副标题; 老版本缓存没有 detail, 退回后端原文。 */
+function entryText(entry: BalanceEntry, t: TFunction): { label: string; hint?: string } {
+  const d = entry.detail;
+  if (!d) return { label: entry.label, hint: entry.hint };
+  const money = (amount: string) => `${currencyPrefix(entry.unit)}${amount}`;
+  const label = t("subscriptionBalance.entry.label", { unit: entry.unit });
+  switch (d.code) {
+    case "topup_granted":
+      return {
+        label,
+        hint: t("subscriptionBalance.entry.topupGranted", {
+          toppedUp: money(d.topped_up),
+          granted: money(d.granted),
+        }),
+      };
+    case "topup_used":
+      return {
+        label,
+        hint: t("subscriptionBalance.entry.topupUsed", {
+          toppedUp: money(d.topped_up),
+          used: money(d.used),
+        }),
+      };
+  }
 }
 
 function currencyPrefix(unit: string): string {

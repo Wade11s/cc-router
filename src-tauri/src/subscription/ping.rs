@@ -18,6 +18,7 @@ use reqwest::header::{
     HeaderMap as ReqHeaderMap, HeaderName as ReqHeaderName, HeaderValue as ReqHeaderValue,
     CONTENT_TYPE,
 };
+use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -46,6 +47,39 @@ pub struct ProbeResult {
     pub ok: bool,
     pub http_status: Option<u16>,
     pub message: String,
+    /// `message` 是 cc-router 自己写的固定文案时, 这里给出它的结构化形式,
+    /// 供桌面端按界面语言显示; 上游原文 (HTTP 错误体 / OAuth 报错) 为 None。
+    pub note: Option<ProbeNote>,
+}
+
+/// 测试连接结果里 cc-router 自己的固定文案。`message` 字段仍保留中文原文 (TUI 原样显示)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum ProbeNote {
+    Ok,
+    Network { detail: String },
+    /// 订阅没有任何 model 槽位, 也没有 example_models 可兜底。
+    NoTestModel,
+}
+
+impl ProbeNote {
+    pub fn message(&self, http_status: Option<u16>) -> String {
+        match self {
+            Self::Ok => match http_status {
+                Some(s) => format!("连接正常 (HTTP {s})"),
+                None => "连接正常".into(),
+            },
+            Self::Network { detail } => format!("网络错误: {detail}"),
+            Self::NoTestModel => "订阅未配置任何 model 槽位, 且未提供 example_models, 无法测试".into(),
+        }
+    }
+}
+
+impl ProbeResult {
+    /// 固定文案的结果: `message` 由 `note` 生成, 两者不会不一致。
+    pub fn noted(ok: bool, http_status: Option<u16>, note: ProbeNote) -> Self {
+        Self { ok, http_status, message: note.message(http_status), note: Some(note) }
+    }
 }
 
 /// 探测用的最小 Anthropic Messages 请求体。
@@ -65,21 +99,20 @@ fn ping_body(model: &str) -> Value {
 /// `Ok` 一定意味着上游 2xx(各 dispatch 内部已把 4xx/5xx/网络错都转成 `Err`)。
 fn dispatch_result_to_probe<T>(res: Result<T, OAuthDispatchError>) -> ProbeResult {
     match res {
-        Ok(_) => ProbeResult {
-            ok: true,
-            http_status: Some(200),
-            message: "连接正常".into(),
-        },
+        // 历史上这条路径只写「连接正常」不带状态码; 统一成带 (HTTP 200) 与透传家族一致。
+        Ok(_) => ProbeResult::noted(true, Some(200), ProbeNote::Ok),
         // access_token 拿不到 / refresh 失败: 对 OAuth 订阅就是"需要重新登录", 是正确的测试结果。
         Err(OAuthDispatchError::Auth(message)) => ProbeResult {
             ok: false,
             http_status: Some(401),
             message,
+            note: None,
         },
         Err(OAuthDispatchError::Upstream { status, message }) => ProbeResult {
             ok: false,
             http_status: status,
             message,
+            note: None,
         },
     }
 }
@@ -123,11 +156,7 @@ async fn probe(
             let body_text = r.text().await.unwrap_or_default();
 
             if status.is_success() {
-                ProbeResult {
-                    ok: true,
-                    http_status: Some(status_u16),
-                    message: format!("连接正常 (HTTP {status_u16})"),
-                }
+                ProbeResult::noted(true, Some(status_u16), ProbeNote::Ok)
             } else {
                 let snippet: String = body_text.chars().take(300).collect();
                 let message = if snippet.is_empty() {
@@ -139,14 +168,11 @@ async fn probe(
                     ok: false,
                     http_status: Some(status_u16),
                     message,
+                    note: None,
                 }
             }
         }
-        Err(e) => ProbeResult {
-            ok: false,
-            http_status: None,
-            message: format!("网络错误: {e}"),
-        },
+        Err(e) => ProbeResult::noted(false, None, ProbeNote::Network { detail: e.to_string() }),
     }
 }
 
@@ -362,6 +388,20 @@ pub fn pick_test_model(row: &SubscriptionRow) -> Option<(String, Option<Subscrip
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_note_serializes_as_tagged_code_and_drives_message() {
+        let net = ProbeNote::Network { detail: "timeout".into() };
+        assert_eq!(
+            serde_json::to_value(&net).unwrap(),
+            serde_json::json!({ "code": "network", "detail": "timeout" })
+        );
+        assert_eq!(serde_json::to_value(ProbeNote::NoTestModel).unwrap(), serde_json::json!({ "code": "no_test_model" }));
+        let r = ProbeResult::noted(true, Some(201), ProbeNote::Ok);
+        assert_eq!(r.message, "连接正常 (HTTP 201)");
+        assert_eq!(r.note, Some(ProbeNote::Ok));
+        assert_eq!(ProbeResult::noted(false, None, net).message, "网络错误: timeout");
+    }
 
     #[test]
     fn ping_body_uses_max_tokens_16() {

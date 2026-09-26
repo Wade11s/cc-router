@@ -182,7 +182,7 @@ function GenericTab() {
   const origin = baseUrl ?? `http://127.0.0.1:${port}`;
   // 与 CodexSettingsEditor「插入推荐配置」写出的文件逐字一致 (含真实 token), 复制即用.
   const codexSnap = { baseUrl: origin, token };
-  const codexToml = buildRecommendedCodexConfig(codexSnap).trimEnd();
+  const codexToml = buildRecommendedCodexConfig(codexSnap, t("guide.codex.configComment")).trimEnd();
   const codexAuth = buildRecommendedCodexAuth(codexSnap).trimEnd();
 
   return (

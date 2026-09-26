@@ -361,6 +361,20 @@ pub struct BalanceEntry {
     pub hint: Option<String>,
     /// UI 着色级别, parser 根据 provider 专属阈值计算 (DeepSeek CNY <10 = Low 等).
     pub severity: BalanceSeverity,
+    /// `label` / `hint` 的结构化形式, 供桌面端按界面语言显示。老版本落库的缓存没有它,
+    /// 前端退回 `label` / `hint` 原文 (TUI 一直用原文)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<BalanceDetail>,
+}
+
+/// 余额条目的结构化文案。金额保持字符串 (与 `value_text` 同理); 标签恒为「余额 (unit)」。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum BalanceDetail {
+    /// 「充值 X, 赠送 Y」(DeepSeek)。
+    TopupGranted { topped_up: String, granted: String },
+    /// 「充值 X, 已用 Y」(OpenRouter)。
+    TopupUsed { topped_up: String, used: String },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -458,6 +472,9 @@ pub struct SubscriptionDto {
     pub cooldown_until: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error_message: Option<String>,
+    /// `last_error_message` 的结构化形式, 供桌面端按界面语言显示; 认不出的文本为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error_code: Option<crate::subscription::last_error::LastError>,
     pub created_at: i64,
     pub updated_at: i64,
     pub referenced_by: Vec<String>,
@@ -601,6 +618,10 @@ impl SubscriptionDto {
             is_dispatchable: rt.is_dispatchable(Utc::now()),
             cooldown_until: rt.cooldown_until.map(|t| t.timestamp_millis()),
             last_error_message: rt.last_error_message.clone(),
+            last_error_code: rt
+                .last_error_message
+                .as_deref()
+                .and_then(crate::subscription::last_error::LastError::parse),
             created_at: rt.row.created_at.timestamp_millis(),
             updated_at: rt.row.updated_at.timestamp_millis(),
             referenced_by,

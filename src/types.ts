@@ -236,7 +236,14 @@ export interface BalanceEntry {
   /** 副标题, 例 "充值 ¥39.28, 赠送 ¥0.00" */
   hint?: string;
   severity: BalanceSeverity;
+  /** label / hint 的结构化形式; 老版本缓存没有, 此时退回 label / hint 原文 */
+  detail?: BalanceDetail;
 }
+
+/** 对齐 Rust `BalanceDetail`; 金额为字符串, 标签恒为「余额 (unit)」 */
+export type BalanceDetail =
+  | { code: "topup_granted"; topped_up: string; granted: string }
+  | { code: "topup_used"; topped_up: string; used: string };
 
 /** 余额快照. 异构 provider 响应在 Rust 翻译后的 UI-ready 结构. */
 export interface BalanceSnapshot {
@@ -280,6 +287,8 @@ export interface SubscriptionDto {
   is_dispatchable: boolean;
   cooldown_until?: number;
   last_error_message?: string;
+  /** last_error_message 的结构化形式; 认不出的文本 (如老版本写的) 为 undefined */
+  last_error_code?: LastErrorCode;
   created_at: number;
   updated_at: number;
   /** 该订阅被哪些虚拟模型引用 */
@@ -420,7 +429,24 @@ export interface TestConnectionResult {
   model_used?: string;
   /** 测试通过且触发了状态机复活 */
   state_reset: boolean;
+  /** message 是 cc-router 固定文案时的结构化形式; 上游原文为 undefined */
+  note?: ProbeNote;
 }
+
+/** 对齐 Rust `subscription::ping::ProbeNote` */
+export type ProbeNote =
+  | { code: "ok" }
+  | { code: "network"; detail: string }
+  | { code: "no_test_model" };
+
+/** 对齐 Rust `subscription::last_error::LastError` */
+export type LastErrorCode =
+  | { code: "auth_failed"; status: number }
+  | { code: "rate_limited" }
+  | { code: "server_error"; status: number }
+  | { code: "network" }
+  | { code: "upstream_quota_exhausted" }
+  | { code: "upstream_rate_limited" };
 
 export type RefreshModelListResult =
   | { kind: "auto"; models: ModelInfo[]; fetched_at: number }
@@ -820,6 +846,8 @@ export interface StateChangePayload {
   to: SubscriptionState;
   reason: string;
   last_error?: string | null;
+  /** 老事件没有此字段 */
+  last_error_code?: LastErrorCode | null;
 }
 
 /** quota_reached 事件的 payload 反序列化形态 */

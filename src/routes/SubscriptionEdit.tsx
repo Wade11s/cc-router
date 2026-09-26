@@ -53,6 +53,7 @@ import type {
   TokenQuotas,
 } from "@/types";
 import { uniformSlots } from "@/lib/modelSlots";
+import { lastErrorText, testResultText } from "@/lib/backendText";
 import { formatTokenShorthand, parseTokenShorthand } from "@/lib/quota";
 
 export function SubscriptionEditPage() {
@@ -295,7 +296,9 @@ export function SubscriptionEditPage() {
                   </div>
                 )}
                 {sub.last_error_message && (
-                  <div className="text-xs text-destructive">{sub.last_error_message}</div>
+                  <div className="text-xs text-destructive">
+                    {lastErrorText(sub.last_error_code, sub.last_error_message, t)}
+                  </div>
                 )}
               </div>
             )}
@@ -526,7 +529,7 @@ export function SubscriptionEditPage() {
               {testResult && (
                 <Alert variant={testResult.ok ? "default" : "destructive"}>
                   <AlertDescription>
-                    <div>{testResult.message}</div>
+                    <div>{testResultText(testResult, t)}</div>
                     {testResult.model_used && (
                       <div className="mt-1 text-xs opacity-80">
                         {t("subscriptionEdit.testModel")}<code className="font-mono">{testResult.model_used}</code>

@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 use crate::error::AppResult;
 use crate::observability::events::{self, EventEntry};
+use crate::subscription::last_error::LastError;
 use crate::subscription::model::{SubscriptionRuntime, SubscriptionState};
 use crate::subscription::store;
 
@@ -94,6 +95,7 @@ pub fn apply<'a>(
                     "to": transition.new_state,
                     "reason": describe_event(&event),
                     "last_error": error_message_update,
+                    "last_error_code": error_message_update.as_deref().and_then(LastError::parse),
                 }),
             );
         }
@@ -150,15 +152,15 @@ fn transition(
             classify_http(*s, rt, &mut last_error_update)
         }
         (SubscriptionState::Healthy, Event::NetworkError) => {
-            bump_transient(rt, "network error", &mut last_error_update)
+            bump_transient(rt, LastError::Network, &mut last_error_update)
         }
         (SubscriptionState::Healthy, Event::UpstreamSseError { is_quota_exhausted }) => {
-            let msg = if *is_quota_exhausted {
-                "上游 SSE error: 配额耗尽 (5h/月度)"
+            let err = if *is_quota_exhausted {
+                LastError::UpstreamQuotaExhausted
             } else {
-                "上游 SSE error: 速率限制"
+                LastError::UpstreamRateLimited
             };
-            last_error_update = Some(msg.to_string());
+            last_error_update = Some(err.message());
             rt.last_error_message = last_error_update.clone();
             if *is_quota_exhausted {
                 SubscriptionState::QuotaExhausted
@@ -308,28 +310,28 @@ fn classify_http(
             SubscriptionState::Healthy
         }
         401 | 403 => {
-            *last_error = Some(format!("HTTP {status}: 凭证失效"));
+            *last_error = Some(LastError::AuthFailed { status }.message());
             rt.last_error_message = last_error.clone();
             SubscriptionState::AuthFailed
         }
         429 => {
-            *last_error = Some("HTTP 429: 限流".to_string());
+            *last_error = Some(LastError::RateLimited.message());
             rt.last_error_message = last_error.clone();
             // MVP: rate_limited 与 quota_exhausted 合并（§6.1）
             SubscriptionState::RateLimited
         }
-        500..=599 => bump_transient(rt, &format!("HTTP {status}"), last_error),
+        500..=599 => bump_transient(rt, LastError::ServerError { status }, last_error),
         _ => SubscriptionState::Healthy,
     }
 }
 
 fn bump_transient(
     rt: &mut SubscriptionRuntime,
-    reason: &str,
+    reason: LastError,
     last_error: &mut Option<String>,
 ) -> SubscriptionState {
     rt.consecutive_errors = rt.consecutive_errors.saturating_add(1);
-    *last_error = Some(reason.to_string());
+    *last_error = Some(reason.message());
     rt.last_error_message = last_error.clone();
     if rt.consecutive_errors >= 3 {
         SubscriptionState::TransientError

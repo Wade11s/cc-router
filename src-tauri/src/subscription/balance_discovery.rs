@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use crate::error::AppError;
 use crate::provider::model::BalanceParser;
 use crate::subscription::{
-    model::{BalanceEntry, BalanceSeverity, BalanceSnapshot, SubscriptionRow},
+    model::{BalanceDetail, BalanceEntry, BalanceSeverity, BalanceSnapshot, SubscriptionRow},
     store,
 };
 
@@ -151,6 +151,10 @@ fn deepseek_entry(info: DeepSeekBalanceInfo, account_unavailable: bool) -> Balan
         unit: info.currency,
         hint: Some(hint),
         severity,
+        detail: Some(BalanceDetail::TopupGranted {
+            topped_up: info.topped_up_balance,
+            granted: info.granted_balance,
+        }),
     }
 }
 
@@ -205,17 +209,16 @@ fn parse_openrouter(text: &str) -> Result<BalanceSnapshot, BalanceError> {
     let remaining = resp.data.total_credits - resp.data.total_usage;
     let (low, critical) = (2.0_f64, 0.2_f64);
     let severity = classify_by_threshold(remaining, low, critical);
-    let hint = Some(format!(
-        "充值 ${topup}, 已用 ${usage}",
-        topup = format_amount(resp.data.total_credits),
-        usage = format_amount(resp.data.total_usage),
-    ));
+    let topped_up = format_amount(resp.data.total_credits);
+    let used = format_amount(resp.data.total_usage);
+    let hint = Some(format!("充值 ${topped_up}, 已用 ${used}"));
     let entries = vec![BalanceEntry {
         label: "余额 (USD)".to_string(),
         value_text: format_amount(remaining),
         unit: "USD".to_string(),
         hint,
         severity,
+        detail: Some(BalanceDetail::TopupUsed { topped_up, used }),
     }];
     Ok(BalanceSnapshot {
         is_available: None,
@@ -256,6 +259,10 @@ mod tests {
         assert_eq!(e.unit, "CNY");
         assert_eq!(e.severity, BalanceSeverity::Normal);
         assert_eq!(e.hint.as_deref(), Some("充值 ¥39.28, 赠送 ¥0.00"));
+        assert_eq!(
+            e.detail,
+            Some(BalanceDetail::TopupGranted { topped_up: "39.28".into(), granted: "0.00".into() })
+        );
     }
 
     #[test]
@@ -346,6 +353,15 @@ mod tests {
     // ---------- OpenRouter ----------
 
     #[test]
+    fn legacy_cached_entry_without_detail_deserializes() {
+        let e: BalanceEntry = serde_json::from_str(
+            r#"{"label":"余额 (CNY)","value_text":"1.00","unit":"CNY","hint":"充值 ¥1.00, 赠送 ¥0.00","severity":"normal"}"#,
+        )
+        .expect("old cache shape");
+        assert_eq!(e.detail, None);
+    }
+
+    #[test]
     fn parse_openrouter_happy_path() {
         // Real shape verified against api.openrouter.ai/api/v1/credits (2026-05).
         let json = r#"{"data":{"total_credits":10,"total_usage":2.45121913}}"#;
@@ -358,6 +374,10 @@ mod tests {
         assert_eq!(e.unit, "USD");
         assert_eq!(e.severity, BalanceSeverity::Normal);
         assert_eq!(e.hint.as_deref(), Some("充值 $10.00, 已用 $2.45"));
+        assert_eq!(
+            e.detail,
+            Some(BalanceDetail::TopupUsed { topped_up: "10.00".into(), used: "2.45".into() })
+        );
     }
 
     #[test]

@@ -172,6 +172,9 @@ pub struct TestConnectionResult {
     pub model_used: Option<String>,
     /// 测试通过且触发了状态机复活 → true。
     pub state_reset: bool,
+    /// `message` 是 cc-router 固定文案时的结构化形式 (桌面端按界面语言显示)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<ping::ProbeNote>,
 }
 
 #[derive(Debug, Serialize)]
@@ -656,12 +659,14 @@ pub async fn test_connection(
     let (model, slot) = match ping::pick_test_model(&row) {
         Some(m) => m,
         None => {
+            let note = ping::ProbeNote::NoTestModel;
             return Ok(TestConnectionResult {
                 ok: false,
-                message: "订阅未配置任何 model 槽位, 且未提供 example_models, 无法测试".into(),
+                message: note.message(None),
                 http_status: None,
                 model_used: None,
                 state_reset: false,
+                note: Some(note),
             });
         }
     };
@@ -689,6 +694,7 @@ pub async fn test_connection(
         http_status: result.http_status,
         model_used: Some(model),
         state_reset,
+        note: result.note,
     })
 }
 
