@@ -356,6 +356,9 @@ pub struct Strings {
     pub lg_status_success: &'static str,
     pub lg_status_error: &'static str,
     pub lg_status_timeout: &'static str,
+    /// 日志表状态列里超时那一格用的短形 (状态列是 80 列表格里的定宽列); 过滤选择器、详情弹窗等
+    /// 宽处用 [`Strings::lg_status_timeout`]。
+    pub lg_status_timeout_short: &'static str,
     pub lg_status_unknown: &'static str,
     /// 日志页 `n`/`p` 翻页的 hint 键名。
     pub key_page: &'static str,
@@ -859,6 +862,7 @@ pub const ZH: Strings = Strings {
     lg_status_success: "成功",
     lg_status_error: "失败",
     lg_status_timeout: "超时",
+    lg_status_timeout_short: "超时",
     lg_status_unknown: "未知",
     key_page: "翻页",
     key_logs: "日志",
@@ -1051,7 +1055,7 @@ pub const EN: Strings = Strings {
     key_remove: "Remove",
     key_mode: "Mode",
     key_members: "Members",
-    key_new: "New",
+    key_new: "Add",
     key_delete: "Delete",
     key_cancel: "Cancel",
 
@@ -1111,7 +1115,7 @@ pub const EN: Strings = Strings {
     q_daily: "Daily",
     q_weekly: "Weekly",
     q_monthly: "Monthly",
-    q_total: "Total",
+    q_total: "Lifetime total",
 
     toast_reconnected: "Reconnected",
     toast_load_failed: |reason| format!("Failed to load: {reason}"),
@@ -1152,7 +1156,7 @@ pub const EN: Strings = Strings {
     sub_f_last_action: "Last action",
     sub_slot_fallback: "fallback",
     sub_slot_unset: "(not set)",
-    sub_effort_auto: "auto",
+    sub_effort_auto: "Auto",
     sub_balance_unsupported: "This provider does not support balance queries",
     sub_balance_never: "Not fetched yet. Press b to refresh",
     sub_balance_unavailable: "Account unavailable (out of credit or restricted)",
@@ -1174,7 +1178,7 @@ pub const EN: Strings = Strings {
         ("t", "Test connection"),
         ("m", "Refresh model list"),
         ("b", "Refresh balance"),
-        ("n", "New subscription"),
+        ("n", "Add subscription"),
         ("d", "Delete subscription"),
     ],
     sub_busy_toggling: "Updating…",
@@ -1203,7 +1207,7 @@ pub const EN: Strings = Strings {
     vm_title: "Virtual models",
     vm_mode_seq: "Sequential",
     vm_mode_rr: "Round-robin",
-    vm_mode_sticky: "Sticky",
+    vm_mode_sticky: "Affinity",
     vm_mode_unknown: "Unknown",
     vm_mode_full_seq: "Sequential",
     vm_mode_full_rr: "Round-robin",
@@ -1284,6 +1288,7 @@ pub const EN: Strings = Strings {
     lg_status_success: "Success",
     lg_status_error: "Error",
     lg_status_timeout: "Timeout",
+    lg_status_timeout_short: "Timeout",
     lg_status_unknown: "Unknown",
     key_page: "Page",
     key_logs: "Logs",
@@ -1345,7 +1350,7 @@ pub const EN: Strings = Strings {
     lg_d_truncated: "(truncated)",
     lg_d_unnamed: "(unnamed)",
 
-    wiz_title: "New subscription",
+    wiz_title: "Add subscription",
     wiz_loading_providers: "Fetching providers…",
     wiz_load_failed: |reason| format!("Failed to fetch providers: {reason}"),
 
@@ -1383,7 +1388,7 @@ pub const EN: Strings = Strings {
     wiz_confirm_exit_pending: "Subscription created, but its model slots are still (pending).\nLeave the wizard? (You can set them later on the Subscriptions page)",
     wiz_saving: "Saving…",
 
-    wiz_custom_title: "New subscription · Custom",
+    wiz_custom_title: "Add subscription · Custom",
     wiz_f_protocol: "Protocol",
     wiz_f_provider_name: "Provider name",
     wiz_f_base_url: "Base URL",
@@ -1449,7 +1454,8 @@ Options:
 /// 术语沿用桌面端 `src/i18n/locales/ja.json` (サブスクリプション / 仮想モデル / プロバイダ / エンドポイント /
 /// モデルスロット / 思考強度 / フォールバック / 上限 / 残高 / リアルタイムルーティング / リクエストログ …)。
 /// 标签用名词短语, 提示与错误用です・ます体。片假名词在终端里占两列, 窄处 (标签栏、80 列日志表、
-/// 有草稿时的底栏) 用 ja.json 里已有的短形 (サブスク) 或同义的短词 (遅延 / 時間切れ), 不自造缩写。
+/// 有草稿时的底栏、放不下全称的帮助行) 用 ja.json 里已有的短形 (サブスク) 或同义的短词 (遅延 /
+/// 時間切れ), 不自造缩写; 详情弹窗、帮助的键名列、过滤选择器这些宽处用全称 (レイテンシ / タイムアウト)。
 pub const JA: Strings = Strings {
     tabs: ["概要", "サブスク", "仮想モデル", "リアルタイムルーティング", "ログ"],
     conn_connecting: "接続中",
@@ -1520,6 +1526,7 @@ pub const JA: Strings = Strings {
     ov_auth_on: "認証オン",
     ov_auth_off: "認証オフ",
     ov_listen_all: "0.0.0.0 · LAN",
+    // 80 列上与 logo、认证状态同一行, 全称放不下 (被截断), 用短形。
     ov_subs_summary: |total, ok| format!("サブスク {total} · 利用可能 {ok}"),
     ov_no_subs: "サブスクリプションがまだありません。先にデスクトップ app で追加してください",
     ov_more_rows: |n| format!("… ほか {n} 件"),
@@ -1529,7 +1536,7 @@ pub const JA: Strings = Strings {
     st_quota_exhausted: "クォータ枯渇",
     st_transient_error: "一時的エラー",
     st_auth_failed: "認証情報が無効",
-    st_disabled: "無効化済み",
+    st_disabled: "無効",
     st_unknown: "不明",
     st_quota_reached: "上限到達",
 
@@ -1574,7 +1581,7 @@ pub const JA: Strings = Strings {
     sub_f_last_action: "前回の操作",
     sub_slot_fallback: "フォールバック",
     sub_slot_unset: "(未設定)",
-    sub_effort_auto: "auto",
+    sub_effort_auto: "自動",
     sub_balance_unsupported: "このプロバイダは残高の照会に対応していません",
     sub_balance_never: "未取得です。b で更新",
     sub_balance_unavailable: "アカウントを利用できません (残高不足または制限中)",
@@ -1625,6 +1632,7 @@ pub const JA: Strings = Strings {
     vm_mode_full_rr: "ラウンドロビン",
     vm_mode_full_sticky: "セッション固定",
     vm_mode_full_unknown: "不明",
+    // 80 列右栏底边放不下「セッション固定 · サブスクリプション n 件」, 用短形。
     vm_members_summary: |mode, n| format!("{mode} · サブスク {n} 件"),
     vm_empty: "この仮想モデルにはサブスクリプションがありません。a で追加",
     vm_missing: "(削除済み)",
@@ -1674,7 +1682,7 @@ pub const JA: Strings = Strings {
         ("⏎", "そのサブスクリプションのリクエストログ"),
         ("/", "仮想モデルまたはサブスクリプションで絞り込み"),
         ("Esc", "絞り込みを解除 / 最新に戻る"),
-        ("遅延", "ストリームは応答開始まで、非ストリームは完了まで"),
+        ("レイテンシ", "ストリームは応答開始まで、非ストリームは完了まで"),
         // 「同一」去掉两个字省出的宽度正好用来把动词补全成「対応付け」(80 列帮助弹窗按显示宽度
         // 卡边, 这一行原本就是贴着上限, `every_help_row_is_shown_in_full_at_80x24` 会检查截断)。
         ("同時実行", "仮想モデル + サブスクの同時試行は開始順に対応付け"),
@@ -1698,7 +1706,8 @@ pub const JA: Strings = Strings {
     filter_active: "適用中 · もう一度選ぶと解除",
     lg_status_success: "成功",
     lg_status_error: "失敗",
-    lg_status_timeout: "時間切れ",
+    lg_status_timeout: "タイムアウト",
+    lg_status_timeout_short: "時間切れ",
     lg_status_unknown: "不明",
     key_page: "ページ",
     key_logs: "ログ",
@@ -1726,7 +1735,7 @@ pub const JA: Strings = Strings {
     lg_d_resp_model: "レスポンスモデル",
     lg_d_sub: "サブスクリプション",
     lg_d_provider: "プロバイダ / エンドポイント",
-    lg_d_latency: "遅延",
+    lg_d_latency: "レイテンシ",
     lg_d_streaming: "ストリーミング",
     lg_d_tokens: "Token",
     lg_d_client: "クライアント",
@@ -1862,7 +1871,7 @@ cc-router-tui — cc-router のターミナル UI
     cli_check_subs: |total, dispatchable| format!("  サブスクリプション  {total} 件、うち {dispatchable} 件が利用可能"),
     cli_check_lang: |lang| format!("  言語                {lang}"),
     cli_check_events_ok: "  イベント配信        正常",
-    cli_check_version_mismatch: |tui, app| format!("\n注意: TUI のバージョン {tui} が app のバージョン {app} と一致しません。"),
+    cli_check_version_mismatch: |tui, app| format!("\n注意: ターミナル UI のバージョン {tui} が app のバージョン {app} と一致しません。"),
 };
 
 pub fn strings(lang: Lang) -> &'static Strings {
@@ -1970,6 +1979,15 @@ mod tests {
                 assert!(line.width() <= 70, "确认弹窗一行 {} 列, 超过 70: {line:?}", line.width());
             }
         }
+    }
+
+    /// 日文界面对 TUI 的叫法与桌面端设置页一致 (「ターミナル UI」), 不用缩写 TUI。
+    #[test]
+    fn japanese_calls_the_tui_by_the_desktop_name() {
+        for text in [(JA.version_mismatch)("1", "2"), (JA.cli_check_version_mismatch)("1", "2"), JA.err_disabled.to_string()] {
+            assert!(!text.contains("TUI"), "{text}");
+        }
+        assert!((JA.cli_check_version_mismatch)("1", "2").contains("ターミナル UI"));
     }
 
     fn is_cjk(c: char) -> bool {

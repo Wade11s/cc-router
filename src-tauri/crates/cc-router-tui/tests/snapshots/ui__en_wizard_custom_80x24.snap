@@ -5,7 +5,7 @@ expression: "render(&mut custom_wizard_probed_and_filled(), 80, 24)"
 "╭ cc-router ───────────────────────────────────────────────────── ⠯ Connecting ╮"
 "│ 1 Overview   2 Subscriptions   3 Virtual models   4 Live routing   5 Logs    │"
 "╰──────────────────────────────────────────────────────────────────────────────╯"
-"╭ New subscription · Custom ───────────────────────────────────────────────────╮"
+"╭ Add subscription · Custom ───────────────────────────────────────────────────╮"
 "│                                                                              │"
 "│    Protocol       Anthropic compatible                             ⏎ Select  │"
 "│    Provider name  我的中转                                                   │" Hidden by multi-width symbols: [(21, " "), (23, " "), (25, " "), (27, " ")]

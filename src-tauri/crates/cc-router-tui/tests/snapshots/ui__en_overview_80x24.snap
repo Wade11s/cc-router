@@ -15,9 +15,9 @@ expression: "render(&mut loaded(false), 80, 24)"
 "│ Tokens            3.2M ││ 0h          6h          12h         18h            │"
 "╰────────────────────────╯╰────────────────────────────────────────────────────╯"
 "╭ Subscription health ─────────────────────────────────────────────────────────╮"
-"│ ◐ Kimi 备用           Rate limited · 00:42     Daily      ━━━━━━━━━━──   91% │" Hidden by multi-width symbols: [(10, " "), (12, " ")]
+"│ ◐ Kimi 备用           Rate limited · 00:42     Daily    ━━━━━━━━━━━━──   91% │" Hidden by multi-width symbols: [(10, " "), (12, " ")]
 "│ ✕ 示例中转            Auth failed              —                             │" Hidden by multi-width symbols: [(5, " "), (7, " "), (9, " "), (11, " ")]
-"│ ● 智谱主号            Healthy                  Daily      ━━━━━━━─────   62% │" Hidden by multi-width symbols: [(5, " "), (7, " "), (9, " "), (11, " ")]
+"│ ● 智谱主号            Healthy                  Daily    ━━━━━━━━──────   62% │" Hidden by multi-width symbols: [(5, " "), (7, " "), (9, " "), (11, " ")]
 "│ ○ 停用的订阅          Disabled                 —                             │" Hidden by multi-width symbols: [(5, " "), (7, " "), (9, " "), (11, " "), (13, " ")]
 "│                                                                              │"
 "│                                                                              │"

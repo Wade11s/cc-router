@@ -5899,6 +5899,45 @@ fn en_wizard_slots_80x24() {
     insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
+/// 总览顶部「认证 · 订阅数 · 可用数」一行与 logo 同一行, 在每种语言的 80 列上完整显示。
+#[test]
+fn overview_status_line_is_shown_in_full_at_80x24_in_every_language() {
+    for lang in Lang::ALL {
+        use_lang(lang);
+        let s = s();
+        let out = render(&mut loaded(false), 80, 24);
+        let line = format!("{} · {}", s.ov_auth_on, (s.ov_subs_summary)(4, 1));
+        assert!(out.contains(&line), "{lang:?}: 「{line}」没有完整显示\n{out}");
+    }
+}
+
+/// 周期名最宽的是英文「Lifetime total」: 设了累计上限时它在总览与订阅详情里都完整显示; 周期名一列
+/// 只按实际出现的周期量宽, 没有累计上限的画面不为它让出进度条 (见 `en_overview_80x24` 快照)。
+#[test]
+fn lifetime_total_quota_label_is_shown_in_full_in_every_language() {
+    for lang in Lang::ALL {
+        use_lang(lang);
+        let s = s();
+        let mut subs = detail_subs();
+        subs[0].quota_usage = vec![quota_period(QuotaPeriod::Total, 1000, 620)];
+        let mut overview = data();
+        overview.subscriptions[1].quota_usage = vec![quota_period(QuotaPeriod::Total, 100, 62)];
+        let mut a = app(false);
+        a.update(Action::Connected { app_version: VERSION.into() });
+        a.update(overview_done(1, overview));
+        let out = render(&mut a, 80, 24);
+        assert!(out.contains(&format!("{} ", s.q_total)), "{lang:?}: 总览里「{}」没有完整显示\n{out}", s.q_total);
+
+        let mut a = app(false);
+        a.update(Action::Connected { app_version: VERSION.into() });
+        a.update(Action::SwitchTab(Tab::Subscriptions));
+        a.update(subs_done(1, subs));
+        a.handle_key(key(KeyCode::Enter));
+        let out = render(&mut a, 80, 24);
+        assert!(out.contains(&format!("{} ", s.q_total)), "{lang:?}: 订阅详情里「{}」没有完整显示\n{out}", s.q_total);
+    }
+}
+
 /// 虚拟模型页左栏的模式短名在每种语言下都完整显示 (左栏宽度随最长的短名放宽)。
 #[test]
 fn routing_mode_names_are_not_truncated_in_any_language() {
@@ -5943,6 +5982,35 @@ fn request_detail_labels_are_not_truncated_in_any_language() {
     }
 }
 
+/// 超时的短形只用在 80 列日志表的状态列; 详情弹窗与过滤选择器用全称 (日文两者不同:
+/// 時間切れ / タイムアウト)。
+#[test]
+fn timeout_short_form_is_only_used_in_the_logs_table() {
+    for lang in Lang::ALL {
+        use_lang(lang);
+        let s = s();
+        let mut a = logs_app(false);
+        a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
+        let table = render(&mut a, 80, 24);
+        assert!(table.contains(&format!("✕ {}", s.lg_status_timeout_short)), "{lang:?}: 表格状态列应该用短形\n{table}");
+
+        a.handle_key(key(KeyCode::Down));
+        a.handle_key(key(KeyCode::Down)); // 超时那一行
+        let action = a.handle_key(key(KeyCode::Enter)).expect("⏎ 应该产出 Action::OpenDetail");
+        a.update(action);
+        let detail = render(&mut a, 80, 40);
+        assert!(detail.contains(s.lg_status_timeout), "{lang:?}: 详情弹窗应该用全称「{}」\n{detail}", s.lg_status_timeout);
+        if let Some(close) = a.handle_key(key(KeyCode::Esc)) {
+            a.update(close);
+        }
+
+        let action = a.handle_key(key(KeyCode::Char('/'))).expect("/ 应该产出 Action::OpenPicker");
+        a.update(action);
+        let picker = render(&mut a, 80, 24);
+        assert!(picker.contains(s.lg_status_timeout), "{lang:?}: 过滤选择器应该用全称「{}」\n{picker}", s.lg_status_timeout);
+    }
+}
+
 /// 每种语言的固定文案确认弹窗在 80×24 上完整显示 (超长的行折行, 不被右边框截断)。去掉全部空白后
 /// 逐字比较弹窗内部的文字与提示原文——折行位置不影响比较, 丢字就会不相等。
 #[test]
@@ -5983,16 +6051,20 @@ fn en_virtual_models_80x24() {
     insta::assert_snapshot!(out);
 }
 
-/// 会话亲和 (sticky) 模式的全名 + 成员数摘要在英文 80 列右栏底边完整显示。
+/// 会话亲和 (sticky) 模式的全名 + 成员数摘要在每种语言的 80 列右栏底边完整显示 (会话亲和是
+/// 最长的模式全名)。
 #[test]
-fn en_sticky_mode_summary_fits_at_80x24() {
-    use_lang(Lang::En);
-    let mut a = vm_app(false);
-    a.handle_key(key(KeyCode::Down));
-    a.handle_key(key(KeyCode::Down)); // model-sonnet (sticky, 3 个成员)
-    let out = render(&mut a, 80, 24);
-    let summary = (EN.vm_members_summary)(EN.vm_mode_full_sticky, 3);
-    assert!(out.contains(&format!(" {summary} ")), "底部摘要「{summary}」应该完整显示\n{out}");
+fn sticky_mode_summary_fits_at_80x24_in_every_language() {
+    for lang in Lang::ALL {
+        use_lang(lang);
+        let s = s();
+        let mut a = vm_app(false);
+        a.handle_key(key(KeyCode::Down));
+        a.handle_key(key(KeyCode::Down)); // model-sonnet (sticky, 3 个成员)
+        let out = render(&mut a, 80, 24);
+        let summary = (s.vm_members_summary)(s.vm_mode_full_sticky, 3);
+        assert!(out.contains(&format!(" {summary} ")), "{lang:?}: 底部摘要「{summary}」应该完整显示\n{out}");
+    }
 }
 
 // ---------- 日文界面 ----------

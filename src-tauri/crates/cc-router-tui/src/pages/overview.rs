@@ -49,9 +49,11 @@ fn status_col(s: &Strings) -> usize {
     (widest(state_labels(s)) + COUNTDOWN_WIDTH).max(STATUS_MIN_COL)
 }
 
-/// 限额周期名一列: 最宽的周期名 + 2 格间隔。
-fn quota_label_col(s: &Strings) -> usize {
-    widest([s.q_daily, s.q_weekly, s.q_monthly, s.q_total]) + 2
+/// 限额周期名一列: 这一屏实际显示的周期名里最宽的 + 2 格间隔 (没有任何限额时按「—」一格算)。
+/// 只量实际出现的周期: 英文「Lifetime total」比其余周期名宽一倍, 按四个一起量会让所有行的进度条
+/// 都让掉一截。
+fn quota_label_col<'a>(s: &Strings, subs: impl IntoIterator<Item = &'a Subscription>) -> usize {
+    widest(subs.into_iter().filter_map(Subscription::tightest_quota).map(|q| s.quota_period(q.period))).max(1) + 2
 }
 
 #[derive(Default)]
@@ -216,7 +218,7 @@ impl Overview {
         // 窄终端名字列 18, 宽终端多给一些; 其余列定宽, 进度条吃掉剩下的。
         let name_col: usize = if inner.width >= 110 { 28 } else { 18 };
         let status_col = status_col(s);
-        let quota_label_col = quota_label_col(s);
+        let quota_label_col = quota_label_col(s, subs.iter().take(shown).copied());
 
         for (i, sub) in subs.iter().take(shown).enumerate() {
             let row = Rect::new(inner.x, inner.y + i as u16, inner.width, 1);

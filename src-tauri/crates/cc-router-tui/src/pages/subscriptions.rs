@@ -90,9 +90,10 @@ fn slot_name_col(s: &'static Strings) -> usize {
     widest(MAIN_SLOTS.iter().chain([&Slot::Fallback]).map(|slot| slot_label(*slot, s))) + 2
 }
 
-/// 限额行里周期名一段: 最宽的周期名 + 2 格间隔。
-fn quota_period_col(s: &Strings) -> u16 {
-    widest([s.q_daily, s.q_weekly, s.q_monthly, s.q_total]) as u16 + 2
+/// 限额行里周期名一段: 这条订阅实际显示的周期名里最宽的 + 2 格间隔。只量实际出现的周期: 英文
+/// 「Lifetime total」比其余周期名宽一倍, 按四个一起量会让没设累计上限的订阅也把进度条让掉一截。
+fn quota_period_col<'a>(s: &Strings, quotas: impl IntoIterator<Item = &'a QuotaUsage>) -> u16 {
+    widest(quotas.into_iter().map(|q| s.quota_period(q.period))) as u16 + 2
 }
 
 /// 详情面板的一行: 大多数是普通文本, 限额行要嵌一个真正的 `LineGauge` widget (不是文本能表示
@@ -101,7 +102,8 @@ fn quota_period_col(s: &Strings) -> u16 {
 /// `Paragraph` 的文本严格来自同一份计算, 不会出现分配的空间和实际内容对不上的情况。
 enum DetailRow {
     Line(Line<'static>),
-    Quota { label: &'static str, quota: QuotaUsage },
+    /// `period_col`: 同一条订阅的几行限额共用一个周期名列宽, 进度条才对齐。
+    Quota { label: &'static str, quota: QuotaUsage, period_col: u16 },
     Wrapped { label: &'static str, text: String, height: u16, style: Style },
 }
 
@@ -1142,9 +1144,10 @@ fn detail_rows(
     if limited.is_empty() {
         rows.push(DetailRow::Line(field_line(s, s.sub_f_quota, vec![Span::styled("—", theme.muted_style())])));
     } else {
+        let period_col = quota_period_col(s, limited.iter().copied());
         for (i, q) in limited.iter().enumerate() {
             let label = if i == 0 { s.sub_f_quota } else { "" };
-            rows.push(DetailRow::Quota { label, quota: (*q).clone() });
+            rows.push(DetailRow::Quota { label, quota: (*q).clone(), period_col });
         }
     }
 
@@ -1218,7 +1221,9 @@ fn draw_detail_rows(frame: &mut Frame, area: Rect, ctx: &DrawCtx, rows: &[Detail
 fn draw_detail_row(frame: &mut Frame, rect: Rect, ctx: &DrawCtx, row: &DetailRow) {
     match row {
         DetailRow::Line(line) => frame.render_widget(line.clone(), Rect::new(rect.x, rect.y, rect.width, 1)),
-        DetailRow::Quota { label, quota } => draw_quota_row(frame, Rect::new(rect.x, rect.y, rect.width, 1), ctx, label, quota),
+        DetailRow::Quota { label, quota, period_col } => {
+            draw_quota_row(frame, Rect::new(rect.x, rect.y, rect.width, 1), ctx, label, quota, *period_col)
+        }
         // 标签只画在第一行 (label_area), 正文整段交给 `Paragraph` 在 value_area 里自己折行——
         // 这样续行天然从 value_area.x (与其它字段的值列完全相同的一列) 开始, 不会像"标签+正文拼成
         // 一整条字符串再整体 Wrap"那样, 续行找不到标签占的那几列, 缩回列 0。
@@ -1266,7 +1271,7 @@ fn wrapped_line_count(text: &str, width: u16, max_rows: u16) -> u16 {
     text_width.div_ceil(width).saturating_add(1).clamp(1, max_rows.max(1))
 }
 
-fn draw_quota_row(frame: &mut Frame, area: Rect, ctx: &DrawCtx, label: &str, q: &QuotaUsage) {
+fn draw_quota_row(frame: &mut Frame, area: Rect, ctx: &DrawCtx, label: &str, q: &QuotaUsage, period_col: u16) {
     let s = ctx.s;
     let theme = ctx.theme;
     // 先把标签切出来 (不带 spacing, 与 `field_line` 的值列起点严格一致), 再在剩下的宽度里给
@@ -1278,7 +1283,7 @@ fn draw_quota_row(frame: &mut Frame, area: Rect, ctx: &DrawCtx, label: &str, q: 
 
     let ratio = q.ratio().unwrap_or(0.0);
     let [period_area, gauge_area, pct_area, used_area] =
-        Layout::horizontal([Constraint::Length(quota_period_col(s)), Constraint::Min(6), Constraint::Length(5), Constraint::Length(16)])
+        Layout::horizontal([Constraint::Length(period_col), Constraint::Min(6), Constraint::Length(5), Constraint::Length(16)])
             .spacing(1)
             .areas(value_area);
     frame.render_widget(Line::styled(s.quota_period(q.period), theme.muted_style()), period_area);

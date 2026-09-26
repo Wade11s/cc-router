@@ -435,9 +435,10 @@ fn status_label(status: RequestStatus, s: &'static Strings) -> &'static str {
     }
 }
 
-/// 状态列里超时那一格的文字; 它是状态列里最宽的内容, [`Cols::new`] 按它量列宽。
+/// 状态列里超时那一格的文字; 它是状态列里最宽的内容, [`Cols::new`] 按它量列宽。用短形: 状态列
+/// 多一列, 80 列终端上就从订阅 / 模型列里少一列。
 fn timeout_cell(s: &Strings) -> String {
-    format!("✕ {}", s.lg_status_timeout)
+    format!("✕ {}", s.lg_status_timeout_short)
 }
 
 fn status_cell_text(item: &RequestLog, s: &'static Strings) -> String {
