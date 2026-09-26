@@ -10,7 +10,7 @@ use cc_router_tui::client::discovery::{default_data_dir, read_runtime, Platform,
 use cc_router_tui::client::dto::{ProxyStatus, Settings, Subscription};
 use cc_router_tui::client::{commands, Client, ClientError};
 use cc_router_tui::format::Tz;
-use cc_router_tui::i18n::{client_error, strings, Lang};
+use cc_router_tui::i18n::{client_error, strings, Lang, Strings};
 use cc_router_tui::runtime;
 use cc_router_tui::theme::{ColorMode, Theme};
 use serde_json::json;
@@ -27,16 +27,27 @@ enum Parsed {
     Run(Args),
     Help,
     Version,
-    /// 参数有误; 内容是要打印的那句话。
-    Invalid(String),
+    /// 参数有误。
+    Invalid(BadArg),
 }
 
-/// 解析出错时 (缺路径 / 未知参数) 用**默认** `Args` 去算连接前语言, 不是当时已经拿到的那部分——
-/// 与 `main()` 里给 `Parsed::Help`/`Parsed::Invalid` 追加 `cli_help` 时用的是同一个假设, 这样
-/// 「错误那句」与「后面追加的帮助文本」永远是同一种语言, 不会各算各的。
+#[derive(Debug, PartialEq, Eq)]
+enum BadArg {
+    MissingDataDirPath,
+    Unknown(String),
+}
+
+/// 参数错误的那句话。与随后追加的 `cli_help` 用同一个 `s`, 两段永远是同一种语言。
+fn bad_arg_message(bad: &BadArg, s: &Strings) -> String {
+    match bad {
+        BadArg::MissingDataDirPath => s.cli_err_missing_data_dir_path.to_string(),
+        BadArg::Unknown(arg) => (s.cli_err_unknown_arg)(arg),
+    }
+}
+
+/// 纯解析, 不碰文件系统: 语言要读 runtime.json, 留给 `main` 在需要打印时再算。
 fn parse_args(mut argv: impl Iterator<Item = String>) -> Parsed {
     let mut args = Args::default();
-    let lang = default_pre_connect_lang();
     while let Some(a) = argv.next() {
         match a.as_str() {
             "-h" | "--help" => return Parsed::Help,
@@ -45,9 +56,9 @@ fn parse_args(mut argv: impl Iterator<Item = String>) -> Parsed {
             "--no-fx" => args.no_fx = true,
             "--data-dir" => match argv.next() {
                 Some(p) => args.data_dir = Some(PathBuf::from(p)),
-                None => return Parsed::Invalid(strings(lang).cli_err_missing_data_dir_path.into()),
+                None => return Parsed::Invalid(BadArg::MissingDataDirPath),
             },
-            other => return Parsed::Invalid((strings(lang).cli_err_unknown_arg)(other)),
+            other => return Parsed::Invalid(BadArg::Unknown(other.to_string())),
         }
     }
     Parsed::Run(args)
@@ -180,8 +191,10 @@ async fn main() -> ExitCode {
             println!("cc-router-tui {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
-        Parsed::Invalid(msg) => {
-            eprintln!("{msg}\n\n{}", strings(default_pre_connect_lang()).cli_help);
+        Parsed::Invalid(bad) => {
+            // 参数有误时不知道用户想要哪个 `--data-dir`, 按默认数据目录算连接前语言。
+            let s = strings(default_pre_connect_lang());
+            eprintln!("{}\n\n{}", bad_arg_message(&bad, s), s.cli_help);
             return ExitCode::from(2);
         }
     };
@@ -232,12 +245,19 @@ mod tests {
         assert_eq!(parse(&["--version"]), Parsed::Version);
     }
 
-    /// 连接前语言取自运行测试的环境变量, 期望值按同一条规则取, 不绑定某一种语言。
     #[test]
     fn bad_input_is_reported_not_ignored() {
-        let s = strings(default_pre_connect_lang());
-        assert_eq!(parse(&["--data-dir"]), Parsed::Invalid(s.cli_err_missing_data_dir_path.into()));
-        assert_eq!(parse(&["--wat"]), Parsed::Invalid((s.cli_err_unknown_arg)("--wat")));
+        assert_eq!(parse(&["--data-dir"]), Parsed::Invalid(BadArg::MissingDataDirPath));
+        assert_eq!(parse(&["--wat"]), Parsed::Invalid(BadArg::Unknown("--wat".into())));
+    }
+
+    #[test]
+    fn bad_input_is_worded_by_strings() {
+        for lang in Lang::ALL {
+            let s = strings(lang);
+            assert_eq!(bad_arg_message(&BadArg::MissingDataDirPath, s), s.cli_err_missing_data_dir_path, "{lang:?}");
+            assert_eq!(bad_arg_message(&BadArg::Unknown("--wat".into()), s), (s.cli_err_unknown_arg)("--wat"), "{lang:?}");
+        }
     }
 
     fn runtime_info(json: &str) -> RuntimeInfo {

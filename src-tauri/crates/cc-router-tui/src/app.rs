@@ -29,6 +29,11 @@ use crate::widgets::toast::{self, Toast, ToastKind};
 use crate::widgets::{keybar, spinner_state};
 use crate::wizard::Wizard;
 
+/// 版本不一致横幅第一行的前缀与续行缩进 (两者等宽: `⚠` 占一列)。
+const BANNER_MARK: &str = " ⚠ ";
+const BANNER_INDENT: &str = "   ";
+const BANNER_MAX_ROWS: usize = 3;
+
 pub const MIN_WIDTH: u16 = 80;
 pub const MIN_HEIGHT: u16 = 24;
 /// 可见页面每 5 秒重拉一次用量类数字 (20 × 250ms)。
@@ -146,6 +151,15 @@ impl App {
         let app = self.app_version.as_deref()?;
         let tui = self.tui_version;
         (app != tui).then(|| (self.s.version_mismatch)(tui, app))
+    }
+
+    /// 版本不一致横幅按屏幕宽度折行, 第一行带 `⚠`, 续行与正文对齐。可操作的那半句 (重新添加到
+    /// PATH) 在句尾, 单行显示会在 80 列上被截掉。最多 [`BANNER_MAX_ROWS`] 行, 再长也不挤占页面。
+    fn banner_lines(&self, width: u16) -> Option<Vec<String>> {
+        let text = self.version_mismatch()?;
+        let mut lines = crate::format::wrap(&text, usize::from(width).saturating_sub(BANNER_INDENT.len()));
+        lines.truncate(BANNER_MAX_ROWS);
+        Some(lines.into_iter().enumerate().map(|(i, l)| format!("{}{l}", if i == 0 { BANNER_MARK } else { BANNER_INDENT })).collect())
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
@@ -766,18 +780,19 @@ impl App {
         // 空闲时两帧之间可能隔了几百毫秒; 动效是这一帧才加进来的话, 不能把这段空闲算成它已经播过的时间。
         let was_running = self.fx.is_running();
 
-        let banner = self.version_mismatch();
+        let banner = self.banner_lines(screen.width).unwrap_or_default();
         let [tabs, banner_area, content, footer] = Layout::vertical([
             Constraint::Length(3),
-            Constraint::Length(u16::from(banner.is_some())),
+            Constraint::Length(banner.len() as u16),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
         .areas(screen);
 
         self.draw_tabs(frame, tabs);
-        if let Some(text) = banner {
-            frame.render_widget(Line::styled(format!(" ⚠ {text}"), Style::new().fg(self.theme.warn)), banner_area);
+        if !banner.is_empty() {
+            let lines: Vec<Line> = banner.into_iter().map(Line::raw).collect();
+            frame.render_widget(ratatui::widgets::Paragraph::new(lines).style(Style::new().fg(self.theme.warn)), banner_area);
         }
 
         let s = self.s;

@@ -597,10 +597,9 @@ pub fn client_error(s: &Strings, e: &crate::client::ClientError) -> String {
         ClientError::Api { status, code, message } => format!("{message} ({code}, HTTP {status})"),
         ClientError::Transport(detail) => (s.err_network)(detail),
         ClientError::Decode(detail) => (s.err_bad_response)(detail),
-        // 改前 (7a570bc 之前) 这类失败是手写 `ClientError::Transport(format!("读取 {path}: {e}"))`,
-        // Display 再套一层「网络错误: {0}」——嵌两层格式化出「网络错误: 读取 {path}: {e}」。拆成
-        // `ReadFile` 独立变体是为了能按语言重新格式化, 但用户看到的文字必须保持这句原文不变,
-        // 所以这里手动把 `err_read_file` 的结果再套一层 `err_network`, 还原原来的嵌套。
+        // 读本地文件 (CA 证书) 失败在用户看来属于「网络错误」一类, 中文显示为「网络错误: 读取
+        // {path}: {e}」: `err_read_file` 的结果再套一层 `err_network`。`ReadFile` 是独立变体, 为的是
+        // 路径与原因能分别按语言格式化。
         ClientError::ReadFile { path, message } => (s.err_network)(&(s.err_read_file)(path, message)),
     }
 }
@@ -1990,9 +1989,17 @@ mod tests {
         assert!((JA.cli_check_version_mismatch)("1", "2").contains("ターミナル UI"));
     }
 
+    /// 扫描认的「中日文字符」: CJK 标点、假名、统一汉字 (含扩展 A、兼容汉字、扩展 B 及之后的
+    /// 补充平面) 与全角形式。韩文等其余文字不在范围内——本项目的界面语言只有中英日。
     fn is_cjk(c: char) -> bool {
         matches!(c as u32,
-            0x3000..=0x303F | 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xFF00..=0xFFEF
+            0x3000..=0x303F
+                | 0x3040..=0x30FF
+                | 0x3400..=0x4DBF
+                | 0x4E00..=0x9FFF
+                | 0xF900..=0xFAFF
+                | 0xFF00..=0xFFEF
+                | 0x20000..=0x3134F
         )
     }
 
@@ -2220,7 +2227,7 @@ mod tests {
     }
 
     /// `#[cfg(test)] pub(crate) mod test_support { .. }`(`client/mod.rs` 假后端的真实写法)
-    /// 中间那个可见性修饰符不能让匹配失败——回归用例, 改前的版本会把这种模块错判成生产代码。
+    /// 中间那个可见性修饰符不能让匹配失败——不认这个前缀会把这种模块错判成生产代码。
     #[test]
     fn cjk_inside_a_pub_crate_cfg_test_mod_is_not_reported() {
         let src = "fn real() {}\n\n#[cfg(test)]\npub(crate) mod test_support {\n    fn helper() {\n        let x = \"绑定本地端口失败\";\n    }\n}\n";
@@ -2243,10 +2250,17 @@ mod tests {
         assert_eq!(cjk_offenders(src), vec![3]);
     }
 
-    /// **锁住 P6 的收编成果**: `i18n.rs` 之外的非测试代码不许再冒出 CJK 字符串字面量——所有
-    /// 用户可见文字都必须经 `Strings`。「非测试代码」精确到 `#[cfg(test)] mod <ident> { ... }`
-    /// 这一整块本身 (见 [`cjk_offenders`]), 不是「文件里第一次出现 `#[cfg(test)]` 之前」。
-    /// 读文件失败也算失败 (fail-closed), 不能让扫描本身的问题被静默放过。
+    /// `i18n.rs` 之外的非测试代码不许出现 CJK 字符串字面量——用户可见文字都必须经 `Strings`。
+    /// 「非测试代码」精确到 `#[cfg(test)] mod <ident> { ... }` 这一整块本身 (见 [`cjk_offenders`]),
+    /// 不是「文件里第一次出现 `#[cfg(test)]` 之前」。读文件失败也算失败 (fail-closed), 不能让扫描
+    /// 本身的问题被静默放过。
+    ///
+    /// 扫描的边界 (都是刻意的):
+    /// - 整个 `i18n.rs` 跳过, 包括它的非 `Strings` 部分——文案的家就在这里, 逐字段区分不值得。
+    /// - 只认 [`is_cjk`] 覆盖的字符; 硬编码的**英文**界面文字 (比如 `format!("Loading…")`) 不在
+    ///   扫描范围内, 英文字面量与标识符、协议字段名在源码层面无法可靠区分, 这类遗漏只能靠人工检查与
+    ///   三语快照发现。
+    /// - 字符字面量 / 原始字符串的简化见 [`code_masks`]。
     #[test]
     fn no_cjk_string_literals_outside_i18n() {
         fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -2279,8 +2293,8 @@ mod tests {
         assert!(offenders.is_empty(), "非 i18n.rs 的非测试代码里发现含 CJK 字符的字符串字面量: {offenders:?}");
     }
 
-    /// 每个 `ClientError` 变体经 `client_error(&ZH, ..)` 得到的文字必须与旧版硬编码 `Display`
-    /// (改英文之前) 逐字节一致——这就是「纯搬运, 中文显示不变」这条纪律的直接证据。
+    /// 每个 `ClientError` 变体经 `client_error(&ZH, ..)` 得到的中文逐字固定 (中文界面的报错文字
+    /// 不随收进 `Strings` 而改变)。
     #[test]
     fn client_errors_are_worded_by_strings() {
         use crate::client::discovery::DiscoveryError;
@@ -2292,8 +2306,6 @@ mod tests {
         assert_eq!(client_error(&ZH, &ClientError::Transport("x".into())), "网络错误: x");
         assert_eq!(client_error(&ZH, &ClientError::Decode("x".into())), "响应无法解析: x");
         assert_eq!(
-            // 改前 (7a570bc) 是 `ClientError::Transport(format!("读取 {path}: {e}"))`, Display 套一层
-            // 「网络错误: {0}」——这句「网络错误: 读取 …」的原文必须保持逐字节不变。
             client_error(&ZH, &ClientError::ReadFile { path: "/a/b".into(), message: "denied".into() }),
             "网络错误: 读取 /a/b: denied"
         );
@@ -2317,5 +2329,34 @@ mod tests {
             client_error(&ZH, &ClientError::Discovery(DiscoveryError::NoPort(PathBuf::from("/x/runtime.json")))),
             "/x/runtime.json 里没有可用端口"
         );
+    }
+
+    /// 英日两种语言同样经 `Strings` 取文字: 结果是该语言的文案, 既不是中文, 也不是 `ClientError`
+    /// 给日志用的英文 `Display`。
+    #[test]
+    fn client_errors_are_worded_by_strings_in_english_and_japanese() {
+        use crate::client::discovery::DiscoveryError;
+        use crate::client::ClientError;
+        use std::path::PathBuf;
+
+        let disabled = ClientError::Disabled;
+        let read_file = ClientError::ReadFile { path: "/a/b".into(), message: "denied".into() };
+        let no_port = ClientError::Discovery(DiscoveryError::NoPort(PathBuf::from("/x/runtime.json")));
+
+        assert_eq!(client_error(&EN, &disabled), "The terminal UI is not enabled");
+        assert_eq!(client_error(&EN, &read_file), "Network error: reading /a/b: denied");
+        assert_eq!(client_error(&EN, &no_port), "No usable port in /x/runtime.json");
+
+        assert_eq!(client_error(&JA, &disabled), "ターミナル UI が有効になっていません");
+        assert_eq!(client_error(&JA, &read_file), "ネットワークエラー: /a/b を読み込めません: denied");
+        assert_eq!(client_error(&JA, &no_port), "/x/runtime.json に使用可能なポートがありません");
+
+        for e in [&disabled, &read_file, &no_port] {
+            for (lang, s) in [(Lang::En, &EN), (Lang::Ja, &JA)] {
+                let shown = client_error(s, e);
+                assert_ne!(shown, client_error(&ZH, e), "{lang:?}: {e:?}");
+                assert_ne!(shown, e.to_string(), "{lang:?}: 不该退回 Display: {e:?}");
+            }
+        }
     }
 }

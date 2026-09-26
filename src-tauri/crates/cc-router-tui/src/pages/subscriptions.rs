@@ -9,18 +9,18 @@ use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Cell, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
+    Block, BorderType, Cell, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState,
 };
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use super::draft::Draft;
 use super::{Component, DrawCtx};
 use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation, OnYes};
 use crate::client::dto::{BalanceSeverity, ModelSlots, QuotaUsage, Slot, SlotEfforts, Subscription, EFFORT_CHOICES, PENDING_MODEL};
 use crate::client::events::SUBSCRIPTION_CHANGES;
-use crate::format::{compact, fit, slot_label, widest};
+use crate::format::{self, compact, fit, slot_label, widest};
 use crate::i18n::Strings;
 use crate::store::Store;
 use crate::theme::Theme;
@@ -97,14 +97,14 @@ fn quota_period_col<'a>(s: &Strings, quotas: impl IntoIterator<Item = &'a QuotaU
 }
 
 /// 详情面板的一行: 大多数是普通文本, 限额行要嵌一个真正的 `LineGauge` widget (不是文本能表示
-/// 的), 「上次操作」/「最近错误」这类自由文本可能超宽折成好几行 (`Wrapped`)。`height` 在构造
-/// 时就算好 (见 [`wrapped_row`]) 而不是画的时候现算——这样"占几行"的估算与真正截给
-/// `Paragraph` 的文本严格来自同一份计算, 不会出现分配的空间和实际内容对不上的情况。
+/// 的), 「上次操作」/「最近错误」这类自由文本可能超宽折成好几行 (`Wrapped`)。折行在构造时就做完
+/// (见 [`wrapped_row`]), 画的时候逐行照画、不再二次折行——「占几行」就是 `lines.len()`, 与画出来
+/// 的内容是同一份结果。
 enum DetailRow {
     Line(Line<'static>),
     /// `period_col`: 同一条订阅的几行限额共用一个周期名列宽, 进度条才对齐。
     Quota { label: &'static str, quota: QuotaUsage, period_col: u16 },
-    Wrapped { label: &'static str, text: String, height: u16, style: Style },
+    Wrapped { label: &'static str, lines: Vec<String>, style: Style },
 }
 
 /// 列表 / 详情的键盘焦点。两种宽度都有效: 宽屏两栏一直都画, 焦点只影响哪一栏的边框是
@@ -1021,13 +1021,8 @@ fn balance_rows(sub: &Subscription, theme: &Theme, s: &'static Strings, value_wi
         let label = if first { s.sub_f_balance } else { "" };
         first = false;
         let style = Style::new().fg(theme.err);
-        // 放得下就是普通的一行; 放不下 (译文较长、详情栏较窄) 折成至多两行, 不截成半句。只在放不下时
-        // 才走折行: `wrapped_row` 的行数估算会多留一行, 一行放得下的文字用它会平白多出一个空行。
-        if s.sub_balance_unavailable.width() <= value_width {
-            out.push(DetailRow::Line(field_line(s, label, vec![Span::styled(s.sub_balance_unavailable, style)])));
-        } else {
-            out.push(wrapped_row(label, s.sub_balance_unavailable, value_width as u16, BALANCE_UNAVAILABLE_ROWS, style));
-        }
+        // 放不下一行时 (译文较长、详情栏较窄) 折成至多两行, 不截成半句。
+        out.push(wrapped_row(label, s.sub_balance_unavailable, value_width as u16, BALANCE_UNAVAILABLE_ROWS, style));
     }
     if snapshot.entries.is_empty() {
         if first {
@@ -1181,13 +1176,11 @@ fn detail_rows(
     rows
 }
 
-/// 这一行需要几个显示行。除 `Wrapped` 外都是定高 1 行, `Wrapped` 的行数已经在构造时
-/// (见 [`wrapped_row`]) 算好存进 `height` 字段——不在画的时候重算, 保证「占几行」与真正截给
-/// `Paragraph` 的那份文本 (`text`) 永远是同一次计算的结果, 不会对不上。
+/// 这一行需要几个显示行。除 `Wrapped` 外都是定高 1 行, `Wrapped` 是构造时折好的行数。
 fn row_height(row: &DetailRow) -> u16 {
     match row {
         DetailRow::Line(_) | DetailRow::Quota { .. } => 1,
-        DetailRow::Wrapped { height, .. } => *height,
+        DetailRow::Wrapped { lines, .. } => u16::try_from(lines.len()).unwrap_or(u16::MAX),
     }
 }
 
@@ -1224,51 +1217,61 @@ fn draw_detail_row(frame: &mut Frame, rect: Rect, ctx: &DrawCtx, row: &DetailRow
         DetailRow::Quota { label, quota, period_col } => {
             draw_quota_row(frame, Rect::new(rect.x, rect.y, rect.width, 1), ctx, label, quota, *period_col)
         }
-        // 标签只画在第一行 (label_area), 正文整段交给 `Paragraph` 在 value_area 里自己折行——
-        // 这样续行天然从 value_area.x (与其它字段的值列完全相同的一列) 开始, 不会像"标签+正文拼成
-        // 一整条字符串再整体 Wrap"那样, 续行找不到标签占的那几列, 缩回列 0。
-        DetailRow::Wrapped { label, text, style, .. } => {
+        // 标签只画在第一行 (label_area), 折好的正文逐行画在 value_area 里——续行从 value_area.x
+        // (与其它字段的值列完全相同的一列) 开始, 不会缩回列 0。
+        DetailRow::Wrapped { label, lines, style } => {
             let label_col = field_label_col(ctx.s);
             let [label_area, value_area] = Layout::horizontal([Constraint::Length(label_col as u16), Constraint::Min(0)]).areas(rect);
             frame.render_widget(Line::raw(fit(label, label_col)), Rect::new(label_area.x, label_area.y, label_area.width, 1));
-            frame.render_widget(Paragraph::new(text.as_str()).style(*style).wrap(Wrap { trim: true }), value_area);
+            let lines: Vec<Line> = lines.iter().map(|l| Line::raw(l.clone())).collect();
+            frame.render_widget(Paragraph::new(lines).style(*style), value_area);
         }
     }
 }
 
-/// 「最近错误」/「上次操作」这类自由文本字段的通用构造: 先用 [`clip_to_rows`] 截到 `max_rows`
-/// 行装得下的字符数为止 (超出的部分补省略号收尾), 再用这份已经定长的文本算它占几行——
-/// 保证存进 [`DetailRow::Wrapped`] 的 `height` 与真正交给 `Paragraph` 渲染的 `text` 是同一次
-/// 计算的结果, 不会出现"分配的行数比实际截断后的内容还少, 省略号被吞掉看不见"这种偏差。
+/// 「最近错误」/「上次操作」这类自由文本字段的通用构造: 用 [`format::wrap`] (与弹窗、确认框同一个
+/// 折行引擎) 按值列宽折好, 超过 `max_rows` 行就截到 `max_rows` 行并以省略号收尾。行数是精确值,
+/// 不是估算——英文按词折行比「总宽 ÷ 列宽」多用的行不会被吞掉。
 fn wrapped_row(label: &'static str, text: &str, value_width: u16, max_rows: u16, style: Style) -> DetailRow {
-    let clipped = clip_to_rows(text, value_width, max_rows);
-    let height = wrapped_line_count(&clipped, value_width, max_rows);
-    DetailRow::Wrapped { label, text: clipped, height, style }
+    DetailRow::Wrapped { label, lines: wrap_to_rows(text, usize::from(value_width), usize::from(max_rows)), style }
 }
 
-/// 超过 `width` 列 `max_rows` 行装得下的字符数就截断收尾补省略号——`Paragraph` 的 `Wrap` 只会把
-/// 画不出来的内容悄悄丢掉, 不会自己加省略号, 所以这一步必须在喂给它之前做完。
-fn clip_to_rows(text: &str, width: u16, max_rows: u16) -> String {
+/// 折行并限制在 `max_rows` 行以内; 有内容没显示出来时最后一行以 `…` 收尾。上游的错误信息没有
+/// 长度上限, 只折前面 `(width + 1) × (max_rows + 1)` 个字符——更多的内容无论如何显示不下, 不必
+/// 每帧整段折行。
+fn wrap_to_rows(text: &str, width: usize, max_rows: usize) -> Vec<String> {
     let width = width.max(1);
-    // 上游的错误信息没有长度上限, `text.width()` 是 usize, 直接 `as u16` 在超长文本上会
-    // 静默环绕算出错误的容量; 用 `try_from` 饱和到 `u16::MAX`, 不 panic 也不会算错。
-    let text_width = u16::try_from(text.width()).unwrap_or(u16::MAX);
-    let capacity = width.saturating_mul(max_rows);
-    if text_width <= capacity {
-        text.to_string()
-    } else {
-        clip(text, capacity.saturating_sub(1) as usize)
+    let max_rows = max_rows.max(1);
+    let budget = (width + 1).saturating_mul(max_rows + 1);
+    let (head, cut) = match text.char_indices().nth(budget) {
+        Some((i, _)) => (&text[..i], true),
+        None => (text, false),
+    };
+    let mut lines = format::wrap(head, width);
+    let omitted = cut || lines.len() > max_rows;
+    lines.truncate(max_rows);
+    if omitted {
+        if let Some(last) = lines.last_mut() {
+            *last = with_ellipsis(last, width);
+        }
     }
+    lines
 }
 
-/// 粗略估算 `Wrap { trim: true }` 会把这段文本折成几行: 按显示宽度整除是「贴着最后一列才换行」
-/// 的下界, 真实的按词 / 标点换行几乎总是提前收尾, 常见比整除结果多用一行——所以在整除结果上
-/// +1 兜底, 宁可多留一行空白也不要把最后一行文字挤没。`saturating_add` / `clamp` 到
-/// `max_rows`: 超长文本不能让这两步在极端输入上 panic。
-fn wrapped_line_count(text: &str, width: u16, max_rows: u16) -> u16 {
-    let width = width.max(1);
-    let text_width = u16::try_from(text.width()).unwrap_or(u16::MAX);
-    text_width.div_ceil(width).saturating_add(1).clamp(1, max_rows.max(1))
+/// `line` 末尾补 `…`, 必要时先去掉尾部字符腾出一列, 结果不超过 `width` 列。
+fn with_ellipsis(line: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0;
+    for c in line.chars() {
+        let w = c.width().unwrap_or(0);
+        if used + w > width.saturating_sub(1) {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    out.push('…');
+    out
 }
 
 fn draw_quota_row(frame: &mut Frame, area: Rect, ctx: &DrawCtx, label: &str, q: &QuotaUsage, period_col: u16) {
@@ -1408,24 +1411,29 @@ mod tests {
         assert_eq!(page.save_action(), None, "草稿的 sub_id 跟当前选中项不一致时不该发送");
     }
 
-    /// 上游错误信息没有长度上限, `text.width() as u16` 会在超长字符串上静默环绕
-    /// (70,000 % 65536 = 4,464), 算出一个错误但不 panic 的行数。应该稳稳落在 `max_rows` 这个上限,
-    /// 而不是那个环绕出来的错误值。
+    /// 上游错误信息没有长度上限: 超长文本稳稳落在 `max_rows` 行, 每行不超过列宽, 以省略号收尾。
     #[test]
-    fn wrapped_line_count_saturates_instead_of_panicking() {
+    fn wrap_to_rows_caps_very_long_text_with_an_ellipsis() {
         let text = "x".repeat(70_000);
-        assert_eq!(wrapped_line_count(&text, 40, LAST_ERROR_ROWS), LAST_ERROR_ROWS);
-        assert_eq!(wrapped_line_count(&text, 40, LAST_ACTION_ROWS), LAST_ACTION_ROWS);
+        let lines = wrap_to_rows(&text, 40, usize::from(LAST_ERROR_ROWS));
+        assert_eq!(lines.len(), usize::from(LAST_ERROR_ROWS));
+        assert!(lines.iter().all(|l| l.width() <= 40), "{lines:?}");
+        assert!(lines.last().is_some_and(|l| l.ends_with('…')), "{lines:?}");
     }
 
-    /// 同上, `clip_to_rows` 也要在同一个输入上不 panic, 并且真的把文本截到了 `max_rows`
-    /// 行的容量以内 (含省略号)。
+    /// 放得下就原样折好, 不补省略号, 不多留空行。
     #[test]
-    fn clip_to_rows_saturates_instead_of_panicking() {
-        let text = "x".repeat(70_000);
-        let clipped = clip_to_rows(&text, 40, LAST_ERROR_ROWS);
-        assert!(clipped.width() <= 40 * LAST_ERROR_ROWS as usize, "截断后应该落在容量以内: {}", clipped.width());
-        assert!(clipped.trim_end().ends_with('…'), "超长文本截断后应该以省略号收尾");
+    fn wrap_to_rows_is_exact_when_everything_fits() {
+        assert_eq!(wrap_to_rows("—", 40, 4), vec!["—"]);
+        assert_eq!(wrap_to_rows("the quick brown fox jumps", 10, 4), vec!["the quick", "brown fox", "jumps"]);
+    }
+
+    /// 英文按词折行比「总宽 ÷ 列宽」多用行: 25 列的文本在 10 列上按字符切只要 3 行, 按词要 4 行
+    /// (`bbbbbbbb` 与前后的词都凑不进一行)。截到 3 行时最后一行必须带省略号, 不能静默丢掉尾巴。
+    #[test]
+    fn wrap_to_rows_marks_word_wrap_overflow_with_an_ellipsis() {
+        let lines = wrap_to_rows("aa bbbbbbbb cccccccc dd", 10, 3);
+        assert_eq!(lines, vec!["aa", "bbbbbbbb", "cccccccc…"]);
     }
 
     fn slots_with_sonnet(sonnet: &str) -> ModelSlots {

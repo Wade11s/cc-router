@@ -2314,6 +2314,24 @@ fn version_mismatch_shows_a_banner() {
     assert!(!render(&mut loaded(false), 120, 30).contains('⚠'));
 }
 
+/// 版本不一致横幅在每种语言的 80 列上完整显示 (折行, 不截掉句尾「重新添加到 PATH」那半句)。
+/// 去掉空白后逐字比较横幅几行的文字与原文, 折行位置不影响比较。
+#[test]
+fn version_mismatch_banner_is_shown_in_full_at_80x24() {
+    for lang in Lang::ALL {
+        use_lang(lang);
+        let mut a = app(false);
+        a.update(Action::Connected { app_version: "1.2.3".into() });
+        // 订阅页的内容从一条面板上边框开始, 横幅的结束位置一目了然 (总览先画 logo)。
+        a.update(Action::SwitchTab(Tab::Subscriptions));
+        let buf = render_buffer(&mut a, 80, 24);
+        let text = (s().version_mismatch)(VERSION, "1.2.3");
+        let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        let banner: String = (3..buf.area.height).map(|y| buffer_row_text(&buf, y)).take_while(|row| !row.trim_start().starts_with('╭')).collect();
+        assert_eq!(squash(&banner), squash(&format!("⚠{text}")), "{lang:?}: 横幅没有完整显示\n{}", render(&mut a, 80, 24));
+    }
+}
+
 #[test]
 fn long_subscription_list_is_truncated_with_a_count() {
     let mut a = app(false);
@@ -6011,6 +6029,37 @@ fn timeout_short_form_is_only_used_in_the_logs_table() {
     }
 }
 
+/// 订阅详情「最近错误」按词折行时, 行数按实际折行结果算: 一段只占约两行宽度、按词却要折成五行的
+/// 英文, 放不下的部分以省略号标出, 不能被静默吞掉 (按「总宽 ÷ 列宽 + 1」估算行数时第五行会消失,
+/// 且没有任何省略号)。值列宽从渲染结果里量, 不写死布局常量。
+#[test]
+fn a_word_wrapped_last_error_never_loses_its_tail_silently() {
+    use_lang(Lang::En);
+    let open_kimi = |error: &str| {
+        let mut subs = detail_subs();
+        subs[1].last_error_message = Some(error.to_string());
+        let mut a = app(false);
+        a.update(Action::Connected { app_version: VERSION.into() });
+        a.update(Action::SwitchTab(Tab::Subscriptions));
+        a.update(subs_done(1, subs));
+        a.handle_key(key(KeyCode::Down));
+        a.handle_key(key(KeyCode::Enter));
+        a
+    };
+    let buf = render_buffer(&mut open_kimi("Z"), 80, 24);
+    let row = (0..buf.area.height).find(|&y| buffer_row_text(&buf, y).contains(EN.sub_f_last_error)).expect("应该有「最近错误」一行");
+    let text = buffer_row_text(&buf, row);
+    let value_x = text.find('Z').expect("占位错误文字");
+    let border_x = text.rfind('│').expect("右边框");
+    let width = border_x - 1 - value_x; // 右内距一列
+
+    // 1 列的词与 (width - 1) 列的词交替: 相邻两个词都凑不进一行, 共 5 行; 总宽约两行。
+    let long = |c: char| c.to_string().repeat(width - 1);
+    let error = format!("a {} b {} tail", long('x'), long('y'));
+    let out = render(&mut open_kimi(&error), 80, 24);
+    assert!(out.contains("tail") || out.contains(&format!("{}…", long('y'))), "最近错误的尾部被静默吞掉\n{out}");
+}
+
 /// 每种语言的固定文案确认弹窗在 80×24 上完整显示 (超长的行折行, 不被右边框截断)。去掉全部空白后
 /// 逐字比较弹窗内部的文字与提示原文——折行位置不影响比较, 丢字就会不相等。
 #[test]
@@ -6139,3 +6188,4 @@ fn ja_virtual_models_80x24() {
     assert!(out.contains(JA.vm_will_skip), "「スキップ対象」应该完整显示\n{out}");
     insta::assert_snapshot!(out);
 }
+

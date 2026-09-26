@@ -364,7 +364,8 @@ mod tests {
         assert_eq!(wrap("the quick brown fox jumps", 10), vec!["the quick", "brown fox", "jumps"]);
         // 行尾正好落在空格上: 空格不带到下一行开头。
         assert_eq!(wrap("abcd efgh", 4), vec!["abcd", "efgh"]);
-        // 断行只丢一个空格, 词中间的其它空白原样保留。
+        // 没落在断点上的连续空白原样保留 (落在断点上的空格不论几个全部丢掉, 见
+        // `wrap_drops_every_space_at_a_break`)。
         assert_eq!(wrap("ab  cd", 10), vec!["ab  cd"]);
     }
 

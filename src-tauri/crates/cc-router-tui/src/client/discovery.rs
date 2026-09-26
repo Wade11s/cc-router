@@ -203,7 +203,7 @@ mod tests {
         assert!(shown.contains("<redacted>"));
     }
 
-    /// 旧版桌面端写的 runtime.json (P6 之前) 没有 `system_locale` 字段, 必须仍然解析成功
+    /// 旧版桌面端写的 runtime.json 没有 `system_locale` 字段, 必须仍然解析成功
     /// (缺省为 `None`), 否则升级后 TUI 会突然连不上运行中的旧 app。
     #[test]
     fn runtime_file_without_system_locale_still_parses() {
