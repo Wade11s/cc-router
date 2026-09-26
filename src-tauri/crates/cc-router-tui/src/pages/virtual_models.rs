@@ -403,10 +403,12 @@ impl VirtualModels {
                     // V2 (fix round P3b): 订阅在 Store 里找不到 (被别处删除) 这一行——之前是手写
                     // 拼接 (无分隔符、不走 `fit`), 跟正常行的列对不齐; 现在走同一个 `fit` 列, 只是
                     // 内容换成「id 前 8 位 + vm_missing」, 整行 muted。
+                    // 这一行没有厂商可显示, 标签占用名字列 + 厂商列: id 前 8 位 + 空格 + 标记在
+                    // 日文下是 19 列, 只给名字列 (最宽 18) 会把标记截掉。
                     let prefix: String = id.chars().take(8).collect();
                     let label = format!("{prefix} {}", s.vm_missing);
                     spans.push(Span::styled(fit("?", MEMBER_SYMBOL_COL), theme.muted_style()));
-                    spans.push(Span::styled(fit(&label, cols.name), theme.muted_style()));
+                    spans.push(Span::styled(fit(&label, cols.name + cols.provider), theme.muted_style()));
                 }
             }
             items.push(ListItem::new(Line::from(spans)));

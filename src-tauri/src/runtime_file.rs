@@ -24,6 +24,12 @@ pub struct RuntimeFile {
     /// 少一个字段比多一行 `"system_locale": null` 更容易看懂「这台机器探测不到系统语言」。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_locale: Option<String>,
+    /// 写文件那一刻的 `settings.preferred_language` (`"system"` / `"zh"` / `"en"` / `"ja"`), 给 TUI
+    /// 在连上之前 (「未运行 / 未启用」这类提示) 就能用上桌面端显式选的语言。只在写 runtime.json 时
+    /// 取一次, 用户在 app 运行期间改语言不会重写这个文件——连上之后 TUI 以 `get_settings` 的实时值
+    /// 为准, 这里只是连接前的近似。省略规则同 `system_locale`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_language: Option<String>,
 }
 
 impl std::fmt::Debug for RuntimeFile {
@@ -36,6 +42,7 @@ impl std::fmt::Debug for RuntimeFile {
             .field("ca_pem_path", &self.ca_pem_path)
             .field("local_secret", &"<redacted>")
             .field("system_locale", &self.system_locale)
+            .field("preferred_language", &self.preferred_language)
             .finish()
     }
 }
@@ -72,7 +79,15 @@ impl RuntimeFile {
                 .map(|_| crate::tls::ca_pem_path(app_data_dir).to_string_lossy().into_owned()),
             local_secret: local_secret.to_string(),
             system_locale,
+            preferred_language: None,
         }
+    }
+
+    /// 单独一个方法而不是 `new` 的第六个位置参数: 它与 `system_locale` 同为 `Option<String>`,
+    /// 并排的两个同类型位置参数写反了编译器也发现不了。
+    pub fn with_preferred_language(mut self, preferred_language: Option<String>) -> Self {
+        self.preferred_language = preferred_language;
+        self
     }
 }
 
@@ -167,6 +182,19 @@ mod tests {
 
         let with = RuntimeFile::new(dir, Some(1), None, "s", Some("zh-Hans-CN".into()));
         let v: serde_json::Value = serde_json::to_value(&with).unwrap();
+        assert_eq!(v["system_locale"], "zh-Hans-CN");
+    }
+
+    #[test]
+    fn preferred_language_is_omitted_when_absent_and_written_when_present() {
+        let dir = std::path::Path::new("/data");
+        let without = RuntimeFile::new(dir, Some(1), None, "s", None);
+        let raw = serde_json::to_string(&without).unwrap();
+        assert!(!raw.contains("preferred_language"), "{raw}");
+
+        let with = RuntimeFile::new(dir, Some(1), None, "s", Some("zh-Hans-CN".into())).with_preferred_language(Some("ja".into()));
+        let v: serde_json::Value = serde_json::to_value(&with).unwrap();
+        assert_eq!(v["preferred_language"], "ja");
         assert_eq!(v["system_locale"], "zh-Hans-CN");
     }
 

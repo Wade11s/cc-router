@@ -66,7 +66,10 @@ fn build_http(info: &RuntimeInfo) -> Result<reqwest::Client, ClientError> {
 }
 
 fn connect(data_dir: &Path) -> Result<Conn, ClientError> {
-    let info = read_runtime(data_dir)?;
+    conn_from(read_runtime(data_dir)?)
+}
+
+fn conn_from(info: RuntimeInfo) -> Result<Conn, ClientError> {
     let http = build_http(&info)?;
     Ok(Conn { info, http })
 }
@@ -97,6 +100,13 @@ impl Client {
         let data_dir = data_dir.into();
         let conn = connect(&data_dir)?;
         Ok(Self { data_dir, conn: Mutex::new(conn) })
+    }
+
+    /// 用调用方已经读好的 runtime.json 建连接 (入口先读一次拿连接前语言, 不必再读第二次)。
+    /// 之后的重连照常按 `data_dir` 重读。
+    pub fn from_runtime(data_dir: impl Into<PathBuf>, info: RuntimeInfo) -> Result<Self, ClientError> {
+        let conn = conn_from(info)?;
+        Ok(Self { data_dir: data_dir.into(), conn: Mutex::new(conn) })
     }
 
     pub async fn runtime(&self) -> RuntimeInfo {

@@ -101,6 +101,21 @@ fn runtime_file_system_locale_reaches_the_tui() {
     assert_eq!(read.system_locale, None);
 }
 
+/// `preferred_language` 同样两种形状都能到达 TUI: 旧版桌面端写的文件没有这个字段 (TUI 读成
+/// `None`, 连接前语言退回 `system_locale`)。
+#[test]
+fn runtime_file_preferred_language_reaches_the_tui() {
+    let with_pref = RuntimeFile::new(Path::new("/data"), Some(23456), None, "s3cret", Some("zh-Hans-CN".into()))
+        .with_preferred_language(Some("ja".into()));
+    let read: discovery::RuntimeInfo = through_json(&with_pref);
+    assert_eq!(read.preferred_language.as_deref(), Some("ja"));
+    assert_eq!(read.system_locale.as_deref(), Some("zh-Hans-CN"));
+
+    let without_pref = RuntimeFile::new(Path::new("/data"), Some(23456), None, "s3cret", None);
+    let read: discovery::RuntimeInfo = through_json(&without_pref);
+    assert_eq!(read.preferred_language, None);
+}
+
 #[test]
 fn proxy_status_matches() {
     let real = ProxyStatus {

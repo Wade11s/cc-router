@@ -12,7 +12,31 @@ pub enum Lang {
     Ja,
 }
 
+/// 变体个数。穷尽 `match`: 加一种语言时这里先编译失败, 改的人就在列全变体的这一行旁边改数字,
+/// 数字一变下面的长度断言就逼着 [`Lang::ALL`] 一起补上。
+const LANG_COUNT: usize = match Lang::Zh {
+    Lang::Zh | Lang::En | Lang::Ja => 3,
+};
+
+// 长度等于变体个数且元素两两不同, 合起来就是「每种语言恰好一次」。长度单独断言而不只靠
+// `ALL` 的类型: 类型里的长度可以被顺手改掉。
+const _: () = {
+    assert!(Lang::ALL.len() == LANG_COUNT, "Lang::ALL must list every language");
+    let mut i = 0;
+    while i < Lang::ALL.len() {
+        let mut j = i + 1;
+        while j < Lang::ALL.len() {
+            assert!(Lang::ALL[i] as u8 != Lang::ALL[j] as u8, "Lang::ALL lists a language twice");
+            j += 1;
+        }
+        i += 1;
+    }
+};
+
 impl Lang {
+    /// 全部语言, 三语守卫与快照测试都遍历它而不是各自手写一份。
+    pub const ALL: [Lang; 3] = [Lang::Zh, Lang::En, Lang::Ja];
+
     /// `preferred` 来自桌面端设置 (`"system"` / `"zh"` / `"en"` / `"ja"`)。
     /// `system_tag` 是 runtime.json 里桌面端下发的原始系统语言标签 (`tauri_plugin_os::locale()`
     /// 的原样值), 只有连上桌面端才拿得到。
@@ -22,6 +46,11 @@ impl Lang {
     /// 系统探测顺序: `system_tag` (非空) → 环境变量 `LC_ALL` → `LC_MESSAGES` → `LANG` → en。
     /// 映射规则 (大小写不敏感) 与桌面端 `src/i18n/index.tsx::detectSystemLocale` / `tray.rs` 一致:
     /// `zh*` → zh, `ja*` → ja, 其余 → en。
+    ///
+    /// 连接之前 `preferred` 取 runtime.json 里的 `preferred_language`, 那是桌面端**启动时**写下的值,
+    /// 运行期间改语言不会重写那个文件——所以 app 运行中改过语言的话, 连接前的提示 (「未启用」等)
+    /// 仍是启动时的语言。这是已知取舍: runtime.json 只有启动时一个写入点。连上之后 `preferred`
+    /// 改用 `get_settings` 的实时值。
     pub fn resolve(preferred: &str, system_tag: Option<&str>, env: impl Fn(&str) -> Option<String>) -> Self {
         let tag = match preferred {
             "zh" => return Self::Zh,
@@ -1897,7 +1926,7 @@ mod tests {
     /// 标签栏一行放得下: 每个标签渲染成 ` N 名称 `, 之间一个分隔符, 总宽 ≤ 76 (80 列减边框与内距)。
     #[test]
     fn tab_bar_fits_in_80_columns() {
-        for lang in [Lang::Zh, Lang::En, Lang::Ja] {
+        for lang in Lang::ALL {
             let s = strings(lang);
             let total: usize = s.tabs.iter().map(|t| t.width() + 4).sum::<usize>() + (s.tabs.len() - 1);
             assert!(total <= 76, "{lang:?}: 标签栏宽 {total}");
@@ -1914,7 +1943,7 @@ mod tests {
             let value_at = 2 + gap + body[gap..].len() - body[gap..].trim_start_matches(' ').len();
             line[..value_at].width()
         }
-        for lang in [Lang::Zh, Lang::En, Lang::Ja] {
+        for lang in Lang::ALL {
             let s = strings(lang);
             let lines = [
                 (s.cli_check_addr)("http://127.0.0.1:23456"),

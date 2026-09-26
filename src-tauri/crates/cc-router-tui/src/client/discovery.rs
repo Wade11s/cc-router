@@ -76,6 +76,10 @@ pub struct RuntimeInfo {
     /// 字段, 缺省即 `None` (退回环境变量探测)。
     #[serde(default)]
     pub system_locale: Option<String>,
+    /// 桌面端写 runtime.json 那一刻的 `settings.preferred_language`, 只给连接**之前**的提示用
+    /// (连上之后以 `get_settings` 的实时值为准)。缺省规则同 `system_locale`。
+    #[serde(default)]
+    pub preferred_language: Option<String>,
 }
 
 /// 手写 Debug: 密钥不能进日志 / panic 信息, 但 `system_locale` 不是秘密, 照常打印。
@@ -89,6 +93,7 @@ impl std::fmt::Debug for RuntimeInfo {
             .field("ca_pem_path", &self.ca_pem_path)
             .field("local_secret", &"<redacted>")
             .field("system_locale", &self.system_locale)
+            .field("preferred_language", &self.preferred_language)
             .finish()
     }
 }
@@ -212,5 +217,14 @@ mod tests {
             "ca_pem_path":null,"local_secret":"abc","system_locale":"zh-Hans-CN"}"#;
         let info: RuntimeInfo = serde_json::from_str(raw).unwrap();
         assert_eq!(info.system_locale.as_deref(), Some("zh-Hans-CN"));
+        assert_eq!(info.preferred_language, None);
+    }
+
+    #[test]
+    fn runtime_file_with_preferred_language_parses() {
+        let raw = r#"{"pid":7,"app_version":"5.1.0","http_port":23456,"https_port":null,
+            "ca_pem_path":null,"local_secret":"abc","preferred_language":"ja"}"#;
+        let info: RuntimeInfo = serde_json::from_str(raw).unwrap();
+        assert_eq!(info.preferred_language.as_deref(), Some("ja"));
     }
 }

@@ -34,7 +34,6 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const NOW: i64 = 1_700_000_000_000;
 const VERSION: &str = "9.9.9";
-const LANGS: [Lang; 3] = [Lang::Zh, Lang::En, Lang::Ja];
 
 thread_local! {
     /// 这个测试用哪种语言构造 `App`; 默认中文。每个测试跑在自己的线程里, 设了也不会影响别的测试。
@@ -580,7 +579,7 @@ fn pick_core_slots(a: &mut App, choice: impl Fn(Slot) -> PickerChoice) {
 fn submit_basics(a: &mut App) -> Action {
     select_zhipu(a);
     type_str(a, "sk-test");
-    focus_row(a, ZH.wiz_btn_next);
+    focus_row(a, s().wiz_btn_next);
     a.handle_key(key(KeyCode::Enter)).expect("填完表单提交应该产出 Action")
 }
 
@@ -2452,7 +2451,7 @@ fn a_clean_page_never_asks() {
 #[test]
 fn every_page_help_fits_the_minimum_terminal() {
     let pages = Pages::default();
-    for lang in LANGS {
+    for lang in Lang::ALL {
         let s = strings(lang);
         for tab in Tab::ALL {
             let rows = pages.get(tab).help(s);
@@ -2466,7 +2465,7 @@ fn every_page_help_fits_the_minimum_terminal() {
 /// 跟着放宽, 不能被右边框截断。
 #[test]
 fn every_help_row_is_shown_in_full_at_80x24() {
-    for lang in LANGS {
+    for lang in Lang::ALL {
         use_lang(lang);
         let s = s();
         let mut a = every_page_loaded();
@@ -2509,7 +2508,7 @@ fn every_page_loaded() -> App {
 /// 键位 (页面键位放不下时从右往左丢, 丢到连第一个都放不下就说明译文太长了)。
 #[test]
 fn every_footer_keeps_help_and_quit_in_80_columns() {
-    for lang in LANGS {
+    for lang in Lang::ALL {
         use_lang(lang);
         let s = s();
         let mut a = every_page_loaded();
@@ -4800,6 +4799,20 @@ fn members_show_names_badges_and_missing_ids() {
     assert!(out.contains("ghost-le"), "缺失订阅应该显示 id 前 8 位\n{out}");
 }
 
+/// 被删除的成员整行显示「id 前 8 位 + 已删除标记」, 标记在每种语言、两种终端尺寸下都完整显示
+/// (没有厂商可显示, 这一行占用名字列 + 厂商列)。
+#[test]
+fn missing_member_marker_is_shown_in_full_in_every_language() {
+    for lang in Lang::ALL {
+        use_lang(lang);
+        for (w, h) in [(80, 24), (120, 40)] {
+            let out = render(&mut vm_app(false), w, h);
+            let expected = format!("ghost-le {}", s().vm_missing);
+            assert!(out.contains(&expected), "{lang:?} {w}x{h}: 「{expected}」没有完整显示\n{out}");
+        }
+    }
+}
+
 /// I4: 订阅列表还没加载完时 (`list_subscriptions` 还没回来), `store.subscription` 对任何 id 都会
 /// 返回 `None`——不该被误判成"已删除" (不显示 `vm_missing`), `a`/`x`/`J`/`K`/`s` 也该统一拒绝
 /// (弹 `vm_subs_not_loaded`), 而不是把用户导向"请先移除已删除的订阅"这种具有误导性的提示。订阅
@@ -5873,10 +5886,23 @@ fn en_logs_120x40() {
     insta::assert_snapshot!(render(&mut a, 120, 40));
 }
 
+#[test]
+fn en_live_80x24() {
+    use_lang(Lang::En);
+    insta::assert_snapshot!(render(&mut live_fixture_app(false), 80, 24));
+}
+
+#[test]
+fn en_wizard_slots_80x24() {
+    use_lang(Lang::En);
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    insta::assert_snapshot!(render(&mut a, 80, 24));
+}
+
 /// 虚拟模型页左栏的模式短名在每种语言下都完整显示 (左栏宽度随最长的短名放宽)。
 #[test]
 fn routing_mode_names_are_not_truncated_in_any_language() {
-    for lang in LANGS {
+    for lang in Lang::ALL {
         use_lang(lang);
         let s = s();
         let out = render(&mut vm_app(false), 80, 24);
@@ -5889,7 +5915,7 @@ fn routing_mode_names_are_not_truncated_in_any_language() {
 /// 80 列日志表的模型列在每种语言下至少放得下表头——其余定宽列的表头更宽的语言 (日文) 从订阅列借差额。
 #[test]
 fn logs_model_header_is_not_truncated_at_80x24_in_any_language() {
-    for lang in LANGS {
+    for lang in Lang::ALL {
         use_lang(lang);
         let s = s();
         let mut a = logs_app(false);
@@ -5902,7 +5928,7 @@ fn logs_model_header_is_not_truncated_at_80x24_in_any_language() {
 /// 请求详情弹窗的字段标签在每种语言下都完整显示 (标签列随最宽的标签放宽)。
 #[test]
 fn request_detail_labels_are_not_truncated_in_any_language() {
-    for lang in LANGS {
+    for lang in Lang::ALL {
         use_lang(lang);
         let s = s();
         let mut a = logs_app(false);
@@ -5921,7 +5947,7 @@ fn request_detail_labels_are_not_truncated_in_any_language() {
 /// 逐字比较弹窗内部的文字与提示原文——折行位置不影响比较, 丢字就会不相等。
 #[test]
 fn fixed_confirm_prompts_are_shown_in_full_at_80x24() {
-    for lang in LANGS {
+    for lang in Lang::ALL {
         use_lang(lang);
         let s = s();
         let refs = ["model-fallback", "model-sonnet", "model-haiku", "model-opus"].join(s.list_sep);
@@ -6013,6 +6039,19 @@ fn ja_logs_120x40() {
     let mut a = logs_app(false);
     a.update(requests_done(1, RequestQuery::default(), logs_fixture_rows(), 4));
     insta::assert_snapshot!(render(&mut a, 120, 40));
+}
+
+#[test]
+fn ja_live_80x24() {
+    use_lang(Lang::Ja);
+    insta::assert_snapshot!(render(&mut live_fixture_app(false), 80, 24));
+}
+
+#[test]
+fn ja_wizard_slots_80x24() {
+    use_lang(Lang::Ja);
+    let mut a = wizard_at_slots(vec![ModelInfo { id: "glm-4.6".into(), display_name: None }]);
+    insta::assert_snapshot!(render(&mut a, 80, 24));
 }
 
 /// 日文虚拟模型页, 选中 `model-fallback` (同英文那张): 「スキップ対象」、左栏模式短名、右栏底部摘要
