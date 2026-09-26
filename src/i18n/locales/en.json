@@ -183,6 +183,8 @@
   "about.repo": "GitHub repo",
   "about.docs": "Docs",
   "about.site": "Website",
+  "about.star.text": "If cc-router helps you, consider giving it a Star on GitHub. It's the most direct way to encourage the author.",
+  "about.star.action": "Star on GitHub",
   "about.updater.checking": "Checking for updates…",
   "about.updater.upToDate": "You're on the latest version",
   "about.updater.idle": "Check for app updates",

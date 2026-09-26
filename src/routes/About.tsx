@@ -1,4 +1,4 @@
-import { ExternalLink, Globe, TriangleAlert } from "lucide-react";
+import { ExternalLink, Globe, Star, TriangleAlert } from "lucide-react";
 import Github from "@lobehub/icons/es/Github";
 import { runtime } from "@/runtime";
 import { version as VERSION } from "../../package.json";
@@ -60,6 +60,17 @@ export function AboutPage() {
                 </button>
               </div>
             </div>
+          </div>
+          <div className="about-star">
+            <Star size={14} className="about-star-icon" />
+            <span className="about-star-text">{t("about.star.text")}</span>
+            <button
+              className="btn primary"
+              type="button"
+              onClick={() => runtime.openExternal(REPO_URL).catch(() => {})}
+            >
+              <Star size={12} /> {t("about.star.action")}
+            </button>
           </div>
         </div>
       </div>

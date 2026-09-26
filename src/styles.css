@@ -1633,6 +1633,14 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   font-size: 11.5px; color: var(--ink-4); font-family: var(--font-mono);
 }
 .about-desc { color: var(--ink-3); font-size: 13px; line-height: 1.7; margin: 12px 0 14px; }
+/* 关于页底部的求 Star 提示条: 陶土浅底, 文案左、按钮右, 窄窗口时按钮折到下一行 */
+.about-star {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 16px; padding: 10px 12px;
+  background: var(--accent-bg); border: 1px solid var(--accent-line); border-radius: var(--r-md);
+}
+.about-star-icon { color: var(--accent-ink); flex: none; }
+.about-star-text { flex: 1 1 240px; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); }
 .about-disclaimer p {
   font-size: 12.5px; line-height: 1.75; color: var(--ink-2);
   margin: 0 0 10px;

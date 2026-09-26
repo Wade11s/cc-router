@@ -183,6 +183,8 @@
   "about.repo": "GitHub 仓库",
   "about.docs": "文档",
   "about.site": "官网",
+  "about.star.text": "如果 cc-router 对你有帮助，欢迎到 GitHub 给项目点个 Star，这是对作者最直接的鼓励。",
+  "about.star.action": "去点 Star",
   "about.updater.checking": "检查更新中…",
   "about.updater.upToDate": "已是最新版本",
   "about.updater.idle": "检查应用更新",

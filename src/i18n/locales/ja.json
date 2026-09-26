@@ -183,6 +183,8 @@
   "about.repo": "GitHub リポジトリ",
   "about.docs": "ドキュメント",
   "about.site": "公式サイト",
+  "about.star.text": "cc-router がお役に立ちましたら、GitHub でスターをいただけると嬉しいです。作者にとって何よりの励みになります。",
+  "about.star.action": "スターを付ける",
   "about.updater.checking": "更新を確認中…",
   "about.updater.upToDate": "最新バージョンです",
   "about.updater.idle": "アプリの更新を確認",
