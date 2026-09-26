@@ -16,7 +16,7 @@ expression: "render(&mut subs_app(false), 120, 40)"
 "│                                                        ││   haiku     glm-4.5-air             auto                   │"
 "│                                                        ││   fallback  (not set)                                      │"
 "│                                                        ││ Quota        Daily      ━━━━━━─────   62% 620 / 1.0K       │"
-"│                                                        ││ Balance      Account unavailable (unpaid or restricted)    │"
+"│                                                        ││ Balance      Account unavailable (out of credit or restri… │"
 "│                                                        ││              余额 39.28 CNY                                │" Hidden by multi-width symbols: [(74, " "), (76, " ")]
 "│                                                        ││              赠送余额 1.00 CNY 即将过期                    │" Hidden by multi-width symbols: [(74, " "), (76, " "), (78, " "), (80, " "), (92, " "), (94, " "), (96, " "), (98, " ")]
 "│                                                        ││ Models       12 models cached                              │"

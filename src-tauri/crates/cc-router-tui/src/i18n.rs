@@ -1017,7 +1017,7 @@ pub const EN: Strings = Strings {
     key_edit_model: "Model",
     key_edit_effort: "Effort",
     key_save: "Save",
-    key_discard: "Discard",
+    key_discard: "Reset",
     key_move: "Move",
     key_add: "Add",
     key_remove: "Remove",
@@ -1088,7 +1088,7 @@ pub const EN: Strings = Strings {
     toast_reconnected: "Reconnected",
     toast_load_failed: |reason| format!("Failed to load: {reason}"),
     toast_offline: "Not connected; try again later",
-    toast_busy: |name| format!("{name}: the previous action is still running, please wait"),
+    toast_busy: |name| format!("{name}: previous action still running; please wait"),
     toast_enabled: |name| format!("Enabled {name}"),
     toast_disabled: |name| format!("Disabled {name}"),
     toast_test_ok: |name, model| match model {
@@ -1126,13 +1126,13 @@ pub const EN: Strings = Strings {
     sub_slot_unset: "(not set)",
     sub_effort_auto: "auto",
     sub_balance_unsupported: "This provider does not support balance queries",
-    sub_balance_never: "Not fetched yet, press b to refresh",
-    sub_balance_unavailable: "Account unavailable (unpaid or restricted)",
+    sub_balance_never: "Not fetched yet. Press b to refresh",
+    sub_balance_unavailable: "Account unavailable (out of credit or restricted)",
     sub_models_cached: |n| {
         let noun = if n == 1 { "model" } else { "models" };
         format!("{n} {noun} cached")
     },
-    sub_models_never: "Not fetched yet, press m to refresh",
+    sub_models_never: "Not fetched yet. Press m to refresh",
     sub_unreferenced: "Not used by any virtual model",
     sub_help_rows: &[
         ("↑↓ / j k", "Previous / next"),
@@ -1140,7 +1140,7 @@ pub const EN: Strings = Strings {
         ("PgUp / PgDn", "Page up / down"),
         ("⏎ / → / l", "Open details"),
         ("Esc / ← / h", "Close details"),
-        ("⏎ / o (details)", "Edit model / reasoning effort"),
+        ("⏎ / o (in details)", "Edit model / reasoning effort"),
         ("s", "Save slot changes"),
         ("e", "Enable / disable"),
         ("t", "Test connection"),
@@ -1149,7 +1149,7 @@ pub const EN: Strings = Strings {
         ("n", "New subscription"),
         ("d", "Delete subscription"),
     ],
-    sub_busy_toggling: "Switching…",
+    sub_busy_toggling: "Updating…",
     sub_busy_testing: "Testing connection…",
     sub_busy_models: "Fetching models…",
     sub_busy_balance: "Checking balance…",
@@ -1161,12 +1161,12 @@ pub const EN: Strings = Strings {
     sub_effort_na_kiro: "Kiro does not support reasoning effort",
     sub_model_required: "Model cannot be empty",
     sub_gone: "This subscription no longer exists",
-    saving_in_progress: "Saving, please wait",
+    saving_in_progress: "Saving. Please wait",
 
     sub_confirm_delete: |name| format!("Delete subscription \"{name}\"?"),
     sub_delete_refs: |n| {
         let noun = if n == 1 { "virtual model" } else { "virtual models" };
-        format!("Used by {n} {noun}, which will be unbound automatically:")
+        format!("Used by {n} {noun} (unbound automatically on delete):")
     },
     sub_delete_refs_more: |n| format!(" and {n} more"),
     toast_deleted: |name| format!("Deleted \"{name}\""),
@@ -1179,20 +1179,20 @@ pub const EN: Strings = Strings {
     vm_mode_unknown: "Unknown",
     vm_mode_full_seq: "Sequential",
     vm_mode_full_rr: "Round-robin",
-    vm_mode_full_sticky: "Session affinity (sticky)",
+    vm_mode_full_sticky: "Session affinity",
     vm_mode_full_unknown: "Unknown",
     vm_members_summary: |mode, n| {
         let noun = if n == 1 { "subscription" } else { "subscriptions" };
         format!("{mode} · {n} {noun}")
     },
-    vm_empty: "No subscriptions bound yet, press a to add one",
+    vm_empty: "No subscriptions bound yet. Press a to add one",
     vm_missing: "(deleted)",
     vm_will_skip: "will be skipped",
     vm_nothing_to_add: "Every subscription is already in the list",
     vm_remove_ghosts_first: "The list contains deleted subscriptions; press x to remove them first",
     vm_pick_add_title: |vm| format!("Add a subscription to {vm}"),
     vm_unknown_mode: "This version does not recognize the routing mode; change it in the desktop app",
-    vm_subs_not_loaded: "Subscriptions are still loading, please wait",
+    vm_subs_not_loaded: "Subscriptions are still loading. Please wait",
     vm_help_rows: &[
         ("↑↓ / j k", "Previous / next"),
         ("⏎ / → / l", "Open its subscriptions"),
@@ -1233,8 +1233,8 @@ pub const EN: Strings = Strings {
         ("⏎", "Request logs of that subscription"),
         ("/", "Filter by virtual model or subscription"),
         ("Esc", "Clear filter / back to latest"),
-        ("Latency", "Streaming: until upstream responds; else: until done"),
-        ("Concurrency", "Same virtual model + subscription pair up in order"),
+        ("Latency", "Streamed: to first upstream byte; else to the end"),
+        ("Concurrency", "Concurrent attempts are matched in start order"),
     ],
 
     lg_title: "Request logs",
@@ -1348,8 +1348,8 @@ pub const EN: Strings = Strings {
 
     wiz_loading_models: "Fetching model list…",
     wiz_save_failed: |reason| format!("Save failed: {reason}"),
-    wiz_models_manual: |reason| format!("Could not fetch the model list, please enter models manually: {reason}"),
-    wiz_pick_model: |slot| format!("Choose a model for {slot}"),
+    wiz_models_manual: |reason| format!("Enter models manually; the model list could not be fetched: {reason}"),
+    wiz_pick_model: |slot| format!("Model for {slot}"),
     wiz_btn_save: "Save",
     wiz_err_slot: "Enter a model",
     wiz_confirm_exit_pending: "Subscription created, but its model slots are still (pending).\nLeave the wizard? (You can set them later on the Subscriptions page)",
@@ -1375,8 +1375,8 @@ pub const EN: Strings = Strings {
     wiz_protocol_names: ["Anthropic compatible", "Gemini", "OpenAI Responses", "OpenAI Chat Completions", "Gemini Interactions"],
 
     key_field: "Field",
-    key_pick: "Choose",
-    key_next_field: "Next",
+    key_pick: "Select",
+    key_next_field: "Next field",
     key_reveal: "Show / hide",
     form_more: "… more below",
 
@@ -1398,7 +1398,7 @@ Run without arguments to open the UI (the cc-router desktop app must be running,
 
 Options:
   --check            Connect to the running cc-router, print its status and exit
-  --data-dir <path>  cc-router data directory (found by platform rules by default)
+  --data-dir <path>  cc-router data directory (defaults to the platform's standard location)
   --no-fx            Turn off animations (or set the environment variable CCR_TUI_NO_FX=1)
   -V, --version      Print the version
   -h, --help         Print this help
@@ -1486,11 +1486,11 @@ mod tests {
         }
     }
 
-    /// 固定文案的确认弹窗每行都放得下最小终端 (弹窗最宽 80 − 4, 减边框与内距 6 = 70 列)。更宽的
-    /// 行会被按字符折行, 英文会从单词中间断开, 所以英文译文要自己用 `\n` 在词间换好行; 中日文
-    /// 按字符折行不会断词, 不在此列。
+    /// 英文固定文案的确认弹窗在句间用 `\n` 手工断好行, 每行放得下最小终端 (弹窗最宽 80 − 4, 减边框
+    /// 与内距 6 = 70 列), 不依赖自动折行挑的断点。完整显示 (三种语言) 由 `tests/ui.rs` 的
+    /// `fixed_confirm_prompts_are_shown_in_full_at_80x24` 在渲染结果上检查。
     #[test]
-    fn english_confirm_prompts_fit_in_80_columns_without_breaking_words() {
+    fn english_confirm_prompts_are_broken_by_hand_to_fit_80_columns() {
         let s = strings(Lang::En);
         let prompts =
             [s.confirm_discard.to_string(), s.wiz_confirm_exit_pending.to_string(), (s.sub_confirm_delete)("0123456789"), (s.sub_delete_refs)(99)];

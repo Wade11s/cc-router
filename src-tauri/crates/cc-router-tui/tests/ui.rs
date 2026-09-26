@@ -17,8 +17,8 @@ use cc_router_tui::client::dto::{
     TestConnectionResult, VirtualModel, EFFORT_CHOICES,
 };
 use cc_router_tui::client::events::{ROUTE_ATTEMPT_FINISHED, ROUTE_ATTEMPT_STARTED};
-use cc_router_tui::format::Tz;
-use cc_router_tui::i18n::{strings, Lang, Strings, ZH};
+use cc_router_tui::format::{fit, Tz};
+use cc_router_tui::i18n::{strings, Lang, Strings, EN, ZH};
 use cc_router_tui::pages::Pages;
 use cc_router_tui::secret::Secret;
 use cc_router_tui::theme::{ColorMode, Theme};
@@ -2475,8 +2475,13 @@ fn every_help_row_is_shown_in_full_at_80x24() {
             a.update(Action::ToggleHelp);
             let out = render(&mut a, 80, 24);
             let page_rows = Pages::default().get(tab).help(s);
-            for (key, desc) in s.help_rows.iter().chain(page_rows) {
-                assert!(out.contains(key) && out.contains(desc), "{lang:?} {tab:?}: 帮助行「{key} {desc}」没有完整显示\n{out}");
+            // 键名列宽与 `widgets::help` 的规则相同: 最宽键名 + 2, 不低于 18。整行 (定宽键名 + 说明)
+            // 连续出现才算完整显示——分别找键名和说明会被别处碰巧出现的同样文字骗过。
+            let all: Vec<&(&str, &str)> = s.help_rows.iter().chain(page_rows).collect();
+            let key_col = (all.iter().map(|(key, _)| key.width()).max().unwrap_or(0) + 2).max(18);
+            for (key, desc) in all {
+                let row = format!("{}{desc}", fit(key, key_col));
+                assert!(out.contains(&row), "{lang:?} {tab:?}: 帮助行「{row}」没有完整显示\n{out}");
             }
             a.update(Action::ToggleHelp);
         }
@@ -2522,7 +2527,69 @@ fn every_footer_keeps_help_and_quit_in_80_columns() {
                 assert!(footer.contains(&must), "{lang:?} {tab:?}: 80 列底栏缺了「{must}」\n{footer}");
             }
         }
+
+        // 有草稿时的底栏: 全局键、保存 / 放弃与这个焦点下的编辑键都必须留下。
+        let s_ = s;
+        let hint = |k: &str, d: &str| format!("{k} {d}");
+        let dirty_cases: [(&str, App, Vec<String>); 3] = [
+            ("订阅详情", dirty_subscription_detail(), vec![
+                hint("↑↓", s_.key_select),
+                hint("s", s_.key_save),
+                hint("Esc", s_.key_discard),
+                hint("⏎", s_.key_edit_model),
+                hint("o", s_.key_edit_effort),
+            ]),
+            ("虚拟模型成员", dirty_vm_members(), vec![
+                hint("↑↓", s_.key_select),
+                hint("s", s_.key_save),
+                hint("Esc", s_.key_discard),
+                hint("J K", s_.key_move),
+            ]),
+            ("虚拟模型列表", dirty_vm_models(), vec![
+                hint("↑↓", s_.key_select),
+                hint("s", s_.key_save),
+                hint("Esc", s_.key_discard),
+                hint("⏎", s_.key_members),
+                hint("m", s_.key_mode),
+            ]),
+        ];
+        for (what, mut a, keys) in dirty_cases {
+            let out = render(&mut a, 80, 24);
+            let footer = out.lines().last().unwrap_or_else(|| panic!("{out}"));
+            let globals = [format!("? {}", s.key_help), format!("q {}", s.key_quit), format!("1-5 {}", s.key_switch_tab)];
+            for must in globals.iter().chain(&keys) {
+                assert!(footer.contains(must.as_str()), "{lang:?} {what} (有草稿): 80 列底栏缺了「{must}」\n{footer}");
+            }
+        }
     }
+}
+
+/// 订阅详情里改了 fable 槽位、还没保存 (与 `subscriptions_dirty_80x24` 同一条驱动路径)。
+fn dirty_subscription_detail() -> App {
+    let mut a = subs_app(false);
+    render(&mut a, 80, 24);
+    a.handle_key(key(KeyCode::Enter));
+    a.handle_key(key(KeyCode::Enter));
+    a.update(Action::PickerDone { tag: PickerTag::SlotModel { sub_id: "1".into(), slot: Slot::Fable }, choice: PickerChoice::Item("m3".into()) });
+    a
+}
+
+/// 虚拟模型成员栏里挪了一次顺序、还没保存 (与 `virtual_models_dirty_80x24` 同一条驱动路径)。
+fn dirty_vm_members() -> App {
+    let mut a = vm_app(false);
+    a.handle_key(key(KeyCode::Right));
+    a.handle_key(key(KeyCode::Char('J')));
+    a
+}
+
+/// 虚拟模型列表焦点下切了一次调度模式、还没保存。
+fn dirty_vm_models() -> App {
+    let mut a = vm_app(false);
+    let action = a.handle_key(key(KeyCode::Char('m')));
+    if let Some(action) = action {
+        a.update(action);
+    }
+    a
 }
 
 #[test]
@@ -5835,4 +5902,56 @@ fn request_detail_labels_are_not_truncated_in_any_language() {
             assert!(out.contains(&format!("{label} ")), "{lang:?}: 字段标签「{label}」被截断或贴着值\n{out}");
         }
     }
+}
+
+/// 每种语言的固定文案确认弹窗在 80×24 上完整显示 (超长的行折行, 不被右边框截断)。去掉全部空白后
+/// 逐字比较弹窗内部的文字与提示原文——折行位置不影响比较, 丢字就会不相等。
+#[test]
+fn fixed_confirm_prompts_are_shown_in_full_at_80x24() {
+    for lang in LANGS {
+        use_lang(lang);
+        let s = s();
+        let refs = ["model-fallback", "model-sonnet", "model-haiku", "model-opus"].join(s.list_sep);
+        let delete = format!("{}\n{}\n{}", (s.sub_confirm_delete)("智谱主号"), (s.sub_delete_refs)(4), refs);
+        for prompt in [s.confirm_discard.to_string(), s.wiz_confirm_exit_pending.to_string(), delete] {
+            let mut a = loaded(false);
+            a.update(Action::OpenConfirm { prompt: prompt.clone(), on_yes: OnYes::discard_then(Action::Quit) });
+            let buf = render_buffer(&mut a, 80, 24);
+            let area = confirm::area(buf.area, &prompt);
+            let mut shown = String::new();
+            for y in area.y + 1..area.bottom() - 1 {
+                for x in area.x + 1..area.right() - 1 {
+                    shown.push_str(buf[(x, y)].symbol());
+                }
+            }
+            let squash = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+            assert_eq!(squash(&shown), squash(&prompt), "{lang:?}: 确认弹窗没有完整显示\n{}", render(&mut a, 80, 24));
+        }
+    }
+}
+
+/// 英文虚拟模型页, 选中 `model-fallback`: 成员里有未配兜底槽的翻译类订阅 (「将被跳过」必须完整
+/// 显示), 左栏模式短名与右栏底部摘要都不截断。
+#[test]
+fn en_virtual_models_80x24() {
+    use_lang(Lang::En);
+    let mut a = vm_app(false);
+    for _ in 0..4 {
+        a.handle_key(key(KeyCode::Down));
+    }
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains(EN.vm_will_skip), "「will be skipped」应该完整显示\n{out}");
+    insta::assert_snapshot!(out);
+}
+
+/// 会话亲和 (sticky) 模式的全名 + 成员数摘要在英文 80 列右栏底边完整显示。
+#[test]
+fn en_sticky_mode_summary_fits_at_80x24() {
+    use_lang(Lang::En);
+    let mut a = vm_app(false);
+    a.handle_key(key(KeyCode::Down));
+    a.handle_key(key(KeyCode::Down)); // model-sonnet (sticky, 3 个成员)
+    let out = render(&mut a, 80, 24);
+    let summary = (EN.vm_members_summary)(EN.vm_mode_full_sticky, 3);
+    assert!(out.contains(&format!(" {summary} ")), "底部摘要「{summary}」应该完整显示\n{out}");
 }

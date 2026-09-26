@@ -13,6 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, List, ListItem, ListState, Padding};
 use ratatui::Frame;
 use throbber_widgets_tui::{Throbber, BRAILLE_SIX};
+use unicode_width::UnicodeWidthStr;
 
 use super::draft::Draft;
 use super::{Component, DrawCtx};
@@ -34,9 +35,39 @@ use crate::widgets::{pane_border_style, spinner_state};
 const MODEL_NAME_COL: usize = 17;
 /// 成员数一列 (`{:>3}`)。
 const COUNT_COL: u16 = 3;
+/// 成员行的序号列 (`{:>2} `)。
+const MEMBER_INDEX_COL: usize = 3;
 const MEMBER_SYMBOL_COL: usize = 2;
+/// 成员名列的上下限: 空间够时 18, 窄 (英文左栏更宽、右栏又要放「将被跳过」) 时收窄, 最窄 10。
 const MEMBER_NAME_COL: usize = 18;
+const MEMBER_NAME_MIN_COL: usize = 10;
 const MEMBER_PROVIDER_COL: usize = 10;
+/// 列表选中前缀 (`highlight_symbol("▌ ")`) 的宽度。
+const HIGHLIGHT_COL: usize = 2;
+
+/// 成员行的列宽。`skip_in_provider_col`: 「将被跳过」放不进厂商列之后时, 让它占用厂商列 (那一行不再
+/// 显示厂商名)——这是右栏里唯一告诉用户「这条订阅会被跳过」的地方, 宁可少显示厂商也不能被截掉。
+#[derive(Debug, PartialEq, Eq)]
+struct MemberCols {
+    name: usize,
+    provider: usize,
+    skip_in_provider_col: bool,
+}
+
+/// `avail`: 成员列表内宽减去选中前缀; `skip_width`: 这一页要不要预留「将被跳过」(只有
+/// `model-fallback` 要), 要的话是它的显示宽度, 否则 0。中文在最小终端上两种情况都得到 名字 18 /
+/// 厂商 10 / 跟在后面显示。
+fn member_cols(avail: usize, skip_width: usize) -> MemberCols {
+    let room = avail.saturating_sub(MEMBER_INDEX_COL + MEMBER_SYMBOL_COL);
+    if room >= MEMBER_NAME_MIN_COL + MEMBER_PROVIDER_COL + skip_width {
+        let name = (room - MEMBER_PROVIDER_COL - skip_width).min(MEMBER_NAME_COL);
+        MemberCols { name, provider: MEMBER_PROVIDER_COL, skip_in_provider_col: false }
+    } else {
+        let provider = MEMBER_PROVIDER_COL.max(skip_width);
+        let name = room.saturating_sub(provider).clamp(MEMBER_NAME_MIN_COL, MEMBER_NAME_COL);
+        MemberCols { name, provider, skip_in_provider_col: true }
+    }
+}
 
 /// 模式短名一列: 最宽的短名 + 1 格间隔 (中文四个短名都是 4 列, 即 5)。
 fn mode_col(s: &Strings) -> usize {
@@ -338,6 +369,8 @@ impl VirtualModels {
         // 免得每个成员在页面刚打开、还没等到第一次订阅列表加载完成的那几百毫秒里全部被误标成
         // `vm_missing`, 顺带把 `s`/`a`/`x`/`J`/`K` 都指向"请先移除已删除的订阅"这种具有误导性的提示。
         let subs_loaded = store.subscriptions_loaded();
+        let skip_width = if is_fallback { s.vm_will_skip.width() } else { 0 };
+        let cols = member_cols((inner.width as usize).saturating_sub(HIGHLIGHT_COL), skip_width);
         let mut items: Vec<ListItem> = Vec::with_capacity(ids.len());
         for (i, id) in ids.iter().enumerate() {
             let mut spans = vec![Span::styled(format!("{:>2} ", i + 1), theme.muted_style())];
@@ -345,13 +378,18 @@ impl VirtualModels {
                 Some(sub) => {
                     let b = badge(sub, theme, s);
                     spans.push(Span::styled(fit(b.symbol, MEMBER_SYMBOL_COL), Style::new().fg(b.color)));
-                    spans.push(Span::raw(fit(&sub.display_name, MEMBER_NAME_COL)));
-                    spans.push(Span::raw(fit(&sub.provider_display_name, MEMBER_PROVIDER_COL)));
+                    spans.push(Span::raw(fit(&sub.display_name, cols.name)));
                     // V3 (fix round P3b): 与后端 `ModelSlots::fallback_model()` 的 `trim()` 规则
                     // 对齐——纯空白的兜底槽视为未配置, 否则这里会漏标一条实际会被 pipeline 跳过的
                     // 订阅。
-                    if is_fallback && sub.auth_type != "api_key" && sub.model_slots.fallback.trim().is_empty() {
-                        spans.push(Span::styled(s.vm_will_skip, Style::new().fg(theme.warn)));
+                    let will_skip = is_fallback && sub.auth_type != "api_key" && sub.model_slots.fallback.trim().is_empty();
+                    if will_skip && cols.skip_in_provider_col {
+                        spans.push(Span::styled(fit(s.vm_will_skip, cols.provider), Style::new().fg(theme.warn)));
+                    } else {
+                        spans.push(Span::raw(fit(&sub.provider_display_name, cols.provider)));
+                        if will_skip {
+                            spans.push(Span::styled(s.vm_will_skip, Style::new().fg(theme.warn)));
+                        }
                     }
                 }
                 None if !subs_loaded => {
@@ -359,7 +397,7 @@ impl VirtualModels {
                     // 断言"已删除")。
                     let prefix: String = id.chars().take(8).collect();
                     spans.push(Span::styled(fit("?", MEMBER_SYMBOL_COL), theme.muted_style()));
-                    spans.push(Span::styled(fit(&prefix, MEMBER_NAME_COL), theme.muted_style()));
+                    spans.push(Span::styled(fit(&prefix, cols.name), theme.muted_style()));
                 }
                 None => {
                     // V2 (fix round P3b): 订阅在 Store 里找不到 (被别处删除) 这一行——之前是手写
@@ -368,7 +406,7 @@ impl VirtualModels {
                     let prefix: String = id.chars().take(8).collect();
                     let label = format!("{prefix} {}", s.vm_missing);
                     spans.push(Span::styled(fit("?", MEMBER_SYMBOL_COL), theme.muted_style()));
-                    spans.push(Span::styled(fit(&label, MEMBER_NAME_COL), theme.muted_style()));
+                    spans.push(Span::styled(fit(&label, cols.name), theme.muted_style()));
                 }
             }
             items.push(ListItem::new(Line::from(spans)));
@@ -699,6 +737,26 @@ impl Component for VirtualModels {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 中文在最小终端 (右栏内宽 44 − 选中前缀 2 = 42) 上: 普通页与兜底页 (「将被跳过」8 列) 都是
+    /// 名字 18 / 厂商 10、「将被跳过」跟在厂商后面——与改为弹性列宽之前逐列相同。
+    #[test]
+    fn member_columns_keep_the_chinese_layout_on_the_minimum_terminal() {
+        let wide = MemberCols { name: 18, provider: 10, skip_in_provider_col: false };
+        assert_eq!(member_cols(42, 0), wide);
+        assert_eq!(member_cols(42, 8), wide);
+    }
+
+    /// 英文最小终端 (左栏 39 列, 右栏内宽 37 − 2 = 35) 的兜底页: 名字 + 厂商 + 「will be skipped」(15)
+    /// 放不下, 名字收窄到下限也不够时让「将被跳过」占用厂商列, 整行不超出。
+    #[test]
+    fn will_skip_takes_the_provider_column_when_the_row_is_too_narrow() {
+        let cols = member_cols(35, 15);
+        assert_eq!(cols, MemberCols { name: 15, provider: 15, skip_in_provider_col: true });
+        assert!(MEMBER_INDEX_COL + MEMBER_SYMBOL_COL + cols.name + cols.provider <= 35);
+        // 非兜底页不需要预留, 名字只受上限约束。
+        assert_eq!(member_cols(35, 0), MemberCols { name: 18, provider: 10, skip_in_provider_col: false });
+    }
 
     /// V4: 只覆盖窗口内的下标, 窗口外的 (滚出视野之前 / 还没滚到) 都该是 `None`; 窗口边界 (第一行 /
     /// 最后一行) 的 `y` 应该正确换算成相对 `inner` 的坐标, 不是原始下标。

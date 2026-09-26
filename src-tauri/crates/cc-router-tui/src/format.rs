@@ -146,10 +146,12 @@ pub fn fit(text: &str, width: usize) -> String {
     out
 }
 
-/// 按**显示宽度**折行 (CJK 占两列)。先按 `'\n'` 拆成若干段, 每段贪心装满 `width` 列 (按字符切, 不找
-/// 词边界); 空段折成一个空串; 单个字符比 `width` 还宽时单独成一行 (保证每轮至少前进一个字符, 不会
-/// 死循环)。`width == 0` 时只按 `'\n'` 拆、不折——`Popup::Detail` (`widgets/detail.rs`) 的字段值列宽
-/// 是 `内宽 - LABEL_COL`, 内宽小到夹不住时会 `saturating_sub` 到 0, 这里必须是全函数 (不 panic、
+/// 按**显示宽度**折行 (CJK 占两列)。先按 `'\n'` 拆成若干段, 每段贪心装满 `width` 列, 断行点优先
+/// 落在词边界: ASCII 空格处可断 (断在那里的那一个空格丢掉), 每个宽字符 (CJK) 前后都可断; 一个词
+/// (连续的非空格窄字符) 放不进当前行时整个挪到下一行, 比一整行还宽的词退回按字符切 (接着当前行
+/// 往下填)。空段折成一个空串; 单个字符比 `width` 还宽时单独成一行 (保证每轮至少前进一个字符,
+/// 不会死循环)。`width == 0` 时只按 `'\n'` 拆、不折——`Popup::Detail` (`widgets/detail.rs`) 的字段值
+/// 列宽是 `内宽 - LABEL_COL`, 内宽小到夹不住时会 `saturating_sub` 到 0, 这里必须是全函数 (不 panic、
 /// 不死循环), 不依赖调用方保证 `width > 0`。
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
@@ -158,23 +160,114 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
             out.push(segment.to_string());
             continue;
         }
-        let mut line = String::new();
-        let mut used = 0usize;
-        for c in segment.chars() {
-            let w = c.width().unwrap_or(0);
-            // `used > 0`: 只有当前行已经有内容时才需要为「装不下」而换行——否则单个字符本身就比
-            // `width` 宽 (比如 `width=1` 时的 CJK 字符), 换行也解决不了问题, 必须先塞进去才能
-            // 保证前进 (不死循环)。
-            if used > 0 && used + w > width {
-                out.push(std::mem::take(&mut line));
-                used = 0;
-            }
-            line.push(c);
-            used += w;
+        let mut lines = LineFill { width, line: String::new(), used: 0, out: &mut out };
+        for token in tokens(segment) {
+            lines.push_token(token);
         }
-        out.push(line);
+        lines.finish();
     }
     out
+}
+
+/// 折行的最小单位。
+enum Token<'a> {
+    /// 一个 ASCII 空格: 可断点。
+    Space,
+    /// 一个宽字符 (CJK 等): 前后都可断。
+    Wide(char),
+    /// 一段连续的非空格窄字符: 整体挪行, 比一行还宽才按字符切。
+    Word(&'a str),
+}
+
+fn tokens(segment: &str) -> Vec<Token<'_>> {
+    let mut out = Vec::new();
+    let mut word_start: Option<usize> = None;
+    for (i, c) in segment.char_indices() {
+        let breaks = c == ' ' || c.width().unwrap_or(0) > 1;
+        if breaks {
+            if let Some(start) = word_start.take() {
+                out.push(Token::Word(&segment[start..i]));
+            }
+            out.push(if c == ' ' { Token::Space } else { Token::Wide(c) });
+        } else if word_start.is_none() {
+            word_start = Some(i);
+        }
+    }
+    if let Some(start) = word_start {
+        out.push(Token::Word(&segment[start..]));
+    }
+    out
+}
+
+/// 往 `out` 里一行一行地填 (`wrap` 的内部状态)。
+struct LineFill<'o> {
+    width: usize,
+    line: String,
+    used: usize,
+    out: &'o mut Vec<String>,
+}
+
+impl LineFill<'_> {
+    fn push_token(&mut self, token: Token) {
+        match token {
+            Token::Space => {
+                if self.used + 1 > self.width {
+                    // 行尾恰好落在空格上: 在这里断, 这个空格不带到下一行。
+                    self.break_line();
+                } else {
+                    self.push_char(' ', 1);
+                }
+            }
+            Token::Wide(c) => {
+                let w = c.width().unwrap_or(0);
+                if self.used > 0 && self.used + w > self.width {
+                    self.break_at_space();
+                }
+                self.push_char(c, w);
+            }
+            Token::Word(word) => {
+                let w = word.width();
+                if self.used + w <= self.width {
+                    self.line.push_str(word);
+                    self.used += w;
+                } else if w <= self.width {
+                    self.break_at_space();
+                    self.line.push_str(word);
+                    self.used = w;
+                } else {
+                    for c in word.chars() {
+                        let cw = c.width().unwrap_or(0);
+                        if self.used > 0 && self.used + cw > self.width {
+                            self.break_line();
+                        }
+                        self.push_char(c, cw);
+                    }
+                }
+            }
+        }
+    }
+
+    fn push_char(&mut self, c: char, w: usize) {
+        self.line.push(c);
+        self.used += w;
+    }
+
+    fn break_line(&mut self) {
+        self.out.push(std::mem::take(&mut self.line));
+        self.used = 0;
+    }
+
+    /// 在紧挨着的那个空格处断行: 行尾的一个空格是断点, 丢掉它。
+    fn break_at_space(&mut self) {
+        if self.line.ends_with(' ') {
+            self.line.pop();
+        }
+        self.break_line();
+    }
+
+    fn finish(self) {
+        self.out.push(self.line);
+    }
 }
 
 /// `Slot` 的显示名: 四个主槽用英文原名 (与后端 `ModelSlots` 的字段名一致), `Fallback` 用现有的
@@ -238,6 +331,38 @@ mod tests {
         assert_eq!(wrap("", 10), vec![""]);
         assert_eq!(wrap("智", 1), vec!["智"]);
         assert_eq!(wrap("ab\ncd", 0), vec!["ab", "cd"]);
+    }
+
+    /// 英文按词折行: 断在空格处 (那个空格丢掉), 不从单词中间切开。
+    #[test]
+    fn wrap_breaks_english_at_spaces() {
+        assert_eq!(wrap("the quick brown fox jumps", 10), vec!["the quick", "brown fox", "jumps"]);
+        // 行尾正好落在空格上: 空格不带到下一行开头。
+        assert_eq!(wrap("abcd efgh", 4), vec!["abcd", "efgh"]);
+        // 断行只丢一个空格, 词中间的其它空白原样保留。
+        assert_eq!(wrap("ab  cd", 10), vec!["ab  cd"]);
+    }
+
+    /// 比一整行还宽的词 (URL、长串数字) 退回按字符切, 接着当前行往下填。
+    #[test]
+    fn wrap_char_splits_a_token_wider_than_the_line() {
+        assert_eq!(wrap("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
+        assert_eq!(wrap("see https://example.com/x", 10), vec!["see https:", "//example.", "com/x"]);
+    }
+
+    /// 纯中文仍按字符折行 (每个宽字符前后都是断点), 结果与只按字符切相同。
+    #[test]
+    fn wrap_keeps_cjk_char_breaking() {
+        assert_eq!(wrap("智谱主号备用", 5), vec!["智谱", "主号", "备用"]);
+        assert_eq!(wrap("已达到本分钟请求数上限", 8), vec!["已达到本", "分钟请求", "数上限"]);
+    }
+
+    /// 中英混排: 英文词整体挪行, 中文字之间照样可断。
+    #[test]
+    fn wrap_mixes_words_and_cjk() {
+        assert_eq!(wrap("API Key 无效", 8), vec!["API Key", "无效"]);
+        assert_eq!(wrap("API Key 无效", 6), vec!["API", "Key 无", "效"]);
+        assert_eq!(wrap("上游返回 Too Many", 12), vec!["上游返回 Too", "Many"]);
     }
 
     /// `2023-11-15 06:13:20 +08:00` == `2023-11-14 22:13:20 UTC`。
