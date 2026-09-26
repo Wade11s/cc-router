@@ -873,6 +873,7 @@ jobs:
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_ENDPOINT: oss-accelerate.aliyuncs.com
         run: |
           set -euo pipefail
           # 上传前清空 latest/ 目录,防止文件命名调整时(改 deb 命名 / 加新平台)旧文件残留冒充"最新版"。
