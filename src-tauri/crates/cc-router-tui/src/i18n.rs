@@ -1575,14 +1575,14 @@ pub const JA: Strings = Strings {
     sub_busy_deleting: "削除中…",
     sub_slot_modified: "変更あり",
     sub_save_first: "先に s で保存するか、Esc で変更を破棄してください",
-    sub_effort_na_fallback: "フォールバックスロットには思考強度がありません",
+    sub_effort_na_fallback: "フォールバックスロットでは思考強度を設定できません",
     sub_effort_na_kiro: "Kiro は思考強度に対応していません",
     sub_model_required: "モデルは空にできません",
     sub_gone: "このサブスクリプションはもう存在しません",
     saving_in_progress: "保存中です。しばらくお待ちください",
 
     sub_confirm_delete: |name| format!("サブスクリプション「{name}」を削除しますか?"),
-    sub_delete_refs: |n| format!("{n} 個の仮想モデルから参照されています。削除すると自動的に外れます:"),
+    sub_delete_refs: |n| format!("{n} 個の仮想モデルから参照されています。削除するとバインドは自動的に解除されます:"),
     sub_delete_refs_more: |n| format!(" ほか {n} 個"),
     toast_deleted: |name| format!("「{name}」を削除しました"),
     list_sep: "、",
@@ -1597,7 +1597,7 @@ pub const JA: Strings = Strings {
     vm_mode_full_sticky: "セッション固定",
     vm_mode_full_unknown: "不明",
     vm_members_summary: |mode, n| format!("{mode} · サブスク {n} 件"),
-    vm_empty: "サブスクリプションがまだありません。a で追加",
+    vm_empty: "この仮想モデルにはサブスクリプションがありません。a で追加",
     vm_missing: "(削除済み)",
     vm_will_skip: "スキップ対象",
     vm_nothing_to_add: "すべてのサブスクリプションが追加済みです",
@@ -1624,7 +1624,7 @@ pub const JA: Strings = Strings {
     live_following: "最新に追従",
     live_paused: |n| format!("一時停止中 · 新着 {n} 件"),
     live_count: |n| format!("計 {n} 件"),
-    live_gap: "切断中のイベントは未受信",
+    live_gap: "接続断 · この間のイベントは未受信",
     live_interrupted: "中断",
     live_filter_title: "仮想モデルまたはサブスクリプションで絞り込み",
     live_filter_all: "すべて (絞り込みを解除)",
@@ -1646,7 +1646,9 @@ pub const JA: Strings = Strings {
         ("/", "仮想モデルまたはサブスクリプションで絞り込み"),
         ("Esc", "絞り込みを解除 / 最新に戻る"),
         ("遅延", "ストリームは応答開始まで、非ストリームは完了まで"),
-        ("同時実行", "同一仮想モデル + サブスクの同時試行は開始順で対応"),
+        // 「同一」去掉两个字省出的宽度正好用来把动词补全成「対応付け」(80 列帮助弹窗按显示宽度
+        // 卡边, 这一行原本就是贴着上限, `every_help_row_is_shown_in_full_at_80x24` 会检查截断)。
+        ("同時実行", "仮想モデル + サブスクの同時試行は開始順に対応付け"),
     ],
 
     lg_title: "リクエストログ",
@@ -1720,7 +1722,9 @@ pub const JA: Strings = Strings {
         "yaml" => "プロバイダのデフォルト".to_string(),
         other => other.to_string(),
     },
-    lg_d_effort_source_suffix: |label| format!("（{label}）"),
+    // 半角括弧: 与 ZH 的全角「（{label}）」不同, 日文排版半角括弧更常见, 与直前的日文假名/汉字
+    // 之间不需要全角空白就能分开。
+    lg_d_effort_source_suffix: |label| format!(" ({label})"),
     lg_d_stop_reason: "終了理由",
     lg_d_tools_offered: "宣言されたツール",
     lg_d_tool_results: "返送された結果",
@@ -1760,11 +1764,11 @@ pub const JA: Strings = Strings {
 
     wiz_loading_models: "モデル一覧を取得中…",
     wiz_save_failed: |reason| format!("保存に失敗しました: {reason}"),
-    wiz_models_manual: |reason| format!("モデル一覧を自動取得できませんでした。手動で入力してください: {reason}"),
+    wiz_models_manual: |reason| format!("モデル一覧を自動取得できませんでした ({reason})。手動で入力してください"),
     wiz_pick_model: |slot| format!("{slot} のモデルを選択"),
     wiz_btn_save: "保存",
     wiz_err_slot: "モデルを入力してください",
-    wiz_confirm_exit_pending: "サブスクは作成済みですが、モデルスロットはまだ (pending) です。\nウィザードを終了しますか? (あとでサブスクページで設定できます)",
+    wiz_confirm_exit_pending: "サブスクリプションは作成済みですが、モデルスロットはまだ (pending) です。\nウィザードを終了しますか? (あとでサブスクページで設定できます)",
     wiz_saving: "保存中…",
 
     wiz_custom_title: "サブスクリプションを追加 · カスタム",
@@ -1796,7 +1800,7 @@ pub const JA: Strings = Strings {
     err_disabled: "ターミナル UI が有効になっていません",
     err_network: |detail| format!("ネットワークエラー: {detail}"),
     err_bad_response: |detail| format!("レスポンスを解析できません: {detail}"),
-    err_read_file: |path, detail| format!("{path} の読み込み: {detail}"),
+    err_read_file: |path, detail| format!("{path} を読み込めません: {detail}"),
     err_data_dir_env: |var| format!("データディレクトリを特定できません: 環境変数 {var} が設定されていません"),
     err_file_missing: |path| format!("{path} が見つかりません"),
     err_file_corrupt: |path, detail| format!("{path} が壊れています: {detail}"),
@@ -1806,7 +1810,7 @@ pub const JA: Strings = Strings {
 cc-router-tui — cc-router のターミナル UI
 
 使い方: cc-router-tui [オプション]
-引数なしで実行すると UI が開きます (cc-router デスクトップ app が起動中で、設定 → セキュリティとアクセス → ターミナル UI のスイッチがオンになっている必要があります)。
+引数なしで実行すると UI が開きます (cc-router デスクトップ app が起動中で、「設定 → セキュリティとアクセス → ターミナル UI」のスイッチがオンになっている必要があります)。
 
 オプション:
   --check            起動中の cc-router に接続して状態を表示し、終了します
@@ -1819,14 +1823,16 @@ cc-router-tui — cc-router のターミナル UI
     cli_err_unknown_arg: |arg| format!("不明な引数: {arg}"),
     cli_discovery_hint: "先に cc-router デスクトップ app を起動してください。",
     cli_not_running_hint: "。先にデスクトップ app を起動してください。",
-    cli_disabled_hint: "。デスクトップ app の 設定 → セキュリティとアクセス → ターミナル UI でスイッチをオンにしてください。",
+    cli_disabled_hint: "。デスクトップ app の「設定 → セキュリティとアクセス → ターミナル UI」でスイッチをオンにしてください。",
     cli_terminal_init_failed: |err| format!("ターミナルを初期化できません: {err}\n実際のターミナルウィンドウで cc-router-tui を実行してください。"),
     cli_check_connected: |app_version, pid| format!("cc-router {app_version} に接続しました (pid {pid})"),
-    cli_check_addr: |base_url| format!("  アドレス      {base_url}"),
-    cli_check_mode: |mode, listen_all| format!("  モード        {mode}{}", if listen_all { " · 0.0.0.0 でリッスン" } else { "" }),
-    cli_check_subs: |total, dispatchable| format!("  サブスク      {total} 件、うち {dispatchable} 件が利用可能"),
-    cli_check_lang: |lang| format!("  言語          {lang}"),
-    cli_check_events_ok: "  イベント配信  正常",
+    // ラベル列の表示幅を揃える (「サブスクリプション」が最長のラベルなので, それに合わせて他の
+    // 行の空白を広げた——全角文字は 2 列として数える)。
+    cli_check_addr: |base_url| format!("  アドレス            {base_url}"),
+    cli_check_mode: |mode, listen_all| format!("  モード              {mode}{}", if listen_all { " · 0.0.0.0 でリッスン" } else { "" }),
+    cli_check_subs: |total, dispatchable| format!("  サブスクリプション  {total} 件、うち {dispatchable} 件が利用可能"),
+    cli_check_lang: |lang| format!("  言語                {lang}"),
+    cli_check_events_ok: "  イベント配信        正常",
     cli_check_version_mismatch: |tui, app| format!("\n注意: TUI のバージョン {tui} が app のバージョン {app} と一致しません。"),
 };
 

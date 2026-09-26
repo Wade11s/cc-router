@@ -160,11 +160,18 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
             out.push(segment.to_string());
             continue;
         }
+        let before = out.len();
         let mut lines = LineFill { width, line: String::new(), used: 0, continuation: false, out: &mut out };
         for token in tokens(segment) {
             lines.push_token(token);
         }
         lines.finish();
+        // 全是空格的段落: 每个空格都落在断点上会被逐个丢弃, 段落本身产不出任何一行。调用方
+        // (`widgets/detail.rs` 的 `FieldFirst`) 靠"第一段的第一行"取标签行, 段落消失会连带把
+        // 那一整行标签吞掉, 所以这里补一行空串, 保证非空段落至少产出一行。
+        if out.len() == before {
+            out.push(String::new());
+        }
     }
     out
 }
@@ -203,7 +210,8 @@ fn tokens(segment: &str) -> Vec<Token<'_>> {
 ///
 /// 空白规则: 折行处的空格 (不论连续几个) 全部丢掉——行尾的不留, 续行开头的也不带过去, 所以折行
 /// 永远不会产出空行或只有空格的行。只有段首 (文本开头或显式 `'\n'` 之后) 的空格算缩进保留, 除非
-/// 它们本身就落在了折行处。
+/// 它们本身就落在了折行处——已知取舍: 缩进后的第一个词放不进这一行时, 缩进本身也跟着这次折行
+/// 一起被丢弃 (`wrap_drops_every_space_at_a_break` 的最后一条断言), 不会把缩进带到下一行重新对齐。
 struct LineFill<'o> {
     width: usize,
     line: String,
@@ -385,6 +393,14 @@ mod tests {
         // 段首的空格落在断点上 (下一个词放不进这一行) 也一并丢掉。
         assert_eq!(wrap(" abcd", 4), vec!["abcd"]);
         assert_eq!(wrap("  abcdefghi", 10), vec!["abcdefghi"]);
+    }
+
+    /// 全是空格且比 `width` 还宽的段落: 每个空格都落在断点上被逐个丢掉, 修复前会产不出任何一行
+    /// (`widgets/detail.rs::FieldFirst` 靠第一行取标签, 段落消失=标签行消失)。修复后至少一行空串。
+    #[test]
+    fn wrap_keeps_a_line_for_an_all_whitespace_paragraph() {
+        assert_eq!(wrap("   ", 2), vec![""]);
+        assert_eq!(wrap("a\n     \nb", 3), vec!["a", "", "b"]);
     }
 
     /// 段首 (文本开头或 `'\n'` 之后) 没落在断点上的空格是缩进, 保留; 续行开头的空格不保留。
