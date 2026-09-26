@@ -1162,7 +1162,9 @@ fn detail_rows(
     let referenced = if sub.referenced_by.is_empty() {
         Span::styled(s.sub_unreferenced, theme.muted_style())
     } else {
-        Span::raw(clip(&sub.referenced_by.join(", "), value_width))
+        // 与删除确认弹窗第三行 (`Strings::list_sep`) 用同一个分隔符——之前这里硬编码 ", ",
+        // 与桌面端/删除弹窗的中日文分隔符不一致。
+        Span::raw(clip(&sub.referenced_by.join(s.list_sep), value_width))
     };
     rows.push(DetailRow::Line(field_line(s, s.sub_f_referenced, vec![referenced])));
 
@@ -1287,8 +1289,13 @@ fn draw_quota_row(frame: &mut Frame, area: Rect, ctx: &DrawCtx, label: &str, q: 
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
-    use crate::i18n::ZH;
+    use crate::format::Tz;
+    use crate::fx::Fx;
+    use crate::i18n::{Strings, EN, ZH};
+    use crate::theme::ColorMode;
 
     /// 页面不可见时攒了好几拨订阅变化, 回来只该闪最新一拨——`extend` 会把
     /// 旧的也留着, 之后每帧都要多扫一遍这些早就过时的 id。
@@ -1433,5 +1440,43 @@ mod tests {
         assert_eq!(slot_model_col(76, &real, &ZH), 32);
         // 宽度小到连 24 都算不出来时, 仍然钳制在 24, 不会因为窄而给出更小 (甚至溢出成 0) 的值。
         assert_eq!(slot_model_col(20, &slots_with_sonnet("b"), &ZH), 24);
+    }
+
+    /// `Line` → 纯文本, 只用来断言 `DetailRow::Line` 里到底装了什么文字, 不关心 span 的样式。
+    fn line_text(line: &Line) -> String {
+        line.spans.iter().map(|span| span.content.as_ref()).collect()
+    }
+
+    /// 详情面板「被引用」行必须用 [`Strings::list_sep`] 连接虚拟模型名——之前硬编码 `", "`,
+    /// 与删除确认弹窗第三行 (同样走 `list_sep`) 的中日文分隔符「、」不一致。
+    #[test]
+    fn referenced_by_row_joins_with_the_language_list_separator() {
+        let mut sub = minimal_sub("1");
+        sub.referenced_by = vec!["model-sonnet".into(), "model-opus".into()];
+        let theme = Theme::new(ColorMode::TrueColor);
+        let mut fx = Fx::new(false);
+        let store = Store::default();
+        let busy = HashMap::new();
+        let last_outcome = HashMap::new();
+
+        for (label, s, want) in [
+            ("zh", &ZH as &'static Strings, "model-sonnet、model-opus"),
+            ("en", &EN as &'static Strings, "model-sonnet, model-opus"),
+        ] {
+            let ctx = DrawCtx {
+                theme: &theme,
+                s,
+                now_ms: 0,
+                tick: 0,
+                fx: &mut fx,
+                store: &store,
+                busy: &busy,
+                last_outcome: &last_outcome,
+                tz: Tz::Fixed(0),
+            };
+            let rows = detail_rows(&sub, &sub.model_slots, &sub.slot_efforts, None, &ctx, 120);
+            let found = rows.iter().any(|row| matches!(row, DetailRow::Line(line) if line_text(line).contains(want)));
+            assert!(found, "[{label}] 「被引用」行应包含 {want:?}, 实际没找到");
+        }
     }
 }

@@ -21,7 +21,7 @@ expression: "render(&mut subs_app(false), 120, 40)"
 "│                                                        ││                 余额 39.28 CNY                             │" Hidden by multi-width symbols: [(77, " "), (79, " ")]
 "│                                                        ││                 赠送余额 1.00 CNY 即将过期                 │" Hidden by multi-width symbols: [(77, " "), (79, " "), (81, " "), (83, " "), (95, " "), (97, " "), (99, " "), (101, " ")]
 "│                                                        ││ モデル          12 件をキャッシュ済み                      │" Hidden by multi-width symbols: [(61, " "), (63, " "), (65, " "), (80, " "), (82, " "), (84, " "), (86, " "), (88, " "), (90, " "), (92, " "), (94, " "), (96, " ")]
-"│                                                        ││ 参照            model-sonnet, model-opus                   │" Hidden by multi-width symbols: [(61, " "), (63, " ")]
+"│                                                        ││ 参照            model-sonnet、model-opus                   │" Hidden by multi-width symbols: [(61, " "), (63, " "), (89, " ")]
 "│                                                        ││ 直近のエラー    —                                          │" Hidden by multi-width symbols: [(61, " "), (63, " "), (65, " "), (67, " "), (69, " "), (71, " ")]
 "│                                                        ││                                                            │"
 "│                                                        ││                                                            │"

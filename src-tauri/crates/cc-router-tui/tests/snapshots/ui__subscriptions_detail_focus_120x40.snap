@@ -20,7 +20,7 @@ expression: "render(&mut a, 120, 40)"
 "│                                                        ││           余额 39.28 CNY                                   │" Hidden by multi-width symbols: [(71, " "), (73, " ")]
 "│                                                        ││           赠送余额 1.00 CNY 即将过期                       │" Hidden by multi-width symbols: [(71, " "), (73, " "), (75, " "), (77, " "), (89, " "), (91, " "), (93, " "), (95, " ")]
 "│                                                        ││ 模型      已缓存 12 个                                     │" Hidden by multi-width symbols: [(61, " "), (63, " "), (71, " "), (73, " "), (75, " "), (81, " ")]
-"│                                                        ││ 被引用    model-sonnet, model-opus                         │" Hidden by multi-width symbols: [(61, " "), (63, " "), (65, " ")]
+"│                                                        ││ 被引用    model-sonnet、model-opus                         │" Hidden by multi-width symbols: [(61, " "), (63, " "), (65, " "), (83, " ")]
 "│                                                        ││ 最近错误  —                                                │" Hidden by multi-width symbols: [(61, " "), (63, " "), (65, " "), (67, " ")]
 "│                                                        ││                                                            │"
 "│                                                        ││                                                            │"
