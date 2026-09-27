@@ -1,11 +1,11 @@
-import { ExternalLink, Globe, Star, TriangleAlert } from "lucide-react";
+import { ExternalLink, Globe, TriangleAlert } from "lucide-react";
 import Github from "@lobehub/icons/es/Github";
 import { runtime } from "@/runtime";
 import { version as VERSION } from "../../package.json";
 import { LogoMark } from "@/components/sketch/LogoMark";
+import { REPO_URL, StarPrompt } from "@/components/StarPrompt";
 import { useT } from "@/i18n";
 
-const REPO_URL = "https://github.com/finch-xu/cc-router";
 const DOCS_URL = "https://ccrouter.app/docs/";
 const SITE_URL = "https://ccrouter.app";
 
@@ -61,17 +61,7 @@ export function AboutPage() {
               </div>
             </div>
           </div>
-          <div className="about-star">
-            <Star size={14} className="about-star-icon" />
-            <span className="about-star-text">{t("about.star.text")}</span>
-            <button
-              className="btn primary"
-              type="button"
-              onClick={() => runtime.openExternal(REPO_URL).catch(() => {})}
-            >
-              <Star size={12} /> {t("about.star.action")}
-            </button>
-          </div>
+          <StarPrompt className="in-card" />
         </div>
       </div>
 

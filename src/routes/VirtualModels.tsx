@@ -10,6 +10,7 @@ import {
 import { StatusBadge } from "@/components/StatusBadge";
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { SortableSubscriptionList } from "@/components/SortableSubscriptionList";
+import { StarPrompt } from "@/components/StarPrompt";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useVirtualModels, useUpdateVirtualModel } from "@/hooks/useVirtualModels";
 import { isAnthropicPassthrough } from "@/lib/authTypes";
@@ -73,6 +74,8 @@ export function VirtualModelsPage() {
           />
         ))}
       </div>
+
+      <StarPrompt className="page-end" />
     </>
   );
 }
