@@ -15,6 +15,7 @@ import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useVirtualModels, useUpdateVirtualModel } from "@/hooks/useVirtualModels";
 import { isAnthropicPassthrough } from "@/lib/authTypes";
 import { customProviderLabel } from "@/lib/providerLabels";
+import { providerName as localProviderName } from "@/lib/providerText";
 import { VM_META, VM_ORDER, vmNameToSlot } from "@/lib/virtualModels";
 import { useT } from "@/i18n";
 import type {
@@ -222,13 +223,13 @@ function AddSubscriptionDialog({
   isFallback: boolean;
   onConfirm: (ids: string[]) => void;
 }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const candidates = allSubs.filter((s) => s.enabled && !existingIds.includes(s.id));
 
   const providerName = (sub: SubscriptionDto) =>
-    customProviderLabel(sub.provider_id, t) ?? sub.provider_display_name;
+    customProviderLabel(sub.provider_id, t) ?? localProviderName(sub, locale);
   // 与 SortableSubscriptionList 同一套规则: 加进来之后这条订阅在本卡片里实际会用的模型
   const modelFor = (sub: SubscriptionDto) => {
     if (slot !== null) return sub.model_slots[slot] || "—";

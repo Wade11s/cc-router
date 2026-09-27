@@ -157,7 +157,7 @@ pub async fn create_chatgpt_oauth_subscription(
         forward_client_headers: false,
         model_discovery: provider.model_discovery.clone(),
         balance_discovery: provider.balance_discovery.clone(),
-        provider_display_name: provider.display_name.clone(),
+        provider_display_name: provider.display_name.zh.clone(),
         provider_icon: provider.icon.clone().unwrap_or_default(),
         is_user_defined: false,
     };
@@ -177,7 +177,7 @@ pub async fn create_chatgpt_oauth_subscription(
     }
 
     let guard = rt.read().await;
-    Ok(SubscriptionDto::from_runtime(&guard, vec![]))
+    Ok(SubscriptionDto::from_runtime(&guard, vec![], &state.providers))
 }
 
 /// 撤销订阅的 OAuth 缓存 (前端在 disconnect / 删除订阅时调).
@@ -428,7 +428,7 @@ pub async fn create_kiro_subscription(
         forward_client_headers: false,
         model_discovery: provider.model_discovery.clone(),
         balance_discovery: provider.balance_discovery.clone(),
-        provider_display_name: provider.display_name.clone(),
+        provider_display_name: provider.display_name.zh.clone(),
         provider_icon: provider.icon.clone().unwrap_or_default(),
         is_user_defined: false,
     };
@@ -451,7 +451,7 @@ pub async fn create_kiro_subscription(
         subs.insert(id, rt.clone());
     }
     let guard = rt.read().await;
-    Ok(SubscriptionDto::from_runtime(&guard, vec![]))
+    Ok(SubscriptionDto::from_runtime(&guard, vec![], &state.providers))
 }
 
 #[tauri::command]

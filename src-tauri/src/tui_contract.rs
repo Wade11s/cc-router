@@ -2,9 +2,11 @@
 //! 这里把**真实** DTO 序列化后塞进那些结构体, 后端改字段名 / 改枚举值 / 改头名字时当场失败。
 //! 新增 TUI 用到的 DTO 时, 在这里加一条。
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use cc_router_tui::client::{discovery, dto, http};
+use cc_router_tui::i18n::Lang;
 use cc_router_tui::secret::Secret;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -18,7 +20,8 @@ use crate::commands::subscriptions::{
 };
 use crate::commands::virtual_models::{UpdateVirtualModelInput, VirtualModelDto};
 use crate::observability::request_log::RequestStatus;
-use crate::provider::model::{Auth, AuthHeaderFormat, AuthType, Compatibility, ModelDiscovery, ProviderCategory, ProviderEndpoint};
+use crate::provider::model::{AuthHeaderFormat, AuthType};
+use crate::provider::Provider;
 use crate::runtime_file::RuntimeFile;
 use crate::settings::model::{ProxyMode, Settings};
 use crate::subscription::model::{
@@ -160,11 +163,17 @@ fn subscription_matches() {
     let mut rt = SubscriptionRuntime::from_row(row);
     rt.cooldown_until = Some(chrono::DateTime::from_timestamp_millis(1_700_000_000_000).unwrap());
     rt.last_error_message = Some("上游 429".into());
-    let real = SubscriptionDto::from_runtime(&rt, Vec::new());
+    let registry = HashMap::from([("zhipu".to_string(), zhipu_provider())]);
+    let real = SubscriptionDto::from_runtime(&rt, Vec::new(), &registry);
     let view: dto::Subscription = through_json(&real);
     assert_eq!(view.id, id);
     assert_eq!(view.display_name, "智谱主号");
     assert_eq!(view.provider_display_name, "智谱");
+    assert_eq!(view.provider_name(Lang::En), "Zhipu GLM", "provider_names 被改名会静默落回中文快照");
+    assert_eq!(view.provider_name(Lang::Ja), "Zhipu GLM（日）");
+    // 注册表里查不到 (自定义订阅 / yaml 已删) 就用快照。
+    let orphan: dto::Subscription = through_json(&SubscriptionDto::from_runtime(&rt, Vec::new(), &HashMap::new()));
+    assert_eq!(orphan.provider_name(Lang::En), "智谱");
     assert!(view.enabled);
     assert_eq!(view.state, dto::SubscriptionState::Healthy);
     assert_eq!(view.cooldown_until, Some(1_700_000_000_000));
@@ -209,7 +218,7 @@ fn subscription_detail_fields_match() {
         }],
         fetched_at: chrono::Utc::now(),
     });
-    let real = SubscriptionDto::from_runtime(&rt, vec!["model-sonnet".into()]);
+    let real = SubscriptionDto::from_runtime(&rt, vec!["model-sonnet".into()], &HashMap::new());
     let view: dto::Subscription = through_json(&real);
 
     assert_eq!(view.slot_efforts.opus.as_deref(), Some("high"));
@@ -332,7 +341,7 @@ fn subscription_over_its_quota_matches() {
     row.token_quotas = TokenQuotas { daily: Some(1000), monthly: Some(100), ..Default::default() };
     let mut rt = SubscriptionRuntime::from_row(row);
     rt.quota_usage.add(chrono::Utc::now(), 60, 30, 5, 5);
-    let view: dto::Subscription = through_json(&SubscriptionDto::from_runtime(&rt, Vec::new()));
+    let view: dto::Subscription = through_json(&SubscriptionDto::from_runtime(&rt, Vec::new(), &HashMap::new()));
     assert!(!view.is_dispatchable);
     let tight = view.tightest_quota().expect("设了两个上限");
     assert_eq!(tight.period, dto::QuotaPeriod::Monthly);
@@ -799,46 +808,40 @@ fn request_query_args_deserialize_into_the_backend_filters() {
     assert_eq!(filters.status.as_deref(), Some("error"));
 }
 
+fn provider_from_yaml(yaml: &str) -> Provider {
+    serde_yaml::from_str(yaml).unwrap()
+}
+
+/// 两个 endpoint 的智谱: 名字 / 描述 / 端点名用三语写法, 另一处用纯字符串写法, 两种都要走通。
+fn zhipu_provider() -> Provider {
+    provider_from_yaml(
+        r#"
+id: zhipu
+display_name: { zh: "智谱", en: "Zhipu GLM", ja: "Zhipu GLM（日）" }
+description: { zh: "智谱 AI", en: "Zhipu AI", ja: "Zhipu AI" }
+compatibility: verified
+endpoints:
+  - id: default
+    label: { zh: "默认", en: "Default", ja: "デフォルト" }
+    base_url: "https://open.bigmodel.cn/api/anthropic"
+    messages_path: "/v1/messages"
+  - id: intl
+    label: { zh: "国际版", en: "International", ja: "国際版" }
+    base_url: "https://intl.bigmodel.cn/api/anthropic"
+    messages_path: "/v1/messages"
+default_endpoint: intl
+auth: { type: api_key, header_name: Authorization, header_format: bearer }
+model_discovery: { example_models: ["glm-4.6"] }
+"#,
+    )
+}
+
 /// `list_providers` 的一项: 两个 endpoint、`auth.type = "api_key"` (键名是 `type` 不是 `auth_type`,
 /// 见 `provider::model::Auth` 的 `#[serde(rename)]`)、`model_discovery` 带 `example_models`。同时
 /// 覆盖 `Provider::is_oauth()` / `default_endpoint()` 两个取值方法。
 #[test]
 fn provider_info_matches() {
-    let real = ProviderInfo {
-        id: "zhipu".into(),
-        display_name: "智谱".into(),
-        description: Some("智谱 AI".into()),
-        homepage: None,
-        docs_url: None,
-        api_key_url: None,
-        icon: None,
-        compatibility: Compatibility::Verified,
-        compatibility_notes: None,
-        category: ProviderCategory::FirstParty,
-        endpoints: vec![
-            ProviderEndpoint {
-                id: "default".into(),
-                label: "默认".into(),
-                description: None,
-                base_url: "https://open.bigmodel.cn/api/anthropic".into(),
-                messages_path: "/v1/messages".into(),
-                region: None,
-                billing: None,
-            },
-            ProviderEndpoint {
-                id: "intl".into(),
-                label: "国际版".into(),
-                description: None,
-                base_url: "https://intl.bigmodel.cn/api/anthropic".into(),
-                messages_path: "/v1/messages".into(),
-                region: None,
-                billing: None,
-            },
-        ],
-        default_endpoint: Some("intl".into()),
-        auth: Auth { auth_type: AuthType::ApiKey, header_name: "Authorization".into(), header_format: AuthHeaderFormat::Bearer },
-        model_discovery: ModelDiscovery { example_models: vec!["glm-4.6".into()], ..ModelDiscovery::default() },
-    };
+    let real = ProviderInfo::from(&zhipu_provider());
     let view: dto::Provider = through_json(&real);
     assert_eq!(view.id, "zhipu");
     assert_eq!(view.display_name, "智谱");
@@ -852,29 +855,32 @@ fn provider_info_matches() {
     assert!(!view.is_oauth());
     assert_eq!(view.default_endpoint().map(|e| e.id.as_str()), Some("intl"), "应该取 default_endpoint 指的那一个");
 
+    // 顶层是中文, 英日文从 translations 叠加; 纯字符串写法的字段三语相同。
+    let en = view.clone().localized(Lang::En);
+    assert_eq!(en.display_name, "Zhipu GLM");
+    assert_eq!(en.description.as_deref(), Some("Zhipu AI"));
+    assert_eq!(en.endpoints[0].label, "Default");
+    assert_eq!(en.endpoints[1].label, "International");
+    let ja = view.clone().localized(Lang::Ja);
+    assert_eq!(ja.display_name, "Zhipu GLM（日）");
+    assert_eq!(ja.endpoints[1].label, "国際版");
+
     // 指不到 (default_endpoint 是个不存在的 id) 就落回第一个。
     let mut dangling = view.clone();
     dangling.default_endpoint = Some("no-such-id".into());
     assert_eq!(dangling.default_endpoint().map(|e| e.id.as_str()), Some("default"));
 
-    // chatgpt_oauth / kiro_oauth 这两类应该被 TUI 判定为 OAuth (厂商选择器里置灰)。`ProviderInfo`/
-    // `Auth` 都没有 `Clone`, 这里重新构造一份而不是拿 `real` 改字段。
-    let oauth_real = ProviderInfo {
-        id: "chatgpt".into(),
-        display_name: "ChatGPT".into(),
-        description: None,
-        homepage: None,
-        docs_url: None,
-        api_key_url: None,
-        icon: None,
-        compatibility: Compatibility::Untested,
-        compatibility_notes: None,
-        category: ProviderCategory::SecondParty,
-        endpoints: vec![],
-        default_endpoint: None,
-        auth: Auth { auth_type: AuthType::ChatgptOauth, header_name: "Authorization".into(), header_format: AuthHeaderFormat::Bearer },
-        model_discovery: ModelDiscovery::default(),
-    };
+    // chatgpt_oauth / kiro_oauth 这两类应该被 TUI 判定为 OAuth (厂商选择器里置灰)。
+    let oauth_real = ProviderInfo::from(&provider_from_yaml(
+        r#"
+id: chatgpt
+display_name: ChatGPT
+compatibility: untested
+category: second_party
+endpoints: []
+auth: { type: chatgpt_oauth, header_name: Authorization, header_format: bearer }
+"#,
+    ));
     let oauth_view: dto::Provider = through_json(&oauth_real);
     assert!(oauth_view.is_oauth());
 }

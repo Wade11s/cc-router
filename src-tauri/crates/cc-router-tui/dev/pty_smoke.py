@@ -148,11 +148,17 @@ DATA = {
             ],
             "default_endpoint": "default", "auth": {"type": "api_key"},
             "model_discovery": {"enabled": True, "example_models": ["glm-4.6"]},
+            "translations": {
+                lang: {"display_name": "Zhipu GLM", "description": None, "endpoints": {
+                    "default": {"label": "Default"}, "intl": {"label": "International"},
+                }} for lang in ("en", "ja")
+            },
         },
         {
             "id": "chatgpt", "display_name": "ChatGPT", "description": None,
             "endpoints": [], "default_endpoint": None, "auth": {"type": "chatgpt_oauth"},
             "model_discovery": {"enabled": False, "example_models": []},
+            "translations": {lang: {"display_name": "ChatGPT", "description": None, "endpoints": {}} for lang in ("en", "ja")},
         },
     ],
     "probe_custom_models": {

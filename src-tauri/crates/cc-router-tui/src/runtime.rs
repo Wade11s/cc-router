@@ -155,6 +155,8 @@ async fn call_wizard(client: &Client, cmd: &WizardCmd, s: &'static Strings) -> W
     match cmd {
         WizardCmd::LoadProviders => {
             let result = client.call::<Vec<Provider>>(commands::LIST_PROVIDERS, json!({})).await;
+            // 连接时解析出的语言一路用到底: 在这里一次换好, 向导里拿到的就是本地化后的名字。
+            let result = result.map(|ps| ps.into_iter().map(|p| p.localized(s.lang)).collect());
             WizardResult::Providers(result.map_err(|e: ClientError| client_error(s, &e)))
         }
         WizardCmd::Create(input) => {
@@ -1122,7 +1124,7 @@ mod tests {
 
     /// `WizardCmd::LoadProviders` 打对了 `list_providers`, 把响应体正确解析进
     /// `WizardResult::Providers(Ok(..))`——尤其是 `auth` 的键名 (`type`, 不是 `auth_type`) 与
-    /// `Provider` 声明的字段形状对得上。
+    /// `Provider` 声明的字段形状对得上; 并且已经按界面语言 (这里是英文) 换好了上屏文字。
     #[tokio::test]
     async fn wizard_load_providers_reports_back() {
         let server = MockServer::start().await;
@@ -1136,6 +1138,10 @@ mod tests {
                 "default_endpoint": "default",
                 "auth": {"type": "api_key"},
                 "model_discovery": {"enabled": true, "example_models": ["glm-4.6"]},
+                "translations": {
+                    "en": {"display_name": "Zhipu GLM", "description": null, "endpoints": {"default": {"label": "Default"}}},
+                    "ja": {"display_name": "Zhipu GLM", "description": null, "endpoints": {"default": {"label": "デフォルト"}}},
+                },
             }])))
             .mount(&server)
             .await;
@@ -1144,7 +1150,7 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        spawn_wizard(client, tx, 7, WizardCmd::LoadProviders, &crate::i18n::ZH);
+        spawn_wizard(client, tx, 7, WizardCmd::LoadProviders, &crate::i18n::EN);
 
         let done = rx.recv().await.expect("channel 关闭了");
         let Action::WizardDone { epoch, result } = done else { panic!("{done:?}") };
@@ -1153,6 +1159,8 @@ mod tests {
         let providers = providers.expect("应该成功");
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "zhipu");
+        assert_eq!(providers[0].display_name, "Zhipu GLM", "英文界面应该拿到英文名");
+        assert_eq!(providers[0].endpoints[0].label, "Default");
         assert_eq!(providers[0].auth.auth_type, "api_key");
         assert_eq!(providers[0].endpoints[0].base_url, "https://open.bigmodel.cn/api/anthropic");
         assert_eq!(providers[0].model_discovery.example_models, vec!["glm-4.6".to_string()]);

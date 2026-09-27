@@ -2,24 +2,48 @@ id: ollama
 display_name: "Ollama"
 icon: ollama
 category: aggregator
-description: "Ollama 本地推理服务（Anthropic 兼容端点）"
+description:
+  zh: "Ollama 本地推理服务（Anthropic 兼容端点）"
+  en: "Ollama local inference service (Anthropic-compatible endpoint)"
+  ja: "Ollama ローカル推論サービス（Anthropic 互換エンドポイント）"
 homepage: "https://ollama.com"
 docs_url: "https://docs.ollama.com/api/anthropic-compatibility"
 api_key_url: "https://ollama.com/settings/keys"
 
 compatibility: untested
-compatibility_notes: |
-  1. Ollama 仅监听 localhost:11434, 没有公网端点; 云端模型 (如 glm-4.7:cloud)
-     也是通过本地 Ollama 客户端转发, 使用前必须本机已安装 Ollama 并 pull/login
-     对应模型.
-  2. Token默认填写"ollama".
-  3. Ollama 未提供 Anthropic 风格的 /v1/models 列表接口, 需手动输入模型 tag
-     (如 "qwen3-coder", "glm-4.7:cloud"). 本地模型用 `ollama list` 查看.
+compatibility_notes:
+  zh: |
+    1. Ollama 仅监听 localhost:11434, 没有公网端点; 云端模型 (如 glm-4.7:cloud)
+       也是通过本地 Ollama 客户端转发, 使用前必须本机已安装 Ollama 并 pull/login
+       对应模型.
+    2. Token默认填写"ollama".
+    3. Ollama 未提供 Anthropic 风格的 /v1/models 列表接口, 需手动输入模型 tag
+       (如 "qwen3-coder", "glm-4.7:cloud"). 本地模型用 `ollama list` 查看.
+  en: |
+    1. Ollama only listens on localhost:11434 and has no public endpoint; cloud models (e.g. glm-4.7:cloud)
+       are also forwarded through the local Ollama client, so Ollama must be installed locally and the
+       model pulled / logged in first.
+    2. The token defaults to "ollama".
+    3. Ollama has no Anthropic-style /v1/models list endpoint, so enter the model tag manually
+       (e.g. "qwen3-coder", "glm-4.7:cloud"). Use `ollama list` to see local models.
+  ja: |
+    1. Ollama は localhost:11434 のみで待ち受け、公開エンドポイントはありません。クラウドモデル（例: glm-4.7:cloud）
+       もローカルの Ollama クライアント経由で転送されるため、事前に Ollama をインストールし、
+       対象モデルを pull / login しておく必要があります。
+    2. トークンの既定値は "ollama" です。
+    3. Ollama には Anthropic 形式の /v1/models 一覧エンドポイントがないため、モデル tag を手動で入力してください
+       （例: "qwen3-coder"、"glm-4.7:cloud"）。ローカルモデルは `ollama list` で確認できます。
 
 endpoints:
   - id: localhost
-    label: "本地 · 默认端口"
-    description: "本机已运行 Ollama (默认 11434 端口)"
+    label:
+      zh: "本地 · 默认端口"
+      en: "Local · Default port"
+      ja: "ローカル · 既定ポート"
+    description:
+      zh: "本机已运行 Ollama (默认 11434 端口)"
+      en: "Ollama running on this machine (default port 11434)"
+      ja: "このマシンで Ollama が起動済み（既定ポート 11434）"
     base_url: "http://localhost:11434"
     messages_path: "/v1/messages"
     region: local

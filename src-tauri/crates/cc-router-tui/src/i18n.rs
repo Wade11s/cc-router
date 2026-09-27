@@ -76,6 +76,8 @@ impl Lang {
 }
 
 pub struct Strings {
+    /// 这份文案对应的语言。数据里的多语字段 (如厂商名) 按它取。
+    pub lang: Lang,
     /// 五个标签, 顺序即 `1`–`5`。
     pub tabs: [&'static str; 5],
     pub conn_connecting: &'static str,
@@ -615,6 +617,7 @@ fn discovery_error(s: &Strings, e: &crate::client::discovery::DiscoveryError) ->
 }
 
 pub const ZH: Strings = Strings {
+    lang: Lang::Zh,
     tabs: ["总览", "订阅", "虚拟模型", "实时路由", "日志"],
     conn_connecting: "连接中",
     conn_connected: "已连接",
@@ -1028,6 +1031,7 @@ cc-router-tui — cc-router 的终端界面
 /// Reasoning effort / Fallback / Quota / Balance / Live routing / Request logs …)。英文普遍比中文宽,
 /// 定宽列都由布局按实际文字宽度推导, 这里不为了塞进中文的列宽去缩写。
 pub const EN: Strings = Strings {
+    lang: Lang::En,
     tabs: ["Overview", "Subscriptions", "Virtual models", "Live routing", "Logs"],
     conn_connecting: "Connecting",
     conn_connected: "Connected",
@@ -1456,6 +1460,7 @@ Options:
 /// 有草稿时的底栏、放不下全称的帮助行) 用 ja.json 里已有的短形 (サブスク) 或同义的短词 (遅延 /
 /// 時間切れ), 不自造缩写; 详情弹窗、帮助的键名列、过滤选择器这些宽处用全称 (レイテンシ / タイムアウト)。
 pub const JA: Strings = Strings {
+    lang: Lang::Ja,
     tabs: ["概要", "サブスク", "仮想モデル", "リアルタイムルーティング", "ログ"],
     conn_connecting: "接続中",
     conn_connected: "接続済み",

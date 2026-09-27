@@ -12,7 +12,7 @@ use cc_router_tui::app::{App, AppOptions, MIN_HEIGHT};
 use cc_router_tui::client::dto::{
     AuthHeaderFormat, BalanceCache, BalanceEntry, BalanceSeverity, BalanceSnapshot, CreateInput, CreateSource, CreatedSubscription,
     CustomProtocol, CustomSource, ModelCache, ModelDiscovery, ModelInfo, ModelSlots, OverallStats, ProbeInput, ProbeModelsResult, Provider,
-    ProviderAuth, ProviderEndpoint, ProxyStatus, QuotaPeriod, QuotaUsage, RefreshBalanceResult, RefreshModelsResult, RequestFilters,
+    ProviderAuth, ProviderEndpoint, ProviderText, ProviderTranslations, ProxyStatus, QuotaPeriod, QuotaUsage, RefreshBalanceResult, RefreshModelsResult, RequestFilters,
     RequestLog, RequestPage, RequestQuery, RequestStatus, RoutingMode, SeriesPoint, Settings, SlotEfforts, Subscription, SubscriptionState,
     TestConnectionResult, VirtualModel, EFFORT_CHOICES,
 };
@@ -75,6 +75,7 @@ fn sub(id: &str, name: &str, state: SubscriptionState) -> Subscription {
         id: id.into(),
         display_name: name.into(),
         provider_display_name: "p".into(),
+        provider_names: None,
         enabled: true,
         state,
         cooldown_until: None,
@@ -394,7 +395,13 @@ fn zhipu_provider() -> Provider {
         default_endpoint: Some("cn".into()),
         auth: ProviderAuth { auth_type: "api_key".into() },
         model_discovery: ModelDiscovery { enabled: true, example_models: vec!["glm-4-plus".into(), "glm-4.5-flash".into()] },
+        // 向导收到的是 runtime 已经按界面语言换好的列表 (`Provider::localized`), 这里的译文不会上屏。
+        translations: ProviderTranslations { en: provider_text("Zhipu AI"), ja: provider_text("Zhipu AI") },
     }
+}
+
+fn provider_text(name: &str) -> ProviderText {
+    ProviderText { display_name: name.into(), description: None, endpoints: Default::default() }
 }
 
 /// OAuth 类厂商 (ChatGPT), TUI 不做设备码流程, 选中只给提示、不设值。
@@ -407,6 +414,7 @@ fn chatgpt_provider() -> Provider {
         default_endpoint: None,
         auth: ProviderAuth { auth_type: "chatgpt_oauth".into() },
         model_discovery: ModelDiscovery { enabled: false, example_models: vec![] },
+        translations: ProviderTranslations { en: provider_text("ChatGPT"), ja: provider_text("ChatGPT") },
     }
 }
 

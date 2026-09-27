@@ -3,8 +3,11 @@
 //! 本 crate 作为 dev-dependency, 用真实 DTO 序列化后反序列化进这里的结构体。
 //! 后端改字段名 / 枚举值 → 那边的测试当场失败。给 TUI 加新字段时同步在那边加一条断言。
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::Lang;
 use crate::secret::Secret;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -72,7 +75,11 @@ impl QuotaUsage {
 pub struct Subscription {
     pub id: String,
     pub display_name: String,
+    /// 创建时写进 DB 的厂商名快照 (中文); 显示一律走 [`Subscription::provider_name`]。
     pub provider_display_name: String,
+    /// 内置厂商的三语名字 (后端按 yaml 现查); 自定义订阅与 yaml 已删的厂商没有这个字段。
+    #[serde(default)]
+    pub provider_names: Option<LocalizedName>,
     pub enabled: bool,
     pub state: SubscriptionState,
     /// Unix 毫秒
@@ -549,6 +556,34 @@ impl RequestQuery {
     }
 }
 
+/// 后端 `provider::model::LocalizedText`: 三语各一份, 后端保证齐全。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct LocalizedName {
+    pub zh: String,
+    pub en: String,
+    pub ja: String,
+}
+
+impl LocalizedName {
+    pub fn get(&self, lang: Lang) -> &str {
+        match lang {
+            Lang::Zh => &self.zh,
+            Lang::En => &self.en,
+            Lang::Ja => &self.ja,
+        }
+    }
+}
+
+impl Subscription {
+    /// 界面上显示的厂商名: 内置厂商按界面语言取, 否则用快照。
+    pub fn provider_name(&self, lang: Lang) -> &str {
+        match &self.provider_names {
+            Some(names) => names.get(lang),
+            None => &self.provider_display_name,
+        }
+    }
+}
+
 /// `list_providers` 的一项。只声明 TUI 用得到的字段, 后端 `ProviderInfo` 其余字段 (homepage /
 /// docs_url / compatibility 等) 由 serde 忽略。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -562,6 +597,9 @@ pub struct Provider {
     pub default_endpoint: Option<String>,
     pub auth: ProviderAuth,
     pub model_discovery: ModelDiscovery,
+    /// 顶层的 `display_name` / `description` / 端点 `label` 是中文; 英日文在这里,
+    /// 由 [`Provider::localized`] 叠加。
+    pub translations: ProviderTranslations,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -569,6 +607,27 @@ pub struct ProviderEndpoint {
     pub id: String,
     pub label: String,
     pub base_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ProviderTranslations {
+    pub en: ProviderText,
+    pub ja: ProviderText,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ProviderText {
+    pub display_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// key 是 endpoint id
+    #[serde(default)]
+    pub endpoints: BTreeMap<String, EndpointText>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct EndpointText {
+    pub label: String,
 }
 
 /// 后端这个字段的键名是 `type` (`#[serde(rename = "type")]`), **不是** `auth_type`。
@@ -592,6 +651,23 @@ pub struct ModelDiscovery {
 pub const OAUTH_AUTH_TYPES: [&str; 2] = ["chatgpt_oauth", "kiro_oauth"];
 
 impl Provider {
+    /// 把上屏文字换成 `lang` 的版本。中文是原字段, 不用换。
+    pub fn localized(mut self, lang: Lang) -> Self {
+        let text = match lang {
+            Lang::Zh => return self,
+            Lang::En => &self.translations.en,
+            Lang::Ja => &self.translations.ja,
+        };
+        self.display_name = text.display_name.clone();
+        self.description = text.description.clone();
+        for e in &mut self.endpoints {
+            if let Some(t) = text.endpoints.get(&e.id) {
+                e.label = t.label.clone();
+            }
+        }
+        self
+    }
+
     pub fn is_oauth(&self) -> bool {
         OAUTH_AUTH_TYPES.contains(&self.auth.auth_type.as_str())
     }

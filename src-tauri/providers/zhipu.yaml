@@ -1,8 +1,14 @@
 id: zhipu
-display_name: "智谱 GLM"
+display_name:
+  zh: "智谱 GLM"
+  en: "Zhipu GLM"
+  ja: "Zhipu GLM"
 icon: zhipu
 category: first_party
-description: "智谱 AI 官方 Anthropic 兼容端点"
+description:
+  zh: "智谱 AI 官方 Anthropic 兼容端点"
+  en: "Official Zhipu AI Anthropic-compatible endpoint"
+  ja: "Zhipu AI 公式の Anthropic 互換エンドポイント"
 homepage: "https://open.bigmodel.cn"
 docs_url: "https://open.bigmodel.cn/dev/api"
 api_key_url: "https://open.bigmodel.cn/usercenter/apikeys"
@@ -11,7 +17,10 @@ compatibility: untested
 
 endpoints:
   - id: cn_endpoint_coding_plan
-    label: "国内版 · Coding Plan 订阅"
+    label:
+      zh: "国内版 · Coding Plan 订阅"
+      en: "China · Coding Plan subscription"
+      ja: "中国版 · Coding Plan サブスクリプション"
     description: "GLM Coding Plan"
     base_url: "https://open.bigmodel.cn/api/anthropic"
     messages_path: "/v1/messages"
@@ -19,8 +28,14 @@ endpoints:
     billing: subscription
   
   - id: cn_endpoint
-    label: "国内版 · 按量付费 API"
-    description: "智谱官方提供的 Anthropic Messages 兼容端点"
+    label:
+      zh: "国内版 · 按量付费 API"
+      en: "China · Pay-as-you-go API"
+      ja: "中国版 · 従量課金 API"
+    description:
+      zh: "智谱官方提供的 Anthropic Messages 兼容端点"
+      en: "Anthropic Messages-compatible endpoint provided by Zhipu"
+      ja: "Zhipu 公式が提供する Anthropic Messages 互換エンドポイント"
     base_url: "https://open.bigmodel.cn/api/anthropic"
     messages_path: "/v1/messages"
     region: china

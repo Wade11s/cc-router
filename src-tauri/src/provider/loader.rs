@@ -53,6 +53,7 @@ fn parse_single(raw: &str) -> AppResult<Provider> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::model::LocalizedText;
 
     /// yaml 已经编进二进制, 「解析失败 / id 冲突」不再需要等到用户机器上启动才发现。
     #[test]
@@ -74,5 +75,55 @@ mod tests {
         }
         // load_all 对单个失败是 warn + 跳过, 数量相等才说明一个都没被吞掉。
         assert_eq!(load_all().unwrap().len(), EMBEDDED_PROVIDERS.len());
+    }
+
+    /// 汉字 + 假名。全角标点不算: 英文译文里偶尔出现也不是漏翻。
+    fn has_cjk(s: &str) -> bool {
+        s.chars().any(|c| matches!(c, '\u{3040}'..='\u{30ff}' | '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}'))
+    }
+
+    /// 一个 provider 里所有上屏的多语字段, 带着 yaml 路径方便报错。
+    fn texts(p: &Provider) -> Vec<(String, &LocalizedText)> {
+        let mut out = vec![("display_name".to_string(), &p.display_name)];
+        out.extend(p.description.iter().map(|t| ("description".to_string(), t)));
+        out.extend(p.compatibility_notes.iter().map(|t| ("compatibility_notes".to_string(), t)));
+        for e in &p.endpoints {
+            out.push((format!("endpoints[{}].label", e.id), &e.label));
+            out.extend(e.description.iter().map(|t| (format!("endpoints[{}].description", e.id), t)));
+        }
+        out
+    }
+
+    /// 界面上没有回退: 含中文的字段必须写成 `{zh, en, ja}`, 而且英文里不能再有中文、日文不能照抄中文。
+    /// 纯字符串写法只留给三语都一样的品牌名。
+    #[test]
+    fn cjk_text_is_translated() {
+        let mut problems = Vec::new();
+        for (file, raw) in EMBEDDED_PROVIDERS {
+            let p = parse_single(raw).unwrap_or_else(|e| panic!("{file} 解析失败: {e}"));
+            for (path, t) in texts(&p) {
+                if has_cjk(&t.en) {
+                    problems.push(format!("{file} {path}: en 含中日文 ({:?}), 纯字符串写法?", t.en));
+                } else if has_cjk(&t.zh) && t.ja == t.zh {
+                    problems.push(format!("{file} {path}: ja 与 zh 相同 ({:?})", t.ja));
+                }
+            }
+        }
+        assert!(problems.is_empty(), "{} 处未翻译:\n{}", problems.len(), problems.join("\n"));
+    }
+
+    #[test]
+    fn localized_text_accepts_string_or_all_three_languages() {
+        let same: LocalizedText = serde_yaml::from_str("DeepSeek").unwrap();
+        assert_eq!(same, LocalizedText::same("DeepSeek"));
+
+        let per: LocalizedText = serde_yaml::from_str("{ zh: 国内版, en: China, ja: 中国版 }").unwrap();
+        assert_eq!((per.zh.as_str(), per.en.as_str(), per.ja.as_str()), ("国内版", "China", "中国版"));
+
+        // 报错要能指出是哪个键, 否则加 provider 的人只看到一句 "did not match any variant"。
+        let missing = serde_yaml::from_str::<LocalizedText>("{ zh: 国内版, en: China }").unwrap_err();
+        assert!(missing.to_string().contains("`ja`"), "{missing}");
+        let typo = serde_yaml::from_str::<LocalizedText>("{ zh: a, en: b, ja: c, jp: d }").unwrap_err();
+        assert!(typo.to_string().contains("`jp`"), "{typo}");
     }
 }

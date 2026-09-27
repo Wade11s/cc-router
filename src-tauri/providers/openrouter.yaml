@@ -17,7 +17,10 @@ id: openrouter
 display_name: "OpenRouter"
 icon: openrouter
 category: aggregator
-description: "OpenRouter 模型路由聚合平台，覆盖 Anthropic / OpenAI / Google / Meta / DeepSeek 等数百款模型"
+description:
+  zh: "OpenRouter 模型路由聚合平台，覆盖 Anthropic / OpenAI / Google / Meta / DeepSeek 等数百款模型"
+  en: "OpenRouter model routing and aggregation platform, covering hundreds of models from Anthropic / OpenAI / Google / Meta / DeepSeek and more"
+  ja: "OpenRouter モデルルーティング・アグリゲーションプラットフォーム。Anthropic / OpenAI / Google / Meta / DeepSeek など数百のモデルに対応"
 homepage: "https://openrouter.ai"
 docs_url: "https://openrouter.ai/docs/api/api-reference/anthropic-messages/create-messages"
 api_key_url: "https://openrouter.ai/keys"
@@ -27,8 +30,14 @@ compatibility_notes:
 
 endpoints:
   - id: paygo
-    label: "全球 · 按量付费 API"
-    description: "OpenRouter 唯一端点，按 token 转发到对应底层提供商"
+    label:
+      zh: "全球 · 按量付费 API"
+      en: "Global · Pay-as-you-go API"
+      ja: "グローバル · 従量課金 API"
+    description:
+      zh: "OpenRouter 唯一端点，按 token 转发到对应底层提供商"
+      en: "OpenRouter's only endpoint; forwards requests to the underlying providers, billed per token"
+      ja: "OpenRouter 唯一のエンドポイント。トークン従量課金で下層のプロバイダへ転送"
     base_url: "https://openrouter.ai/api"
     messages_path: "/v1/messages"
     region: global

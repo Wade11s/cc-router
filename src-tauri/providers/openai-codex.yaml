@@ -1,18 +1,30 @@
 id: openai_codex
-display_name: "OpenAI Codex (ChatGPT 订阅)"
+display_name:
+  zh: "OpenAI Codex (ChatGPT 订阅)"
+  en: "OpenAI Codex (ChatGPT subscription)"
+  ja: "OpenAI Codex（ChatGPT サブスクリプション）"
 icon: openai
 category: second_party
-description: "复用本机 ChatGPT Plus/Pro 的 Codex 订阅额度。需在 cc-router UI 内独立完成 OAuth 登录。"
+description:
+  zh: "复用本机 ChatGPT Plus/Pro 的 Codex 订阅额度。需在 cc-router UI 内独立完成 OAuth 登录。"
+  en: "Reuses the Codex quota of your ChatGPT Plus/Pro subscription. Complete the OAuth sign-in separately in the cc-router UI."
+  ja: "ChatGPT Plus/Pro サブスクリプションの Codex 枠を再利用します。cc-router の画面で OAuth ログインを別途行ってください。"
 homepage: "https://openai.com/chatgpt/pricing"
 docs_url: "https://platform.openai.com/docs/api-reference/responses"
 
 compatibility: verified
-compatibility_notes: "通过 ChatGPT 反代 (chatgpt.com/backend-api/codex) 走 Responses API, 协议未公开, 风险高。"
+compatibility_notes:
+  zh: "通过 ChatGPT 反代 (chatgpt.com/backend-api/codex) 走 Responses API, 协议未公开, 风险高。"
+  en: "Uses the Responses API through ChatGPT's backend (chatgpt.com/backend-api/codex). The protocol is not public and the risk is high."
+  ja: "ChatGPT のバックエンド（chatgpt.com/backend-api/codex）経由で Responses API を使います。プロトコルは非公開で、リスクが高いです。"
 
 endpoints:
   - id: chatgpt_subscription
     label: "ChatGPT Plus/Pro · Codex"
-    description: "走 chatgpt.com/backend-api/codex/responses, 用 ChatGPT 订阅额度。所有请求强制流式且禁用 max_output_tokens。"
+    description:
+      zh: "走 chatgpt.com/backend-api/codex/responses, 用 ChatGPT 订阅额度。所有请求强制流式且禁用 max_output_tokens。"
+      en: "Uses chatgpt.com/backend-api/codex/responses with your ChatGPT subscription quota. All requests are forced to stream, and max_output_tokens is not allowed."
+      ja: "chatgpt.com/backend-api/codex/responses を使い、ChatGPT サブスクリプションの枠を消費します。すべてのリクエストは強制的にストリーミングになり、max_output_tokens は使えません。"
     base_url: "https://chatgpt.com"
     messages_path: "/backend-api/codex/responses"
     region: global

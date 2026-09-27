@@ -18,7 +18,10 @@ id: fireworks
 display_name: "Fireworks AI"
 icon: fireworks
 category: aggregator
-description: "Fireworks AI 推理平台，覆盖 DeepSeek / Qwen / Llama / Kimi 等开源模型"
+description:
+  zh: "Fireworks AI 推理平台，覆盖 DeepSeek / Qwen / Llama / Kimi 等开源模型"
+  en: "Fireworks AI inference platform, serving open models such as DeepSeek / Qwen / Llama / Kimi"
+  ja: "Fireworks AI 推論プラットフォーム。DeepSeek / Qwen / Llama / Kimi などのオープンモデルに対応"
 homepage: "https://fireworks.ai"
 docs_url: "https://docs.fireworks.ai/api-reference/anthropic-messages"
 api_key_url: "https://app.fireworks.ai/settings/users/api-keys"
@@ -28,16 +31,28 @@ compatibility_notes:
 
 endpoints:
   - id: paygo
-    label: "全球 · 按量付费 API"
-    description: "Fireworks 唯一公开端点，按 token 计费"
+    label:
+      zh: "全球 · 按量付费 API"
+      en: "Global · Pay-as-you-go API"
+      ja: "グローバル · 従量課金 API"
+    description:
+      zh: "Fireworks 唯一公开端点，按 token 计费"
+      en: "Fireworks' only public endpoint, billed per token"
+      ja: "Fireworks 唯一の公開エンドポイント、トークン従量課金"
     base_url: "https://api.fireworks.ai/inference"
     messages_path: "/v1/messages"
     region: global
     billing: pay_as_you_go
   
   - id: subscription_fire_pass
-    label: "全球 · Coding Plan 订阅 · Fire Pass"
-    description: "Fireworks Fire Pass 订阅套餐"
+    label:
+      zh: "全球 · Coding Plan 订阅 · Fire Pass"
+      en: "Global · Coding Plan subscription · Fire Pass"
+      ja: "グローバル · Coding Plan サブスクリプション · Fire Pass"
+    description:
+      zh: "Fireworks Fire Pass 订阅套餐"
+      en: "Fireworks Fire Pass subscription plan"
+      ja: "Fireworks Fire Pass サブスクリプションプラン"
     base_url: "https://api.fireworks.ai/inference"
     messages_path: "/v1/messages"
     region: global

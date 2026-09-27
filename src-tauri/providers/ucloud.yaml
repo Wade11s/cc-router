@@ -4,10 +4,16 @@
 # https://www.compshare.cn/docs/modelverse/models/quick-start
 
 id: ucloud
-display_name: "优云智算 UCloud"
+display_name:
+  zh: "优云智算 UCloud"
+  en: "UCloud Compshare"
+  ja: "UCloud Compshare"
 icon: ""
 category: aggregator
-description: "优云智算 Modelverse · Anthropic 兼容端点 (Coding Plan 订阅 + 按量付费 API)"
+description:
+  zh: "优云智算 Modelverse · Anthropic 兼容端点 (Coding Plan 订阅 + 按量付费 API)"
+  en: "UCloud Compshare Modelverse · Anthropic-compatible endpoint (Coding Plan subscription + pay-as-you-go API)"
+  ja: "UCloud Compshare Modelverse · Anthropic 互換エンドポイント（Coding Plan サブスクリプション + 従量課金 API）"
 homepage: "https://www.compshare.cn"
 docs_url: "https://www.compshare.cn/docs/modelverse/models/quick-start"
 api_key_url: "https://www.compshare.cn/modelverse/console/api-keys"
@@ -16,24 +22,42 @@ compatibility: untested
 
 endpoints:
   - id: coding_plan
-    label: "国内版 · Coding Plan 订阅"
-    description: "优云智算 Coding Plan 订阅, 适配 Claude Code"
+    label:
+      zh: "国内版 · Coding Plan 订阅"
+      en: "China · Coding Plan subscription"
+      ja: "中国版 · Coding Plan サブスクリプション"
+    description:
+      zh: "优云智算 Coding Plan 订阅, 适配 Claude Code"
+      en: "UCloud Compshare Coding Plan subscription, built for Claude Code"
+      ja: "UCloud Compshare Coding Plan サブスクリプション。Claude Code 対応"
     base_url: "https://cp.compshare.cn"
     messages_path: "/v1/messages"
     region: china
     billing: subscription
 
   - id: paygo_cn
-    label: "国内版 · 按量付费 API"
-    description: "Modelverse 国内 Anthropic 兼容端点, 按 token 计费"
+    label:
+      zh: "国内版 · 按量付费 API"
+      en: "China · Pay-as-you-go API"
+      ja: "中国版 · 従量課金 API"
+    description:
+      zh: "Modelverse 国内 Anthropic 兼容端点, 按 token 计费"
+      en: "Modelverse China Anthropic-compatible endpoint, billed per token"
+      ja: "Modelverse 中国版の Anthropic 互換エンドポイント。トークン従量課金"
     base_url: "https://api.modelverse.cn"
     messages_path: "/v1/messages"
     region: china
     billing: pay_as_you_go
 
   - id: paygo_global
-    label: "国际版 · 按量付费 API"
-    description: "Modelverse 海外 Anthropic 兼容端点, 按 token 计费"
+    label:
+      zh: "国际版 · 按量付费 API"
+      en: "International · Pay-as-you-go API"
+      ja: "国際版 · 従量課金 API"
+    description:
+      zh: "Modelverse 海外 Anthropic 兼容端点, 按 token 计费"
+      en: "Modelverse international Anthropic-compatible endpoint, billed per token"
+      ja: "Modelverse 国際版の Anthropic 互換エンドポイント。トークン従量課金"
     base_url: "https://api.umodelverse.ai"
     messages_path: "/v1/messages"
     region: global

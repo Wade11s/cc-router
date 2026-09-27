@@ -328,6 +328,7 @@ mod tests {
                 id: format!("s{i}"),
                 display_name: (*name).to_string(),
                 provider_display_name: "p".into(),
+                provider_names: None,
                 enabled: true,
                 state: crate::client::dto::SubscriptionState::Healthy,
                 cooldown_until: None,

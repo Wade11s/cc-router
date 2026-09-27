@@ -12,6 +12,7 @@ import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useT } from "@/i18n";
 import { fmtNum, fmtTime } from "@/lib/format";
 import { customProviderLabel, providerIconId } from "@/lib/providerLabels";
+import { providerName as localProviderName } from "@/lib/providerText";
 import type { RequestLogDto } from "@/types";
 import { TOOL_NAME_TRUNCATED_MARKER } from "@/types";
 
@@ -81,7 +82,7 @@ function hasToolInfo(r: RequestLogDto): boolean {
 }
 
 export function RequestDetailDialog({ request, onClose }: Props) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [copied, setCopied] = useState(false);
   const subs = useSubscriptions();
 
@@ -105,7 +106,7 @@ export function RequestDetailDialog({ request, onClose }: Props) {
   // 订阅可能已被删除: 找不到时退回厂商名
   const sub = request ? subs.data?.find((s) => s.id === request.subscription_id) : undefined;
   const providerName = request
-    ? sub?.provider_display_name ?? customProviderLabel(request.provider_id, t) ?? request.provider_id
+    ? (sub && localProviderName(sub, locale)) ?? customProviderLabel(request.provider_id, t) ?? request.provider_id
     : "";
 
   async function copyAll() {

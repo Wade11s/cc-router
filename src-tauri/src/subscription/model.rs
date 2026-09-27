@@ -1,12 +1,13 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::provider::model::{
-    join_base_path, AuthHeaderFormat, AuthType, BalanceDiscovery, ModelDiscovery,
+    join_base_path, AuthHeaderFormat, AuthType, BalanceDiscovery, LocalizedText, ModelDiscovery,
 };
+use crate::provider::Provider;
 use crate::subscription::quota::{QuotaPeriod, QuotaUsage, TokenQuotas};
 use crate::virtual_model::model::SubscriptionSlot;
 
@@ -499,7 +500,12 @@ pub struct SubscriptionDto {
     /// Last cached balance payload. `None` when never fetched or unsupported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub balance_cache: Option<BalanceCacheDto>,
+    /// 创建订阅时写进 DB 的厂商名快照 (中文)。自定义订阅是用户自己填的名字。
     pub provider_display_name: String,
+    /// 内置厂商的三语名字, 按 `provider_id` 从当前 yaml 现查; 显示时优先用它, 快照只给自定义订阅
+    /// 和「yaml 已删掉的厂商」兜底。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_names: Option<LocalizedText>,
     pub provider_icon: String,
     pub is_user_defined: bool,
 
@@ -582,7 +588,12 @@ impl SubscriptionRow {
 }
 
 impl SubscriptionDto {
-    pub fn from_runtime(rt: &SubscriptionRuntime, referenced_by: Vec<String>) -> Self {
+    /// `providers` 是内置厂商注册表 (`AppState.providers`), 用来填 `provider_names`。
+    pub fn from_runtime(
+        rt: &SubscriptionRuntime,
+        referenced_by: Vec<String>,
+        providers: &HashMap<String, Provider>,
+    ) -> Self {
         Self {
             id: rt.row.id,
             provider_id: rt.row.provider_id.clone(),
@@ -647,6 +658,10 @@ impl SubscriptionDto {
                 snapshot: s.clone(),
             }),
             provider_display_name: rt.row.provider_display_name.clone(),
+            provider_names: providers
+                .get(&rt.row.provider_id)
+                .filter(|_| !rt.row.is_user_defined)
+                .map(|p| p.display_name.clone()),
             provider_icon: rt.row.provider_icon.clone(),
             is_user_defined: rt.row.is_user_defined,
             auth_type: rt.row.auth_type,
@@ -776,14 +791,14 @@ mod tests {
         let mut row = SubscriptionRow::test_fixture("p", "e");
         row.token_quotas = TokenQuotas { total: Some(100), ..Default::default() };
         let mut rt = SubscriptionRuntime::from_row(row);
-        assert!(SubscriptionDto::from_runtime(&rt, vec![]).is_dispatchable);
+        assert!(SubscriptionDto::from_runtime(&rt, vec![], &HashMap::new()).is_dispatchable);
         rt.quota_usage.add(Utc::now(), 100, 0, 0, 0);
-        assert!(!SubscriptionDto::from_runtime(&rt, vec![]).is_dispatchable, "限额满了");
+        assert!(!SubscriptionDto::from_runtime(&rt, vec![], &HashMap::new()).is_dispatchable, "限额满了");
 
         let mut row = SubscriptionRow::test_fixture("p", "e");
         row.enabled = false;
         let rt = SubscriptionRuntime::from_row(row);
-        assert!(!SubscriptionDto::from_runtime(&rt, vec![]).is_dispatchable, "手动停用");
+        assert!(!SubscriptionDto::from_runtime(&rt, vec![], &HashMap::new()).is_dispatchable, "手动停用");
     }
 
     #[test]
@@ -796,7 +811,7 @@ mod tests {
         };
         let mut rt = SubscriptionRuntime::from_row(row);
         rt.quota_usage.add(Utc::now(), 10, 0, 0, 0);
-        let dto = SubscriptionDto::from_runtime(&rt, vec![]);
+        let dto = SubscriptionDto::from_runtime(&rt, vec![], &HashMap::new());
         assert_eq!(dto.quota_usage.len(), 4);
         let weekly = dto
             .quota_usage

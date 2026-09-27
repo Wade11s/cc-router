@@ -376,7 +376,7 @@ impl Live {
             items.push(PickerItem {
                 id: format!("sub:{}", sub.id),
                 label: sub.display_name.clone(),
-                hint: Some(format!("{} · {}", s.filter_dim_sub, sub.provider_display_name)),
+                hint: Some(format!("{} · {}", s.filter_dim_sub, sub.provider_name(s.lang))),
             });
         }
 

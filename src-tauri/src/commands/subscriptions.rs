@@ -210,7 +210,7 @@ pub async fn list_subscriptions(state: State<'_, AppState>) -> AppResult<Vec<Sub
     for (id, rt) in subs.iter() {
         let guard = rt.read().await;
         let referenced = refs.get(id).cloned().unwrap_or_default();
-        out.push(SubscriptionDto::from_runtime(&guard, referenced));
+        out.push(SubscriptionDto::from_runtime(&guard, referenced, &state.providers));
     }
     out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     Ok(out)
@@ -228,7 +228,7 @@ pub async fn get_subscription(
         .get(&id)
         .ok_or_else(|| AppError::SubscriptionNotFound(id.to_string()))?;
     let guard = rt.read().await;
-    Ok(SubscriptionDto::from_runtime(&guard, referenced))
+    Ok(SubscriptionDto::from_runtime(&guard, referenced, &state.providers))
 }
 
 #[tauri::command]
@@ -277,7 +277,7 @@ pub async fn create_subscription(
                 forward_client_headers: false,
                 model_discovery: provider.model_discovery.clone(),
                 balance_discovery: provider.balance_discovery.clone(),
-                provider_display_name: provider.display_name.clone(),
+                provider_display_name: provider.display_name.zh.clone(),
                 provider_icon: provider.icon.clone().unwrap_or_default(),
                 is_user_defined: false,
             }
@@ -425,7 +425,7 @@ pub async fn create_subscription(
     }
 
     let guard = rt.read().await;
-    Ok(SubscriptionDto::from_runtime(&guard, vec![]))
+    Ok(SubscriptionDto::from_runtime(&guard, vec![], &state.providers))
 }
 
 #[tauri::command]
@@ -549,7 +549,7 @@ pub async fn update_subscription(
     let refs = collect_references(&state).await;
     let guard = rt.read().await;
     let referenced = refs.get(&id).cloned().unwrap_or_default();
-    Ok(SubscriptionDto::from_runtime(&guard, referenced))
+    Ok(SubscriptionDto::from_runtime(&guard, referenced, &state.providers))
 }
 
 #[tauri::command]
@@ -1018,7 +1018,7 @@ pub async fn update_token_quotas(
     store::update_row(&state.db, &row_snapshot).await?;
     let referenced_by = referenced_by_names(&state, &id).await;
     let guard = rt.read().await;
-    Ok(SubscriptionDto::from_runtime(&guard, referenced_by))
+    Ok(SubscriptionDto::from_runtime(&guard, referenced_by, &state.providers))
 }
 
 #[tauri::command]
@@ -1039,7 +1039,7 @@ pub async fn reset_total_quota_usage(
     store::save_quota_usage_snapshot(&state.db, &id, &usage).await?;
     let referenced_by = referenced_by_names(&state, &id).await;
     let guard = rt.read().await;
-    Ok(SubscriptionDto::from_runtime(&guard, referenced_by))
+    Ok(SubscriptionDto::from_runtime(&guard, referenced_by, &state.providers))
 }
 
 #[cfg(test)]

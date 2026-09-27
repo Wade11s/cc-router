@@ -519,7 +519,7 @@ impl Subscriptions {
                     cells.push(Cell::from(Span::styled(fit(&text, status_col), style)));
                 }
                 cells.push(Cell::from(Span::styled(
-                    fit(&sub.provider_display_name, PROVIDER_COL),
+                    fit(sub.provider_name(s.lang), PROVIDER_COL),
                     if muted { muted_style } else { Style::default() },
                 )));
                 cells.push(Cell::from(Span::styled(
@@ -1108,7 +1108,7 @@ fn detail_rows(
     rows.push(DetailRow::Line(field_line(
         s,
         s.sub_f_provider,
-        vec![Span::raw(format!("{} · {}", sub.provider_display_name, sub.auth_type))],
+        vec![Span::raw(format!("{} · {}", sub.provider_name(s.lang), sub.auth_type))],
     )));
 
     // 端点
@@ -1327,6 +1327,7 @@ mod tests {
             id: "1".into(),
             display_name: "s".into(),
             provider_display_name: "p".into(),
+            provider_names: None,
             enabled: true,
             state: crate::client::dto::SubscriptionState::Healthy,
             cooldown_until: None,
@@ -1369,6 +1370,7 @@ mod tests {
             id: id.into(),
             display_name: id.into(),
             provider_display_name: "p".into(),
+            provider_names: None,
             enabled: true,
             state: crate::client::dto::SubscriptionState::Healthy,
             cooldown_until: None,

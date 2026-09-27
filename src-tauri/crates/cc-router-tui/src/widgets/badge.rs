@@ -71,6 +71,7 @@ mod tests {
             id: "a".into(),
             display_name: "n".into(),
             provider_display_name: "p".into(),
+            provider_names: None,
             enabled,
             state,
             cooldown_until: None,

@@ -2,7 +2,10 @@ id: minimax
 display_name: "MiniMax"
 icon: minimax
 category: first_party
-description: "MiniMax M3 / M2 系列模型"
+description:
+  zh: "MiniMax M3 / M2 系列模型"
+  en: "MiniMax M3 / M2 series models"
+  ja: "MiniMax M3 / M2 シリーズのモデル"
 homepage: "https://platform.minimax.io"
 docs_url: "https://platform.minimax.io/docs"
 api_key_url: "https://platform.minimax.io/user-center/basic-information/interface-key"
@@ -12,32 +15,56 @@ compatibility_notes:
 
 endpoints:
   - id: china_coding_plan
-    label: "国内版 · Coding Plan 订阅"
-    description: "订阅制，通过 MiniMax Coding Plan 购买（国内加速）"
+    label:
+      zh: "国内版 · Coding Plan 订阅"
+      en: "China · Coding Plan subscription"
+      ja: "中国版 · Coding Plan サブスクリプション"
+    description:
+      zh: "订阅制，通过 MiniMax Coding Plan 购买（国内加速）"
+      en: "Subscription-based, purchased via MiniMax Coding Plan (accelerated in China)"
+      ja: "サブスクリプション制。MiniMax Coding Plan で購入（中国国内向け高速化）"
     base_url: "https://api.minimaxi.com/anthropic"
     messages_path: "/v1/messages"
     region: china
     billing: subscription
 
   - id: global_coding_plan
-    label: "国际版 · Coding Plan 订阅"
-    description: "订阅制，通过 MiniMax Coding Plan 购买"
+    label:
+      zh: "国际版 · Coding Plan 订阅"
+      en: "International · Coding Plan subscription"
+      ja: "国際版 · Coding Plan サブスクリプション"
+    description:
+      zh: "订阅制，通过 MiniMax Coding Plan 购买"
+      en: "Subscription-based, purchased via MiniMax Coding Plan"
+      ja: "サブスクリプション制。MiniMax Coding Plan で購入"
     base_url: "https://api.minimax.io/anthropic"
     messages_path: "/v1/messages"
     region: global
     billing: subscription
 
   - id: china_paygo
-    label: "国内版 · 按量付费 API"
-    description: "国内加速访问"
+    label:
+      zh: "国内版 · 按量付费 API"
+      en: "China · Pay-as-you-go API"
+      ja: "中国版 · 従量課金 API"
+    description:
+      zh: "国内加速访问"
+      en: "Accelerated access in China"
+      ja: "中国国内向け高速アクセス"
     base_url: "https://api.minimaxi.com/anthropic"
     messages_path: "/v1/messages"
     region: china
     billing: pay_as_you_go
 
   - id: global_paygo
-    label: "国际版 · 按量付费 API"
-    description: "按 token 计费"
+    label:
+      zh: "国际版 · 按量付费 API"
+      en: "International · Pay-as-you-go API"
+      ja: "国際版 · 従量課金 API"
+    description:
+      zh: "按 token 计费"
+      en: "Billed per token"
+      ja: "トークン従量課金"
     base_url: "https://api.minimax.io/anthropic"
     messages_path: "/v1/messages"
     region: global

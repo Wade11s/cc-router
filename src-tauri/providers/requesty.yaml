@@ -18,7 +18,10 @@ id: requesty
 display_name: "Requesty"
 icon: requesty
 category: aggregator
-description: "Requesty 模型路由网关，覆盖 Anthropic / OpenAI / Google / DeepSeek / xAI 等数百款模型"
+description:
+  zh: "Requesty 模型路由网关，覆盖 Anthropic / OpenAI / Google / DeepSeek / xAI 等数百款模型"
+  en: "Requesty model routing gateway, covering hundreds of models from Anthropic / OpenAI / Google / DeepSeek / xAI and more"
+  ja: "Requesty モデルルーティングゲートウェイ。Anthropic / OpenAI / Google / DeepSeek / xAI など数百のモデルに対応"
 homepage: "https://requesty.ai"
 docs_url: "https://docs.requesty.ai"
 api_key_url: "https://app.requesty.ai/api-keys"
@@ -28,16 +31,28 @@ compatibility_notes:
 
 endpoints:
   - id: paygo
-    label: "全球 · 按量付费 API"
-    description: "Requesty 默认端点，按 token 转发到对应底层提供商"
+    label:
+      zh: "全球 · 按量付费 API"
+      en: "Global · Pay-as-you-go API"
+      ja: "グローバル · 従量課金 API"
+    description:
+      zh: "Requesty 默认端点，按 token 转发到对应底层提供商"
+      en: "Requesty's default endpoint; forwards requests to the underlying providers, billed per token"
+      ja: "Requesty の既定エンドポイント。トークン従量課金で下層のプロバイダへ転送"
     base_url: "https://router.requesty.ai"
     messages_path: "/v1/messages"
     region: global
     billing: pay_as_you_go
 
   - id: paygo_eu
-    label: "欧洲 · 按量付费 API"
-    description: "Requesty 欧洲区域端点 (法兰克福)，与默认端点共用同一个 Key"
+    label:
+      zh: "欧洲 · 按量付费 API"
+      en: "Europe · Pay-as-you-go API"
+      ja: "ヨーロッパ · 従量課金 API"
+    description:
+      zh: "Requesty 欧洲区域端点 (法兰克福)，与默认端点共用同一个 Key"
+      en: "Requesty's European endpoint (Frankfurt); uses the same key as the default endpoint"
+      ja: "Requesty のヨーロッパリージョンのエンドポイント（フランクフルト）。既定エンドポイントと同じ Key を使用"
     base_url: "https://router.eu.requesty.ai"
     messages_path: "/v1/messages"
     region: eu

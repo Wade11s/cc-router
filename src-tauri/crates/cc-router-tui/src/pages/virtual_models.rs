@@ -207,7 +207,7 @@ impl VirtualModels {
             .subscriptions()
             .iter()
             .filter(|sub| !current.contains(&sub.id))
-            .map(|sub| PickerItem { id: sub.id.clone(), label: sub.display_name.clone(), hint: Some(sub.provider_display_name.clone()) })
+            .map(|sub| PickerItem { id: sub.id.clone(), label: sub.display_name.clone(), hint: Some(sub.provider_name(s.lang).to_string()) })
             .collect();
         if items.is_empty() {
             return Action::Notify { kind: ToastKind::Info, text: s.vm_nothing_to_add.to_string() };
@@ -386,7 +386,7 @@ impl VirtualModels {
                     if will_skip && cols.skip_in_provider_col {
                         spans.push(Span::styled(fit(s.vm_will_skip, cols.provider), Style::new().fg(theme.warn)));
                     } else {
-                        spans.push(Span::raw(fit(&sub.provider_display_name, cols.provider)));
+                        spans.push(Span::raw(fit(sub.provider_name(s.lang), cols.provider)));
                         if will_skip {
                             spans.push(Span::styled(s.vm_will_skip, Style::new().fg(theme.warn)));
                         }

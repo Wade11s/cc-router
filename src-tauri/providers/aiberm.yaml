@@ -15,7 +15,10 @@ id: aiberm
 display_name: "Aiberm"
 icon: aiberm
 category: aggregator
-description: "Aiberm API 聚合服务,按 token 计费,模型清单按 API Key 所属 token group 动态返回"
+description:
+  zh: "Aiberm API 聚合服务,按 token 计费,模型清单按 API Key 所属 token group 动态返回"
+  en: "Aiberm API aggregation service, billed per token; the model list is returned dynamically based on the API key's token group"
+  ja: "Aiberm API アグリゲーションサービス。トークン従量課金で、モデル一覧は API Key が属する token group に応じて動的に返されます"
 homepage: "https://aiberm.com"
 docs_url: "https://aiberm.com/docs/en/claude-code/"
 api_key_url: "https://aiberm.com"
@@ -25,15 +28,27 @@ compatibility_notes:
 
 endpoints:
   - id: paygo_china
-    label: "国内 · 按量付费 API"
-    description: "Aiberm.org ,Anthropic Messages 兼容"
+    label:
+      zh: "国内 · 按量付费 API"
+      en: "China · Pay-as-you-go API"
+      ja: "中国 · 従量課金 API"
+    description:
+      zh: "Aiberm.org ,Anthropic Messages 兼容"
+      en: "Aiberm.org, Anthropic Messages compatible"
+      ja: "Aiberm.org、Anthropic Messages 互換"
     base_url: "https://aiberm.org"
     messages_path: "/v1/messages"
     region: china
     billing: pay_as_you_go
   - id: paygo
-    label: "全球 · 按量付费 API"
-    description: "Aiberm.com ,Anthropic Messages 兼容"
+    label:
+      zh: "全球 · 按量付费 API"
+      en: "Global · Pay-as-you-go API"
+      ja: "グローバル · 従量課金 API"
+    description:
+      zh: "Aiberm.com ,Anthropic Messages 兼容"
+      en: "Aiberm.com, Anthropic Messages compatible"
+      ja: "Aiberm.com、Anthropic Messages 互換"
     base_url: "https://aiberm.com"
     messages_path: "/v1/messages"
     region: global

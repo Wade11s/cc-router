@@ -1,8 +1,14 @@
 id: xiaomi
-display_name: "小米 MiMo"
+display_name:
+  zh: "小米 MiMo"
+  en: "Xiaomi MiMo"
+  ja: "Xiaomi MiMo"
 icon: xiaomi
 category: first_party
-description: "小米 MiMo 开放平台 · 按量付费 + Token Plan 订阅（Anthropic 兼容）"
+description:
+  zh: "小米 MiMo 开放平台 · 按量付费 + Token Plan 订阅（Anthropic 兼容）"
+  en: "Xiaomi MiMo open platform · pay-as-you-go + Token Plan subscription (Anthropic-compatible)"
+  ja: "Xiaomi MiMo オープンプラットフォーム · 従量課金 + Token Plan サブスクリプション（Anthropic 互換）"
 homepage: "https://platform.xiaomimimo.com"
 docs_url: "https://platform.xiaomimimo.com/docs/api/chat/anthropic-api"
 api_key_url: "https://platform.xiaomimimo.com/#/console/api-keys"
@@ -12,32 +18,56 @@ compatibility_notes:
 
 endpoints:
   - id: token_plan_cn
-    label: "国内版 · Token Plan · 中国集群"
-    description: "订阅制, 中国大陆低延迟"
+    label:
+      zh: "国内版 · Token Plan · 中国集群"
+      en: "China · Token Plan · China cluster"
+      ja: "中国版 · Token Plan · 中国クラスタ"
+    description:
+      zh: "订阅制, 中国大陆低延迟"
+      en: "Subscription-based, low latency in mainland China"
+      ja: "サブスクリプション制。中国本土で低遅延"
     base_url: "https://token-plan-cn.xiaomimimo.com/anthropic"
     messages_path: "/v1/messages"
     region: china
     billing: subscription
 
   - id: paygo
-    label: "按量付费 API"
-    description: "按 token 计费, 最通用的端点"
+    label:
+      zh: "按量付费 API"
+      en: "Pay-as-you-go API"
+      ja: "従量課金 API"
+    description:
+      zh: "按 token 计费, 最通用的端点"
+      en: "Billed per token; the most general-purpose endpoint"
+      ja: "トークン従量課金。最も汎用的なエンドポイント"
     base_url: "https://api.xiaomimimo.com/anthropic"
     messages_path: "/v1/messages"
     region: global
     billing: pay_as_you_go
 
   - id: token_plan_sgp
-    label: "国际版 · Token Plan · 新加坡集群"
-    description: "订阅制, 亚太用户推荐"
+    label:
+      zh: "国际版 · Token Plan · 新加坡集群"
+      en: "International · Token Plan · Singapore cluster"
+      ja: "国際版 · Token Plan · シンガポールクラスタ"
+    description:
+      zh: "订阅制, 亚太用户推荐"
+      en: "Subscription-based, recommended for Asia-Pacific users"
+      ja: "サブスクリプション制。アジア太平洋のユーザーにおすすめ"
     base_url: "https://token-plan-sgp.xiaomimimo.com/anthropic"
     messages_path: "/v1/messages"
     region: global
     billing: subscription
 
   - id: token_plan_ams
-    label: "国际版 · Token Plan · 欧洲集群"
-    description: "订阅制, 欧洲用户推荐"
+    label:
+      zh: "国际版 · Token Plan · 欧洲集群"
+      en: "International · Token Plan · Europe cluster"
+      ja: "国際版 · Token Plan · ヨーロッパクラスタ"
+    description:
+      zh: "订阅制, 欧洲用户推荐"
+      en: "Subscription-based, recommended for users in Europe"
+      ja: "サブスクリプション制。ヨーロッパのユーザーにおすすめ"
     base_url: "https://token-plan-ams.xiaomimimo.com/anthropic"
     messages_path: "/v1/messages"
     region: global

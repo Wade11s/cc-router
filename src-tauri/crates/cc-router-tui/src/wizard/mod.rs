@@ -489,7 +489,12 @@ mod tests {
             default_endpoint: None,
             auth: crate::client::dto::ProviderAuth { auth_type: "api_key".into() },
             model_discovery: crate::client::dto::ModelDiscovery { enabled: true, example_models: vec![] },
+            translations: crate::client::dto::ProviderTranslations { en: text(id), ja: text(id) },
         }
+    }
+
+    fn text(name: &str) -> crate::client::dto::ProviderText {
+        crate::client::dto::ProviderText { display_name: name.to_string(), description: None, endpoints: Default::default() }
     }
 
     fn key(code: KeyCode) -> KeyEvent {

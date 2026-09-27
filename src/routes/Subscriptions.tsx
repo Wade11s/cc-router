@@ -7,6 +7,7 @@ import { BalanceBadge } from "@/components/SubscriptionBalanceCard";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useProviders } from "@/hooks/useProviders";
 import { useT } from "@/i18n";
+import { providerName } from "@/lib/providerText";
 import { fmtCompact, fmtTimeShort } from "@/lib/format";
 import { formatTokenShorthand } from "@/lib/quota";
 import { QUOTA_SEGMENTS } from "@/components/SubscriptionQuotaCard";
@@ -30,7 +31,7 @@ function regionOf(sub: SubscriptionDto, providers: ProviderInfo[] | undefined): 
 }
 
 export function SubscriptionsPage() {
-  const { t } = useT();
+  const { t, locale } = useT();
   const subs = useSubscriptions();
   const providers = useProviders();
 
@@ -92,7 +93,7 @@ export function SubscriptionsPage() {
                         <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                             <span style={{ fontWeight: 500, color: "var(--ink)" }}>
-                              {sub.provider_display_name}
+                              {providerName(sub, locale)}
                             </span>
                             {regionKey && <span className="pill tag region-tag">{t(regionKey)}</span>}
                             {sub.is_user_defined && (

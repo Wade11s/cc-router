@@ -54,10 +54,11 @@ import type {
 } from "@/types";
 import { uniformSlots } from "@/lib/modelSlots";
 import { lastErrorText, testResultText } from "@/lib/backendText";
+import { providerName } from "@/lib/providerText";
 import { formatTokenShorthand, parseTokenShorthand } from "@/lib/quota";
 
 export function SubscriptionEditPage() {
-  const { t } = useT();
+  const { t, locale } = useT();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -319,7 +320,7 @@ export function SubscriptionEditPage() {
                   ) : (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <ProviderIcon iconId={sub.provider_icon} size={18} />
-                      <span>{sub.provider_display_name}{t("subscriptionEdit.providerLocked")}</span>
+                      <span>{providerName(sub, locale)}{t("subscriptionEdit.providerLocked")}</span>
                     </div>
                   )}
                 </div>

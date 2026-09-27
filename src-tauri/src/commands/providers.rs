@@ -1,10 +1,16 @@
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 use tauri::State;
 
 use crate::error::AppResult;
-use crate::provider::model::{Auth, Compatibility, ModelDiscovery, ProviderCategory, ProviderEndpoint};
+use crate::provider::model::{Auth, Compatibility, LocalizedText, ModelDiscovery, ProviderCategory};
+use crate::provider::Provider;
 use crate::state::AppState;
 
+/// 上屏文字字段 (`display_name` / `description` / `compatibility_notes` / 端点的 `label` / `description`)
+/// 放中文原文; 英日文在 `translations` 里, 由客户端按自己的界面语言叠加 —— 桌面端、网页界面、TUI
+/// 的语言可能各不相同, 后端不替它们选。
 #[derive(Debug, Serialize)]
 pub struct ProviderInfo {
     pub id: String,
@@ -17,34 +23,108 @@ pub struct ProviderInfo {
     pub compatibility: Compatibility,
     pub compatibility_notes: Option<String>,
     pub category: ProviderCategory,
-    pub endpoints: Vec<ProviderEndpoint>,
+    pub endpoints: Vec<ProviderEndpointInfo>,
     pub default_endpoint: Option<String>,
     pub auth: Auth,
     pub model_discovery: ModelDiscovery,
+    pub translations: ProviderTranslations,
 }
 
-#[tauri::command]
-pub async fn list_providers(state: State<'_, AppState>) -> AppResult<Vec<ProviderInfo>> {
-    let mut out: Vec<ProviderInfo> = state
-        .providers
-        .values()
-        .map(|p| ProviderInfo {
+#[derive(Debug, Serialize)]
+pub struct ProviderEndpointInfo {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub base_url: String,
+    pub messages_path: String,
+    pub region: Option<String>,
+    pub billing: Option<String>,
+}
+
+/// 三语齐全 (yaml 解析时已强制), 所以每种语言都是完整的一份, 客户端不需要回退。
+#[derive(Debug, Serialize)]
+pub struct ProviderTranslations {
+    pub en: ProviderText,
+    pub ja: ProviderText,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProviderText {
+    pub display_name: String,
+    pub description: Option<String>,
+    pub compatibility_notes: Option<String>,
+    /// key 是 endpoint id
+    pub endpoints: BTreeMap<String, EndpointText>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EndpointText {
+    pub label: String,
+    pub description: Option<String>,
+}
+
+impl ProviderText {
+    fn pick(p: &Provider, lang: fn(&LocalizedText) -> &String) -> Self {
+        Self {
+            display_name: lang(&p.display_name).clone(),
+            description: p.description.as_ref().map(|t| lang(t).clone()),
+            compatibility_notes: p.compatibility_notes.as_ref().map(|t| lang(t).clone()),
+            endpoints: p
+                .endpoints
+                .iter()
+                .map(|e| {
+                    let text = EndpointText {
+                        label: lang(&e.label).clone(),
+                        description: e.description.as_ref().map(|t| lang(t).clone()),
+                    };
+                    (e.id.clone(), text)
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<&Provider> for ProviderInfo {
+    fn from(p: &Provider) -> Self {
+        Self {
             id: p.id.clone(),
-            display_name: p.display_name.clone(),
-            description: p.description.clone(),
+            display_name: p.display_name.zh.clone(),
+            description: p.description.as_ref().map(|t| t.zh.clone()),
             homepage: p.homepage.clone(),
             docs_url: p.docs_url.clone(),
             api_key_url: p.api_key_url.clone(),
             icon: p.icon.clone(),
             compatibility: p.compatibility.clone(),
-            compatibility_notes: p.compatibility_notes.clone(),
+            compatibility_notes: p.compatibility_notes.as_ref().map(|t| t.zh.clone()),
             category: p.category,
-            endpoints: p.endpoints.clone(),
+            endpoints: p
+                .endpoints
+                .iter()
+                .map(|e| ProviderEndpointInfo {
+                    id: e.id.clone(),
+                    label: e.label.zh.clone(),
+                    description: e.description.as_ref().map(|t| t.zh.clone()),
+                    base_url: e.base_url.clone(),
+                    messages_path: e.messages_path.clone(),
+                    region: e.region.clone(),
+                    billing: e.billing.clone(),
+                })
+                .collect(),
             default_endpoint: p.default_endpoint.clone(),
             auth: p.auth.clone(),
             model_discovery: p.model_discovery.clone(),
-        })
-        .collect();
-    out.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+            translations: ProviderTranslations {
+                en: ProviderText::pick(p, |t| &t.en),
+                ja: ProviderText::pick(p, |t| &t.ja),
+            },
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn list_providers(state: State<'_, AppState>) -> AppResult<Vec<ProviderInfo>> {
+    let mut out: Vec<ProviderInfo> = state.providers.values().map(ProviderInfo::from).collect();
+    // 三种界面语言都按英文名排, 顺序一致; 忽略大小写 (否则 `xAI` 会排到 `Zhipu` 后面)。
+    out.sort_by_cached_key(|p| p.translations.en.display_name.to_lowercase());
     Ok(out)
 }

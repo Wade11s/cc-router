@@ -823,6 +823,7 @@ mod tests {
             id: id.into(),
             display_name: name.into(),
             provider_display_name: "p".into(),
+            provider_names: None,
             enabled: true,
             state: crate::client::dto::SubscriptionState::Healthy,
             cooldown_until: None,

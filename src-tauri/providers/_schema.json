@@ -4,16 +4,30 @@
   "type": "object",
   "required": ["id", "display_name", "compatibility", "endpoints", "auth"],
   "additionalProperties": true,
+  "definitions": {
+    "localizedText": {
+      "description": "上屏文字: 纯字符串 = 三语相同 (品牌名); 含中文时必须写成 zh/en/ja 对象",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "required": ["zh", "en", "ja"],
+          "additionalProperties": false,
+          "properties": { "zh": { "type": "string" }, "en": { "type": "string" }, "ja": { "type": "string" } }
+        }
+      ]
+    }
+  },
   "properties": {
     "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
-    "display_name": { "type": "string" },
-    "description": { "type": "string" },
+    "display_name": { "$ref": "#/definitions/localizedText" },
+    "description": { "$ref": "#/definitions/localizedText" },
     "homepage": { "type": "string" },
     "docs_url": { "type": "string" },
     "api_key_url": { "type": "string" },
     "icon": { "type": "string" },
     "compatibility": { "enum": ["verified", "partial", "untested"] },
-    "compatibility_notes": { "type": "string" },
+    "compatibility_notes": { "anyOf": [{ "$ref": "#/definitions/localizedText" }, { "type": "null" }] },
     "category": { "enum": ["first_party", "second_party", "aggregator"] },
     "endpoints": {
       "type": "array",
@@ -23,8 +37,8 @@
         "required": ["id", "label", "base_url", "messages_path"],
         "properties": {
           "id": { "type": "string" },
-          "label": { "type": "string" },
-          "description": { "type": "string" },
+          "label": { "$ref": "#/definitions/localizedText" },
+          "description": { "$ref": "#/definitions/localizedText" },
           "base_url": { "type": "string" },
           "messages_path": { "type": "string" },
           "region": { "type": "string" },

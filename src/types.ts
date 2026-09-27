@@ -148,7 +148,23 @@ export interface ProviderInfo {
     cache_ttl_hours: number;
     example_models: string[];
   };
+  /**
+   * 顶层的 display_name / description / compatibility_notes / endpoints[].label / .description 是中文,
+   * 英日文在这里 (后端保证三语齐全)。界面里不要直接读, 走 useProviders() —— 它已经按界面语言换好了。
+   */
+  translations: Record<"en" | "ja", ProviderText>;
 }
+
+export interface ProviderText {
+  display_name: string;
+  description?: string;
+  compatibility_notes?: string;
+  /** key 是 endpoint id */
+  endpoints: Record<string, { label: string; description?: string }>;
+}
+
+/** 后端 provider::model::LocalizedText: 三语各一份。 */
+export type LocalizedText = Record<"zh" | "en" | "ja", string>;
 
 export interface ModelSlots {
   fable: string;
@@ -313,7 +329,10 @@ export interface SubscriptionDto {
   balance_supported: boolean;
   /** 余额缓存 (上次拉到的值). undefined 表示从未查过或不支持. */
   balance_cache?: BalanceCacheDto;
+  /** 创建时写进 DB 的厂商名快照 (中文); 显示走 lib/providerText.ts::providerName。 */
   provider_display_name: string;
+  /** 内置厂商的三语名字 (后端按 yaml 现查); 自定义订阅与 yaml 已删的厂商没有。 */
+  provider_names?: LocalizedText;
   provider_icon: string;
   is_user_defined: boolean;
 
