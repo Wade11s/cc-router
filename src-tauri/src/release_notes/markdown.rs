@@ -159,7 +159,7 @@ fn inlines(s: &str, line: usize) -> Result<Vec<Inline>, ParseError> {
             // Find closing ')' with balanced parenthesis matching
             let mut depth = 0;
             let mut end = None;
-            for (i, ch) in after.chars().enumerate() {
+            for (i, ch) in after.char_indices() {
                 if ch == '(' {
                     depth += 1;
                 } else if ch == ')' {
@@ -255,6 +255,28 @@ mod tests {
     #[test]
     fn rejects_unclosed_link_with_parentheses() {
         assert_eq!(err_line("## A\n- [x](https://a.b/(c)\n"), 2);
+    }
+
+    #[test]
+    fn parses_links_with_multibyte_chars_in_url() {
+        let doc = parse("## 更新\n- [文档](https://例子.wiki/(例))\n").unwrap();
+        assert_eq!(
+            doc.sections[0].items[0].text,
+            vec![Inline::Link { text: "文档".into(), url: "https://例子.wiki/(例)".into() }]
+        );
+    }
+
+    #[test]
+    fn parses_multibyte_chars_around_link() {
+        let doc = parse("## A\n- 见 [x](https://a.b/中) 完\n").unwrap();
+        assert_eq!(
+            doc.sections[0].items[0].text,
+            vec![
+                t("见 "),
+                Inline::Link { text: "x".into(), url: "https://a.b/中".into() },
+                t(" 完"),
+            ]
+        );
     }
 
     fn err_line(src: &str) -> usize {
