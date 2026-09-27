@@ -19,14 +19,14 @@ This is a major release. The desktop app gets a "sketchbook" look that matches t
   - A new route section: client → virtual model → subscription → real model (including the model name the upstream reported).
   - A new usage section: latency, input, output, cache read and cache write. Token counts were not shown in the dialog before.
   - Tool calls, the error message and the raw upstream text each have their own section.
-- **The "Add subscription" dialog on the Virtual Models page shows more detail.** Each row has the provider logo, the subscription name and status, the provider and endpoint (the account email for OAuth subscriptions), the model the subscription will actually use in this virtual model, and which virtual models already reference it. A search box appears when there are more than 6 candidates, and the footer shows how many are selected.
+- **The "Add subscription" dialog** on the Virtual Models page shows more detail. Each row has the provider logo, the subscription name and status, the provider and endpoint (the account email for OAuth subscriptions), the model the subscription will actually use in this virtual model, and which virtual models already reference it. A search box appears when there are more than 6 candidates, and the footer shows how many are selected.
 - **Custom providers discover models automatically (#44)**: cc-router can fetch the upstream model list before you save, and the lookup writes nothing to the database. This also works for custom Anthropic endpoints. Slots use the same picker as built-in providers, including per-slot thinking effort.
 - Settings → Advanced shows the database size and the row count of each table.
 - Launching cc-router while it is already running brings the existing window back instead of starting a second copy.
 
 ## Fixes
-- Text that comes from the backend now follows the UI language: test-connection results, a subscription's last error and the balance card used to show Chinese even in the English and Japanese UIs. The comments in the recommended Codex config are now translated too.
-- The database size limit now works. The setting used to do nothing. Now, when the database grows past the limit (500 MB by default), the oldest request logs and events are deleted first and a warning event is emitted. The database file is compacted on every startup, and a limit of 0 turns the check off. The events table is now cleaned up with the same "log retention days" setting as request logs.
+- **Text that comes from the backend now follows the UI language**: test-connection results, a subscription's last error and the balance card used to show Chinese even in the English and Japanese UIs. The comments in the recommended Codex config are now translated too.
+- **The database size limit now works**. The setting used to do nothing. Now, when the database grows past the limit (500 MB by default), the oldest request logs and events are deleted first and a warning event is emitted. The database file is compacted on every startup, and a limit of 0 turns the check off. The events table is now cleaned up with the same "log retention days" setting as request logs.
 - The macOS Dock icon now has the padding Apple's icon grid expects, so it is no longer a size bigger than other apps in the Dock and in Cmd+Tab.
 
 ## Other
