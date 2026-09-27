@@ -23,10 +23,17 @@ function read(name) {
   return existsSync(p) ? readFileSync(p, "utf8").replace(/\r\n/g, "\n").trim() : null;
 }
 
+// 预发布 tag 允许不写说明: --check 只警告, 正文模式输出空 (release.yml 据此保留手写正文)
+if (version.includes("-") && !existsSync(dir)) {
+  if (check) console.error(`警告: 预发布 ${version} 没有 release-notes/${version}/, 跳过检查。`);
+  process.exit(0);
+}
+
 const zh = read("zh.md");
-// version:set 生成的骨架只有分节标题 —— 至少要有一条 `- ` 列表项才算写过
-if (!zh || !/^- \S/m.test(zh)) {
-  console.error(`release-notes/${version}/zh.md 缺失或还没写内容 (至少需要一条 \`- \` 列表项)。发版前先写好更新内容。`);
+// version:set 生成的骨架只有分节标题 —— 至少要有一行不是 `## ` 标题的内容 (一句摘要或一条列表项) 才算写过。
+// 更细的格式错误由 build.rs 用 app 同一个解析器在 release 构建时拦住。
+if (!zh || !zh.split("\n").some((l) => l.trim() && !l.startsWith("## "))) {
+  console.error(`release-notes/${version}/zh.md 缺失或还没写内容 (至少写一句摘要或一条列表项)。发版前先写好更新内容。`);
   process.exit(1);
 }
 if (check) {

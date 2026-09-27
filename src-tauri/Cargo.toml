@@ -17,6 +17,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# build.rs 用 #[path] 引入 release_notes/markdown.rs 校验发版说明, 该文件 derive 了 Serialize
+serde = { version = "1", features = ["derive"] }
 
 [dependencies]
 # 下限钉在 2.13.2: bitflags 2.10 / 2.11 的 named-flags 宏按 flag 递归展开, 会撞穿 dispatch2 0.3.1 的

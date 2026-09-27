@@ -780,7 +780,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           node scripts/release-body.mjs "$RELEASE_TAG" > release-body.md
-          gh release edit "$RELEASE_TAG" --notes-file release-body.md
+          # 预发布 tag 可以不写 release-notes/, 此时输出为空, 保留手写的正文
+          if [ -s release-body.md ]; then
+            gh release edit "$RELEASE_TAG" --notes-file release-body.md
+          fi
 
       - name: Generate latest.json
         env:

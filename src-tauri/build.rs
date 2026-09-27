@@ -1,6 +1,11 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
+// 与 app 共用同一个发版说明解析器, 构建时就能拦住格式错误 (见 embed_release_notes)。
+#[path = "src/release_notes/markdown.rs"]
+#[allow(dead_code)]
+mod release_notes_markdown;
+
 fn main() {
     embed_providers();
     embed_release_notes();
@@ -59,7 +64,9 @@ fn embed_providers() {
 
 /// 把仓库根目录的 `release-notes/<版本>/*` 编进二进制: 生成 `$OUT_DIR/embedded_release_notes.rs`,
 /// 内容是 `(版本目录名, 文件名, include_str!(绝对路径))` 表, 由 `release_notes` 模块 `include!`。
-/// 目录不存在时生成空表 (不 panic); 文件合法性由 release_notes 的单测把关, 这里只负责搬运。
+/// 目录不存在时生成空表 (不 panic)。每个 `*.md` 都用 app 同一个解析器校验、每个版本目录必须有 zh.md:
+/// release 构建有错直接 panic (发版 job 在 publish 之前失败, 不会发出一个弹不出说明的版本);
+/// dev / test 构建只出 cargo warning, 边写说明边开发不受影响 (单测 every_embedded_release_note_is_valid 仍会失败)。
 fn embed_release_notes() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let dir = Path::new(&manifest_dir)
@@ -90,6 +97,28 @@ fn embed_release_notes() {
     }
     // read_dir 顺序依赖文件系统; 排序保证生成结果 (进而二进制) 可复现。
     entries.sort();
+
+    let mut errors = Vec::new();
+    let versions: std::collections::BTreeSet<&str> = entries.iter().map(|(v, _, _)| v.as_str()).collect();
+    for ver in versions {
+        if !entries.iter().any(|(v, n, _)| v == ver && n == "zh.md") {
+            errors.push(format!("release-notes/{ver}: 缺少 zh.md"));
+        }
+    }
+    for (ver, name, path) in entries.iter().filter(|(_, n, _)| n.ends_with(".md")) {
+        let src = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("读取 {} 失败: {e}", path.display()));
+        if let Err(e) = release_notes_markdown::parse(&src) {
+            errors.push(format!("release-notes/{ver}/{name}: {e}"));
+        }
+    }
+    if !errors.is_empty() {
+        if std::env::var("PROFILE").as_deref() == Ok("release") {
+            panic!("release-notes/ 有不合法的发版说明:\n{}", errors.join("\n"));
+        }
+        for e in &errors {
+            println!("cargo:warning={e}");
+        }
+    }
 
     let mut out = String::from("pub static EMBEDDED_RELEASE_NOTES: &[(&str, &str, &str)] = &[\n");
     for (ver, name, path) in &entries {

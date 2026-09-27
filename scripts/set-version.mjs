@@ -85,8 +85,8 @@ console.log(`  git tag v${version}`);
 console.log(`  git push && git push --tags`);
 
 // 发版说明骨架: 只在目录不存在时生成; 只写 zh.md, 不生成 en / ja 的空文件
-// (空文件会被当成「已翻译」)。骨架只有分节标题, 解析器与 release-body --check 都会拒绝它,
-// 所以忘了写内容会在 cargo test / CI 的第一个 job 被拦住。
+// (空文件会被当成「已翻译」)。骨架只有分节标题, 会被 release-body --check (CI 第一个 job) 拒绝;
+// 其余格式错误 (如空分节) 由 build.rs 用 app 同一个解析器在 release 构建时报错。
 function scaffoldReleaseNotes() {
   const dir = resolve(root, "release-notes", version);
   if (existsSync(dir)) {
