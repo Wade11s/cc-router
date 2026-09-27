@@ -9,6 +9,7 @@ import { useT } from "@/i18n";
 import { runtime, webLogout, webSession } from "@/runtime";
 import { LogoMark } from "@/components/sketch/LogoMark";
 import { SidebarIcon, type SidebarIconName } from "@/components/sketch/SidebarIcon";
+import { useReleaseNotesDialog } from "@/components/release-notes/ReleaseNotesController";
 
 interface NavItem {
   to: string;
@@ -28,6 +29,7 @@ export function Sidebar() {
   const proxy = useProxyStatus();
   const { detected } = useUpdater();
   const vms = useVirtualModels();
+  const notes = useReleaseNotesDialog();
 
   const subsCount = subs.data?.length ?? 0;
   const running = proxy.data?.running ?? false;
@@ -83,8 +85,8 @@ export function Sidebar() {
       <svg className="brand-rule" viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true">
         <path d="M0 5 C 15 1, 45 9, 60 5 C 75 1, 105 9, 120 5 C 135 1, 165 9, 180 5 C 195 1, 225 9, 240 5" />
       </svg>
-      {/* 代理地址/端口与版本号不在这里展示: 地址在「实时路由」页可复制,
-       * 版本号在「关于」/「检查更新」页 —— 侧边栏只留导航。 */}
+      {/* 代理地址/端口不在这里展示: 地址在「实时路由」页可复制 —— 侧边栏只留导航。
+       * 版本号只以手写小字出现在底部「更新内容」入口上 (已读时)。 */}
       {items.map((it) => {
         const badge = typeof it.badge === "function" ? it.badge() : it.badge;
         return (
@@ -107,20 +109,45 @@ export function Sidebar() {
           </NavLink>
         );
       })}
-      {showLogout && (
-        <button
-          type="button"
-          className="nav-item nav-logout"
-          onClick={() => {
-            void webLogout().then(() => window.location.reload());
-          }}
-        >
-          <span className="nav-icon">
-            <SidebarIcon name="logout" size={28} />
-          </span>
-          <span className="nav-label">{t("sidebar.logout")}</span>
-        </button>
-      )}
+      <div className="nav-footer">
+        {notes.hasNotes && (
+          <>
+            {/* 与品牌区下方对称的手画波浪线 */}
+            <svg className="foot-rule" viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true">
+              <path d="M0 5 C 15 1, 45 9, 60 5 C 75 1, 105 9, 120 5 C 135 1, 165 9, 180 5 C 195 1, 225 9, 240 5" />
+            </svg>
+            <button
+              type="button"
+              className={cn("nav-item", notes.openMode === "manual" && "active")}
+              onClick={notes.openManual}
+            >
+              <span className="nav-icon">
+                <SidebarIcon name="whatsnew" size={28} />
+              </span>
+              <span className="nav-label">{t("releaseNotes.entry")}</span>
+              {notes.hasUnread ? (
+                <NavDot tone="err" label={t("releaseNotes.unread")} />
+              ) : (
+                notes.current && <span className="nav-ver">v{notes.current}</span>
+              )}
+            </button>
+          </>
+        )}
+        {showLogout && (
+          <button
+            type="button"
+            className="nav-item nav-logout"
+            onClick={() => {
+              void webLogout().then(() => window.location.reload());
+            }}
+          >
+            <span className="nav-icon">
+              <SidebarIcon name="logout" size={28} />
+            </span>
+            <span className="nav-label">{t("sidebar.logout")}</span>
+          </button>
+        )}
+      </div>
     </aside>
   );
 }

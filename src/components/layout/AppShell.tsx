@@ -2,6 +2,7 @@ import { Outlet, matchPath, useLocation } from "react-router";
 import { Sidebar } from "./Sidebar";
 import { WindowChrome } from "./WindowChrome";
 import { runtime } from "@/runtime";
+import { ReleaseNotesProvider } from "@/components/release-notes/ReleaseNotesController";
 
 /**
  * 走「通栏布局」的页面: main 不留 padding, 自身收成 flex column + overflow hidden,
@@ -23,12 +24,14 @@ export function AppShell() {
     !FLUSH_EXCEPTIONS.includes(pathname) &&
     FLUSH_ROUTES.some((pattern) => matchPath(pattern, pathname) !== null);
   return (
-    <div className="app">
-      {runtime.kind === "desktop" && <WindowChrome />}
-      <Sidebar />
-      <main className={flush ? "main flush" : "main"}>
-        <Outlet />
-      </main>
-    </div>
+    <ReleaseNotesProvider>
+      <div className="app">
+        {runtime.kind === "desktop" && <WindowChrome />}
+        <Sidebar />
+        <main className={flush ? "main flush" : "main"}>
+          <Outlet />
+        </main>
+      </div>
+    </ReleaseNotesProvider>
   );
 }
