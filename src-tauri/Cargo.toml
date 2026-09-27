@@ -36,6 +36,8 @@ tauri-plugin-autostart = "2"
 tauri-plugin-os = "2"
 tauri-plugin-single-instance = "2"
 
+# 发版说明的版本比较; 已是 tauri 的传递依赖, 提升为直接依赖不引入新包
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"

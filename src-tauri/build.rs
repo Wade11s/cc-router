@@ -3,6 +3,7 @@ use std::path::Path;
 
 fn main() {
     embed_providers();
+    embed_release_notes();
     ensure_sidecar_placeholder();
     tauri_build::build()
 }
@@ -53,5 +54,49 @@ fn embed_providers() {
     out.push_str("];\n");
 
     let dest = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("embedded_providers.rs");
+    std::fs::write(&dest, out).unwrap_or_else(|e| panic!("写入 {} 失败: {e}", dest.display()));
+}
+
+/// 把仓库根目录的 `release-notes/<版本>/*` 编进二进制: 生成 `$OUT_DIR/embedded_release_notes.rs`,
+/// 内容是 `(版本目录名, 文件名, include_str!(绝对路径))` 表, 由 `release_notes` 模块 `include!`。
+/// 目录不存在时生成空表 (不 panic); 文件合法性由 release_notes 的单测把关, 这里只负责搬运。
+fn embed_release_notes() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    let dir = Path::new(&manifest_dir)
+        .parent()
+        .expect("src-tauri 应有上级目录")
+        .join("release-notes");
+    // 对目录声明: cargo 递归比较 mtime, 新增 / 删除 / 修改说明文件都会重跑本脚本。
+    println!("cargo:rerun-if-changed={}", dir.display());
+
+    let mut entries: Vec<(String, String, std::path::PathBuf)> = Vec::new();
+    if dir.is_dir() {
+        for ver in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("读取 {} 失败: {e}", dir.display())) {
+            let ver = ver.expect("读取目录项失败").path();
+            if !ver.is_dir() {
+                continue;
+            }
+            let ver_name = ver.file_name().and_then(|n| n.to_str()).expect("版本目录名非 UTF-8").to_string();
+            for file in std::fs::read_dir(&ver).unwrap_or_else(|e| panic!("读取 {} 失败: {e}", ver.display())) {
+                let path = file.expect("读取目录项失败").path();
+                let name = path.file_name().and_then(|n| n.to_str()).expect("文件名非 UTF-8").to_string();
+                // .DS_Store 之类的隐藏文件不收
+                if !path.is_file() || name.starts_with('.') {
+                    continue;
+                }
+                entries.push((ver_name.clone(), name, path));
+            }
+        }
+    }
+    // read_dir 顺序依赖文件系统; 排序保证生成结果 (进而二进制) 可复现。
+    entries.sort();
+
+    let mut out = String::from("pub static EMBEDDED_RELEASE_NOTES: &[(&str, &str, &str)] = &[\n");
+    for (ver, name, path) in &entries {
+        writeln!(out, "    ({ver:?}, {name:?}, include_str!({:?})),", path.display().to_string()).unwrap();
+    }
+    out.push_str("];\n");
+
+    let dest = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("embedded_release_notes.rs");
     std::fs::write(&dest, out).unwrap_or_else(|e| panic!("写入 {} 失败: {e}", dest.display()));
 }
