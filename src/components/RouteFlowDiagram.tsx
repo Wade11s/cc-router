@@ -1,5 +1,6 @@
-import { useMemo, type CSSProperties } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { stateLabel } from "@/components/StatusBadge";
+import { ProviderLogo } from "@/components/ProviderLogo";
 import { useProxyStatus } from "@/hooks/useSettings";
 import { useVirtualModels } from "@/hooks/useVirtualModels";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
@@ -10,119 +11,135 @@ import { isCustomProviderId } from "@/lib/providerLabels";
 import { VM_ORDER } from "@/lib/virtualModels";
 import { useT, type TFunction } from "@/i18n";
 import { LogoMark } from "@/components/sketch/LogoMark";
+import { ClientDoodle, type ClientDoodleName } from "@/components/sketch/ClientDoodle";
 import type { SubscriptionDto, VirtualModelDto } from "@/types";
 
 /* ============================================================
  * 画布几何 (与 styles.css 的 .rf-* 绝对定位一体, 改一处必须改另一处)
  *
- *   0                     452..548 (hub)              714..846  854..986
- *   ├─ 客户端 150×60 ──── 弧 ──── ■ ──── 弧 ──── 云朵内列 ─ 云朵外列 ─┤
+ *   0          14..170          436..524 (hub)          802..954     960
+ *   ├─ 列标签 36px ─────────────────────────────────────────────────┤
+ *   │  客户端便签 ─── 弧 ───▶ ■ ─── 弧 ───▶ 吊牌 (挂绳接住弧线末端)  │
  *
- * 画布高度不是常数: 云朵超过 11 家时按需增高, 由 layoutUpstreams 算出后
- * 通过 --rf-h 传给 CSS。hub / 客户端 / 弧线汇聚点全部相对高度居中。
+ * 画布宽度写死 960, 由 RouteFlowDiagram 按容器实测宽度整体等比缩小 (不横向滚动 ——
+ * 拓扑图的价值在于一眼看全形状)。高度不是常数: 上游超过 6 家时按需增高, 经 --rf-h
+ * 传给 CSS; 客户端 / hub / 弧线汇聚点全部相对「标签行以下的区域」垂直居中。
  * ============================================================ */
-const CANVAS_W = 1000;
+const CANVAS_W = 960;
 /** 设计稿高度, 同时是下限 */
-const CANVAS_H_MIN = 340;
+const CANVAS_H_MIN = 380;
+/** 顶部列标签占的高度, 节点区从它下面开始算中心 */
+const LABEL_H = 36;
+const PAD_BOTTOM = 16;
 
-const CLIENT_H = 60;
+const HUB = 88;
+const HUB_LEFT = (CANVAS_W - HUB) / 2;
+/** 客户端弧线的汇聚点 / 上游弧线的起点: 各离 hub 边缘 8px */
+const HUB_IN = HUB_LEFT - 8;
+const HUB_OUT = HUB_LEFT + HUB + 8;
+
+const NOTE_LEFT = 14;
+const NOTE_W = 156;
+const NOTE_H = 58;
 const CLIENT_STEP = 76;
-const CLIENT_COUNT = 4;
-/** 4 个客户端整体垂直居中于画布: 首个 top 距中心 -144 (复刻设计稿的 26 / 102 / 178 / 254) */
-const clientTop = (i: number, h: number) => h / 2 - 144 + i * CLIENT_STEP;
-/** 弧线在客户端一侧的落点 = 图形垂直中心 */
-const clientCy = (top: number) => top + CLIENT_H / 2;
+const CLIENT_OUT = NOTE_LEFT + NOTE_W + 2;
 
-const UP_W = 132;
-const UP_H = 53;
-/** 同列相邻云朵的垂直步长: 必须 ≥ 云朵高, 否则同一列自己就叠上了 */
-const UP_STEP = 57;
-/** 单列能容纳的上限 (设计稿的 6 个位置: top 1 → 286) */
-const UP_SINGLE_MAX = 6;
-const UP_TOP_FIRST = 1;
-/** 外列贴右边缘; 内列整体左移一个云朵宽 + 8px 间隙, 保证两列水平完全分离 */
-const UP_LEFT_OUTER = 854;
-const UP_LEFT_INNER = UP_LEFT_OUTER - UP_W - 8;
-const upCy = (top: number) => top + UP_H / 2;
+const TAG_W = 152;
+const TAG_H = 48;
+/** 同列相邻吊牌的垂直步长: 吊牌高 48 + 8 间隙 */
+const UP_STEP = 56;
+const TAG_LEFT = CANVAS_W - 6 - TAG_W;
+/** 弧线终点停在吊牌左边之前, 中间这段由吊牌自己的挂绳接上 */
+const ARC_END = TAG_LEFT - 10;
 
-/** 云朵位置 + 该云朵的弧线终点 x (两列的终点不同) */
-interface UpstreamSlot {
-  left: number;
-  top: number;
-  /** true = 内列, 弧线更短且控制点更早收敛 */
-  inner: boolean;
-}
+/** 节点区的垂直中心 */
+const midY = (h: number) => LABEL_H + (h - LABEL_H) / 2;
 
 /**
- * 云朵的纵向排布。
- *
- * - ≤ 6 家: 单列, 完全复刻设计稿坐标 (1 / 58 / 115 / 172 / 229 / 286);
- *   不足 6 个时保持 57 的步长整组垂直居中, 避免顶部堆一撮、下方空一片。
- * - > 6 家: 左右两列交错。交错的意义是让**水平**方向分离 —— 两列相隔一个
- *   完整云朵宽, 于是相邻两朵即便垂直只差半步(28.5px) 也绝不重叠, 单位高度
- *   能放下的家数翻倍。同列内仍按 57 的步长, 保证同列不叠。
- *
- * 画布高度随之增长: 外列 n 个需要 (n-1)*57 + 53, 内列相位偏移半步再加 28.5。
- * 10 家以内算下来仍在 340 以内, 11 家起画布才开始变高(367 / 424 / …)。
+ * 吊牌只排一列, 家数多了画布变高 (7 家起)。
+ * 以前的云朵在 7 家以上左右交错两列, 但吊牌更宽, 内列会被外列的弧线横穿 —— 单列 + 增高
+ * 没有这个问题, 也不用再为两列分别调控制点。
  */
-function layoutUpstreams(count: number): { slots: UpstreamSlot[]; height: number } {
-  if (count <= 0) return { slots: [], height: CANVAS_H_MIN };
-
-  if (count <= UP_SINGLE_MAX) {
-    const span = UP_STEP * (count - 1);
-    const first =
-      count === 1
-        ? (CANVAS_H_MIN - UP_H) / 2
-        : UP_TOP_FIRST + (UP_STEP * (UP_SINGLE_MAX - 1) - span) / 2;
-    return {
-      slots: Array.from({ length: count }, (_, i) => ({
-        left: UP_LEFT_OUTER,
-        top: first + i * UP_STEP,
-        inner: false,
-      })),
-      height: CANVAS_H_MIN,
-    };
-  }
-
-  // 偶数索引走外列, 奇数索引走内列 —— 自上而下读仍是 0,1,2,… 的顺序
-  const outerCount = Math.ceil(count / 2);
-  const halfStep = UP_STEP / 2;
-  const needed = (outerCount - 1) * UP_STEP + UP_H + halfStep;
-  const height = Math.max(CANVAS_H_MIN, needed);
-  const top0 = (height - needed) / 2;
-
-  const slots = Array.from({ length: count }, (_, i) => {
-    const inner = i % 2 === 1;
-    const row = Math.floor(i / 2);
-    return {
-      left: inner ? UP_LEFT_INNER : UP_LEFT_OUTER,
-      top: top0 + row * UP_STEP + (inner ? halfStep : 0),
-      inner,
-    };
-  });
-  return { slots, height };
+function layoutUpstreams(count: number): { cys: number[]; height: number } {
+  const span = UP_STEP * Math.max(0, count - 1);
+  const height = Math.max(CANVAS_H_MIN, LABEL_H + span + TAG_H + PAD_BOTTOM);
+  const mid = midY(height);
+  return {
+    cys: Array.from({ length: count }, (_, i) => mid - span / 2 + i * UP_STEP),
+    height,
+  };
 }
 
-/** 上游弧线: 外列要跨过内列所在的 x 区间, 控制点提前到 690 收敛, 免得压到内列云朵 */
-function upstreamArc(hubCy: number, cy: number, inner: boolean): string {
-  return inner
-    ? `M552 ${hubCy} C 610 ${hubCy}, 645 ${cy}, ${UP_LEFT_INNER - 4} ${cy}`
-    : `M552 ${hubCy} C 650 ${hubCy}, 690 ${cy}, ${UP_LEFT_OUTER - 4} ${cy}`;
-}
+const clientArc = (cy: number, hubCy: number) =>
+  `M${CLIENT_OUT} ${cy} C 290 ${cy}, 330 ${hubCy}, ${HUB_IN} ${hubCy}`;
+const upstreamArc = (hubCy: number, cy: number) =>
+  `M${HUB_OUT} ${hubCy} C 640 ${hubCy}, 690 ${cy}, ${ARC_END} ${cy}`;
+/** 手画小折线箭头, 尖端在 (x, y) */
+const arrowHead = (x: number, y: number) => `M${x - 10} ${y - 5} L${x} ${y} L${x - 10} ${y + 5}`;
 
-/** 本地 AI Agent 工具。写死 —— cc-router 无法探知是谁在调, 这里表达的是「谁可以调」。 */
-const CLIENT_NAMES = ["Claude Code", "Codex", "OpenCode", "Others"];
+/**
+ * 本地 AI Agent 工具。写死 —— cc-router 无法探知是谁在调, 这里表达的是「谁可以调」。
+ * 便签的颜色 / 角度 / 胶带位置逐张错开, 同一个值会显得像盖章。
+ */
+const CLIENTS: {
+  name: string;
+  /** null = 用本地化的「任何兼容客户端」 */
+  cmd: string | null;
+  icon: ClientDoodleName;
+  fill: string;
+  rotate: number;
+  tapeLeft: number;
+  tapeRotate: number;
+}[] = [
+  { name: "Claude Code", cmd: "$ claude", icon: "terminal", fill: "var(--fill-cactus)", rotate: -2.2, tapeLeft: 60, tapeRotate: 4 },
+  { name: "Codex", cmd: "$ codex", icon: "braces", fill: "var(--fill-butter)", rotate: 1.6, tapeLeft: 24, tapeRotate: -5 },
+  { name: "OpenCode", cmd: "$ opencode", icon: "laptop", fill: "var(--fill-sky)", rotate: -1, tapeLeft: 94, tapeRotate: 3 },
+  { name: "Others", cmd: null, icon: "bubble", fill: "var(--fill-coral)", rotate: 2.2, tapeLeft: 56, tapeRotate: -3 },
+];
+
+/**
+ * 吊牌错位色块的「身份色」, 按上游在图上的顺序轮流取, 保证相邻两张不同色。
+ * 奶油黄 (处理中) 与珊瑚色 (冷却中) 是状态色, 刻意不在这张表里。
+ */
+const TAG_FILLS = ["var(--fill-sky)", "var(--fill-heather)", "var(--fill-cactus)", "var(--fill-oat)", "var(--fill-stone)"];
+
+/** ok = 可调度; err = 有订阅故障或冷却中; off = 名下订阅全被用户停用 */
+type UpstreamTone = "ok" | "err" | "off";
 
 interface UpstreamNode {
-  /** 聚合 key: 内置 provider = provider_id; 自定义订阅 = provider_id + 订阅 id (每条独立成云) */
+  /** 聚合 key: 内置 provider = provider_id; 自定义订阅 = provider_id + 订阅 id (每条独立成一张吊牌) */
   key: string;
   name: string;
   icon?: string;
-  healthy: boolean;
-  /** 非 healthy 时的一行状态文案, 如「限流 4m」 */
-  statusText: string | null;
+  tone: UpstreamTone;
+  /** err 时的状态名, 如「限流」 */
+  statusLabel: string | null;
+  /** err 且在冷却时的剩余时间, 如「4m」; 单独成段, 窄处只截状态名、不截倒计时 */
+  cooldown: string | null;
   /** 该 provider 名下所有在用订阅 id, 用于实时闪烁聚合 */
   subIds: string[];
+  /** 悬停提示: 名下每条订阅一行 */
+  tooltip: string;
+}
+
+/**
+ * 按容器实测宽度算缩放比 (只缩不放) 与居中偏移。
+ * ResizeObserver 而不是媒体查询 —— 不再与侧栏宽度耦合。
+ */
+function useFitScale(width: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState(width);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => setBox(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const scale = Math.min(1, box / width);
+  return { ref, scale, offset: Math.max(0, (box - width * scale) / 2) };
 }
 
 export function RouteFlowDiagram() {
@@ -131,6 +148,7 @@ export function RouteFlowDiagram() {
   const vms = useVirtualModels();
   const subs = useSubscriptions();
   const providers = useProviders();
+  const { ref: fitRef, scale, offset } = useFitScale(CANVAS_W);
 
   const subsMap = useMemo(() => {
     const m = new Map<string, SubscriptionDto>();
@@ -152,148 +170,248 @@ export function RouteFlowDiagram() {
   );
 
   const running = proxy.data?.running ?? false;
-  const { slots: upSlots, height: canvasH } = layoutUpstreams(upstreams.length);
-  const hubCy = canvasH / 2;
+  const { cys: upCys, height: canvasH } = layoutUpstreams(upstreams.length);
+  const hubCy = midY(canvasH);
   const slotCount = orderedVms.filter((v) => v.name !== "model-fallback").length;
+  const address = (proxy.data?.base_url ?? "").replace(/^https?:\/\//, "");
 
   return (
-    <div className="rf-wrap" style={{ "--rf-h": `${canvasH}px` } as CSSProperties}>
-      {/* .rf-stage 是缩放层: 标签行与画布共用同一个 transform, 保证始终对齐 */}
-      <div className="rf-stage">
-        <div className="rf-labels">
-          <span className="rf-label">{t("liveRouting.clients")}</span>
-          <span className="rf-count">
-            {t("liveRouting.summary", { slots: slotCount, vendors: upstreams.length })}
+    <section className="card rf-card">
+      <div className="card-head">
+        <div className="rf-head-lead">
+          <span className="card-title">{t("liveRouting.diagram.title")}</span>
+          <span className="card-sub">
+            <HandDigits text={t("liveRouting.summary", { slots: slotCount, vendors: upstreams.length })} />
           </span>
-          <span className="rf-label">{t("liveRouting.upstreams")}</span>
         </div>
+        {running ? (
+          <span className="rf-status">
+            <span className="rf-status-dot" />
+            {t("sidebar.proxyRunning")}
+          </span>
+        ) : (
+          <span className="rf-status off">
+            <span className="rf-status-dot" />
+            {t("liveRouting.proxyStopped")}
+          </span>
+        )}
+      </div>
 
-        <div className="rf-canvas">
-          <svg
-            className="rf-arcs"
-            viewBox={`0 0 ${CANVAS_W} ${canvasH}`}
-            fill="none"
-            aria-hidden
-          >
-            {Array.from({ length: CLIENT_COUNT }, (_, i) => {
-              const cy = clientCy(clientTop(i, canvasH));
-              const d = `M168 ${cy} C 290 ${cy}, 350 ${hubCy}, 448 ${hubCy}`;
-              return (
-                <g key={`c${i}`}>
-                  <path d={d} stroke="var(--rf-client-line)" strokeWidth={1.5} />
-                  {running && (
-                    <path
-                      className="rf-flow"
-                      d={d}
-                      stroke="var(--rf-client-flow)"
-                      strokeWidth={1.5}
-                      strokeDasharray="3 14"
-                      strokeLinecap="round"
-                    />
-                  )}
-                </g>
-              );
-            })}
+      {/* 缩放层: 实测容器宽度等比缩小, 外层高度跟着收, 不留空白 */}
+      <div ref={fitRef} className="rf-fit" style={{ height: canvasH * scale }}>
+        <div
+          className={running ? "rf-canvas" : "rf-canvas off"}
+          style={{ "--rf-h": `${canvasH}px`, transform: `scale(${scale})`, marginLeft: offset } as CSSProperties}
+        >
+          <div className="rf-col-label left">
+            <span className="hand">{t("liveRouting.col.clients")}</span>
+            <span>{t("liveRouting.col.clientsSub")}</span>
+          </div>
+          <div className="rf-col-label right">
+            <span>{t("liveRouting.col.upstreamsSub")}</span>
+            <span className="hand">{t("liveRouting.col.upstreams")}</span>
+          </div>
 
-            {upstreams.map((u, i) => {
-              const slot = upSlots[i];
-              const d = upstreamArc(hubCy, upCy(slot.top), slot.inner);
-              // 异常的链路画成红色虚线且不走流动层 —— 没有流量在上面跑
-              if (!u.healthy) {
+          <svg className="rf-arcs" viewBox={`0 0 ${CANVAS_W} ${canvasH}`} fill="none" aria-hidden>
+            <g filter="url(#ccr-rough-canvas)">
+              {CLIENTS.map((_, i) => {
+                const cy = hubCy + (i - 1.5) * CLIENT_STEP;
+                const d = clientArc(cy, hubCy);
                 return (
-                  <path
-                    key={u.key}
-                    d={d}
-                    stroke="var(--rf-err-line)"
-                    strokeWidth={1.5}
-                    strokeDasharray="4 4"
-                  />
+                  <g key={`c${i}`}>
+                    <path className="rf-line" d={d} />
+                    {running && <path className="rf-flow client" d={d} />}
+                  </g>
                 );
-              }
-              return (
-                <g key={u.key}>
-                  <path d={d} stroke="var(--rf-up-line)" strokeWidth={1.5} />
-                  {running && (
-                    <path
-                      className="rf-flow"
-                      d={d}
-                      stroke="var(--rf-up-flow)"
-                      strokeWidth={1.5}
-                      strokeDasharray="3 14"
-                      strokeLinecap="round"
-                    />
-                  )}
-                </g>
-              );
-            })}
+              })}
+              <path className="rf-arrow" d={arrowHead(HUB_IN, hubCy)} />
+              {upstreams.map((u, i) => (
+                <UpstreamArc key={u.key} node={u} d={upstreamArc(hubCy, upCys[i])} end={upCys[i]} running={running} />
+              ))}
+            </g>
           </svg>
 
-          {Array.from({ length: CLIENT_COUNT }, (_, i) => (
-            <div className="rf-client" style={{ top: clientTop(i, canvasH) }} key={i}>
-              <div className="rf-client-bar">
-                <i />
-                <i />
-                <i />
-              </div>
-              <div className="rf-client-body">
-                <span className="rf-client-caret">❯</span>
-                <span className="rf-client-name">{CLIENT_NAMES[i]}</span>
-              </div>
-            </div>
+          {CLIENTS.map((c, i) => (
+            <ClientNote
+              key={c.name}
+              client={c}
+              cmd={c.cmd ?? t("liveRouting.clientAny")}
+              top={hubCy + (i - 1.5) * CLIENT_STEP - NOTE_H / 2}
+            />
           ))}
 
-          <div className={running ? "rf-hub" : "rf-hub off"}>
-            <LogoMark size={80} tile label="cc-router" />
+          <div className="rf-hub-note hand" style={{ top: hubCy - 99 }}>
+            {t("liveRouting.hubNote")}
           </div>
-          <div className="rf-hub-label">cc-router</div>
+          <svg className="rf-hub-note-arrow" viewBox="0 0 30 34" width="30" height="34" style={{ top: hubCy - 81 }} aria-hidden>
+            <path d="M6 2 C 16 6, 20 16, 14 30 M8 24 L14 31 L19 23" />
+          </svg>
+          <div className="rf-hub" style={{ top: hubCy - HUB / 2 }}>
+            <LogoMark size={HUB} tile label="cc-router" />
+          </div>
+          <div className="rf-hub-label" style={{ top: hubCy + HUB / 2 + 9 }}>
+            <div className="rf-hub-name">cc-router</div>
+            {address && <div className="rf-hub-addr">{address}</div>}
+          </div>
 
           {upstreams.map((u, i) => (
-            <UpstreamCloud key={u.key} node={u} slot={upSlots[i]} />
+            <UpstreamTag
+              key={u.key}
+              node={u}
+              top={upCys[i] - TAG_H / 2}
+              fill={TAG_FILLS[i % TAG_FILLS.length]}
+            />
           ))}
+        </div>
+      </div>
+
+      <div className="rf-legend">
+        <span>
+          <svg viewBox="0 0 28 8" width="28" height="8" aria-hidden>
+            <path className="rf-line" d="M1 4 L27 4" />
+            <path className="rf-flow upstream still" d="M1 4 L27 4" />
+          </svg>
+          {t("liveRouting.legend.ok")}
+        </span>
+        <span>
+          <svg viewBox="0 0 28 8" width="28" height="8" aria-hidden>
+            <path className="rf-flow active still" d="M1 4 L27 4" />
+          </svg>
+          <i className="rf-legend-swatch" />
+          {t("liveRouting.legend.active")}
+        </span>
+        <span>
+          <svg viewBox="0 0 28 8" width="28" height="8" aria-hidden>
+            <path className="rf-line err" d="M1 4 L27 4" />
+          </svg>
+          {t("liveRouting.legend.cooling")}
+        </span>
+        <span className="rf-legend-hint hand">{t("liveRouting.legend.hint")}</span>
+      </div>
+    </section>
+  );
+}
+
+/** 把文案里的数字换成手写体 (「4 槽位 + 1 兜底 · 5 家在用」), 与语言无关 */
+function HandDigits({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/(\d+)/).map((part, i) =>
+        /^\d+$/.test(part) ? (
+          <b className="hand-num" key={i}>
+            {part}
+          </b>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+function ClientNote({ client, cmd, top }: { client: (typeof CLIENTS)[number]; cmd: string; top: number }) {
+  return (
+    <div className="rf-note" style={{ top, transform: `rotate(${client.rotate}deg)` }}>
+      <svg viewBox={`0 0 ${NOTE_W} ${NOTE_H}`} width={NOTE_W} height={NOTE_H} aria-hidden>
+        <g filter="url(#ccr-rough-canvas)">
+          <path className="rf-note-paper" style={{ fill: client.fill }} d="M2 2 L154 3 L153 44 L140 56 L3 56 Z" />
+          <path className="rf-note-fold" d="M153 44 L141 45.5 L140 56 Z" />
+        </g>
+      </svg>
+      <span className="rf-note-tape" style={{ left: client.tapeLeft, transform: `rotate(${client.tapeRotate}deg)` }} />
+      <div className="rf-note-body">
+        <ClientDoodle name={client.icon} />
+        <div className="rf-note-text">
+          <span className="rf-note-name">{client.name}</span>
+          <span className="rf-note-cmd">{cmd}</span>
         </div>
       </div>
     </div>
   );
 }
 
-function UpstreamCloud({ node, slot }: { node: UpstreamNode; slot: UpstreamSlot }) {
+function UpstreamArc({ node, d, end, running }: { node: UpstreamNode; d: string; end: number; running: boolean }) {
+  const active = useAnyRouteFlashState(node.subIds) !== undefined;
+  // 异常 / 停用的链路不走流动层 —— 上面没有流量
+  if (node.tone !== "ok") {
+    return (
+      <g>
+        <path className={node.tone === "err" ? "rf-line err" : "rf-line off"} d={d} />
+        <path className={node.tone === "err" ? "rf-arrow err" : "rf-arrow off"} d={arrowHead(ARC_END, end)} />
+      </g>
+    );
+  }
+  return (
+    <g>
+      <path className="rf-line" d={d} />
+      {running && <path className={active ? "rf-flow active" : "rf-flow upstream"} d={d} />}
+      <path className="rf-arrow" d={arrowHead(ARC_END, end)} />
+    </g>
+  );
+}
+
+function UpstreamTag({ node, top, fill }: { node: UpstreamNode; top: number; fill: string }) {
+  const { t } = useT();
   const flash = useAnyRouteFlashState(node.subIds);
-  const stroke = node.healthy ? "var(--rf-up-line)" : "var(--rf-err-line)";
-  // 实时高亮: 有请求打到这家时描边加粗提亮, 与弧线的 flow 动画互补
-  const active = flash !== undefined;
+  // 实时高亮: 有请求打到这家时色块换奶油黄、描边加粗, 与弧线的陶土色墨点呼应
+  const active = flash !== undefined && node.tone === "ok";
+  const offset = node.tone === "err" ? "var(--fill-coral)" : node.tone === "off" ? "transparent" : active ? "var(--fill-butter)" : fill;
 
   return (
-    <div
-      className={node.healthy ? "rf-up" : "rf-up err"}
-      style={{ top: slot.top, left: slot.left }}
-      title={node.statusText ? `${node.name} · ${node.statusText}` : node.name}
-    >
-      <svg viewBox="0 0 160 64" preserveAspectRatio="none" aria-hidden>
-        <path
-          d="M28 58 A24 24 0 0 1 26 20 A22 22 0 0 1 62 12 A26 26 0 0 1 106 16
-             A20 20 0 0 1 132 26 A18 18 0 0 1 132 58 Z"
-          fill="var(--surface)"
-          stroke={active ? "var(--accent)" : stroke}
-          strokeWidth={active ? 3 : 2}
-          strokeLinejoin="round"
-        />
+    <div className={`rf-tag ${node.tone}${active ? " active" : ""}`} style={{ top, left: TAG_LEFT }} title={node.tooltip}>
+      <svg viewBox={`0 0 ${TAG_W} ${TAG_H}`} width={TAG_W} height={TAG_H} aria-hidden>
+        <path className="rf-tag-offset" transform="translate(5 4)" style={{ fill: offset }} d={TAG_PATH} />
+        <g className="rf-tag-ink" filter="url(#ccr-rough-canvas)">
+          <path className="rf-tag-paper" d={TAG_PATH} />
+          <circle className="rf-tag-hole" cx="15" cy="24" r="3.4" />
+        </g>
+        <path className="rf-tag-string" d="M-6 24 C 0 16, 10 16, 15 24" />
       </svg>
-      <div className="rf-up-text">
-        <span className="rf-up-name">{node.name}</span>
-        {node.statusText && <span className="rf-up-state">{node.statusText}</span>}
+      <div className="rf-tag-body">
+        <ProviderLogo iconId={node.icon} size={22} iconSize={14} />
+        <div className="rf-tag-text">
+          <span className="rf-tag-name">{node.name}</span>
+          {node.tone === "ok" ? (
+            <span className="rf-tag-sub">
+              {t(node.subIds.length === 1 ? "liveRouting.subCountOne" : "liveRouting.subCount", { n: node.subIds.length })}
+            </span>
+          ) : (
+            <span className="rf-tag-state hand">
+              <span className="rf-tag-state-label">
+                {node.tone === "err" ? node.statusLabel : stateLabel("disabled", t)}
+              </span>
+              {node.tone === "err" && node.cooldown && <span>{node.cooldown}</span>}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
+}
+
+/** 吊牌轮廓: 左端是穿挂绳的尖角 */
+const TAG_PATH = "M16 2 L150 3 L151 45 L16 46 L2 24 Z";
+
+/**
+ * 一家 provider 名下的订阅 → 一张吊牌的状态。
+ *
+ * - 停用是用户的主动选择, 不是故障: 只有「全部停用」才整张灰掉; 部分停用时忽略停用的那几条。
+ * - 其余订阅里只要有一条非 healthy 就整张标异常 —— 一张吊牌没有「半健康」的表达方式,
+ *   报警比报平安安全。
+ */
+function classifyUpstream(list: SubscriptionDto[]): { tone: UpstreamTone; bad?: SubscriptionDto } {
+  const enabled = list.filter((s) => s.state !== "disabled");
+  if (enabled.length === 0) return { tone: "off" };
+  const bad = enabled.find((s) => s.state !== "healthy");
+  return bad ? { tone: "err", bad } : { tone: "ok" };
 }
 
 /**
  * 收集「在用」的上游: 只算被虚拟模型引用到的订阅, 按 provider 去重。
- * 一家 provider 下任一在用订阅非 healthy 就整体标异常 —— 图上一朵云代表一家,
- * 没有半健康的表达方式, 报警比报平安安全。
  *
  * 自定义订阅例外: 它们共享同一个 marker 作 provider_id (custom / custom-openai / ...),
- * 按 provider 聚合会把互不相关的端点并成一朵云, 状态互相污染 (issue #40) ——
- * 改为每条自定义订阅独立成云, 云朵名取订阅自己的 provider_display_name。
+ * 按 provider 聚合会把互不相关的端点并成一张吊牌, 状态互相污染 (issue #40) ——
+ * 改为每条自定义订阅独立成一张, 名字取订阅自己的 provider_display_name。
  */
 function collectUpstreams(
   vms: VirtualModelDto[],
@@ -320,19 +438,18 @@ function collectUpstreams(
 
   return Array.from(byProvider.entries()).map(([groupKey, list]) => {
     const info = providers?.find((p) => p.id === list[0].provider_id);
-    const bad = list.find((s) => s.state !== "healthy");
+    const name = info?.display_name ?? list[0].provider_display_name ?? list[0].provider_id;
+    const { tone, bad } = classifyUpstream(list);
     const cooldown = bad ? fmtCooldownLeft(bad.cooldown_until) : null;
     return {
       key: groupKey,
-      name: info?.display_name ?? list[0].provider_display_name ?? list[0].provider_id,
+      name,
       icon: info?.icon ?? list[0].provider_icon,
-      healthy: !bad,
-      statusText: bad
-        ? cooldown
-          ? `${stateLabel(bad.state, t)} ${cooldown}`
-          : stateLabel(bad.state, t)
-        : null,
+      tone,
+      statusLabel: bad ? stateLabel(bad.state, t) : null,
+      cooldown,
       subIds: list.map((s) => s.id),
+      tooltip: [name, ...list.map((s) => `· ${s.display_name} — ${stateLabel(s.state, t)}`)].join("\n"),
     };
   });
 }

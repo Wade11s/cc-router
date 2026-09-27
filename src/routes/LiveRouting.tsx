@@ -35,8 +35,22 @@ const API_ROUTES: { method: string; path: string; descKey: string }[] = [
 ];
 
 export function LiveRoutingPage() {
+  const { t } = useT();
   return (
-    <div className="page-flow">
+    <div className="lr-page">
+      <div className="page-actions">
+        <div className="page-header" style={{ marginBottom: 0 }}>
+          <h1>{t("liveRouting.title")}</h1>
+          <div className="subtitle">{t("liveRouting.subtitle")}</div>
+        </div>
+        {/* 手写批注: 指向下方路由图里流动的连线 */}
+        <div className="hand-note" aria-hidden="true">
+          <span>{t("liveRouting.handNote")}</span>
+          <svg viewBox="0 0 40 40" width="32" height="32">
+            <path d="M6 6 C 22 6, 32 14, 30 32 M23 26 L30 33 L36 25" />
+          </svg>
+        </div>
+      </div>
       <RouteFlowDiagram />
       <AccessSection />
       <MappingSection />
@@ -45,7 +59,7 @@ export function LiveRoutingPage() {
 }
 
 /* ============================================================
- * 区块 B: 接入信息 + API 入口
+ * 接入信息 + API 入口 (并排两张卡片)
  * ============================================================ */
 
 function AccessSection() {
@@ -73,12 +87,12 @@ function AccessSection() {
   const token = settings.data?.auth_token ?? "";
 
   return (
-    <div className="flush-split">
-      <div>
-        <div className="flush-title" style={{ marginBottom: 12 }}>
-          {t("liveRouting.access.title")}
+    <div className="lr-grid">
+      <section className="card">
+        <div className="card-head">
+          <span className="card-title">{t("liveRouting.access.title")}</span>
         </div>
-        <div className="access-fields">
+        <div className="card-body access-fields">
           {httpUrl && (
             <CopyField label={t("liveRouting.access.httpUrl")} value={httpUrl} />
           )}
@@ -110,32 +124,32 @@ function AccessSection() {
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div>
-        <div className="flush-title">
-          {t("liveRouting.api.title")}
-          <span className="mono" style={{ fontSize: 11, color: "var(--ink-4)", fontWeight: 400 }}>
-            {t("liveRouting.api.dualProtocol")}
-          </span>
+      <section className="card alt">
+        <div className="card-head">
+          <span className="card-title">{t("liveRouting.api.title")}</span>
+          <span className="hand api-note">{t("liveRouting.api.dualProtocol")}</span>
         </div>
-        <div style={{ marginTop: 4 }}>
-          {API_ROUTES.map((r) => (
-            <div className="api-row" key={r.path}>
-              <span className="api-method">{r.method}</span>
-              <span className="api-path">{r.path}</span>
-              <span className="api-desc">{t(r.descKey)}</span>
-            </div>
-          ))}
-        </div>
-        <div className="readonly-note">
-          <Lock size={14} />
+        <div className="card-body lr-api">
+          <div>
+            {API_ROUTES.map((r) => (
+              <div className="api-row" key={r.path}>
+                <span className={`api-method ${r.method.toLowerCase()}`}>{r.method}</span>
+                <span className="api-path">{r.path}</span>
+                <span className="api-desc">{t(r.descKey)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="readonly-note">
+          <Lock size={15} />
           <span style={{ flex: 1 }}>{t("liveRouting.readonly.notice")}</span>
-          <button className="btn-dark" type="button" onClick={() => navigate("/settings?tab=proxy")}>
-            {t("liveRouting.readonly.goSettings")} <ArrowRight size={12} />
-          </button>
+            <button className="btn-dark" type="button" onClick={() => navigate("/settings?tab=proxy")}>
+              {t("liveRouting.readonly.goSettings")} <ArrowRight size={12} />
+            </button>
+          </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
@@ -172,7 +186,7 @@ function CopyField({
           {value}
         </div>
         {copyable && (
-          <button className="access-copy" type="button" onClick={copy}>
+          <button className="btn sm access-copy" type="button" onClick={copy}>
             {copied ? (
               <>
                 <Check size={12} /> {t("copyable.copied")}
@@ -191,8 +205,8 @@ function CopyField({
 }
 
 /* ============================================================
- * 区块 C: 虚拟模型映射 (传入名 → 虚拟模型 → 真实模型)
- * 三列同高严格逐行对齐 —— 中间两列箭头靠 transparent 上边框补齐 1px 分隔线。
+ * 虚拟模型映射 (传入名 → 虚拟模型 → 真实模型)
+ * 三列同高严格逐行对齐 —— 行高与箭头格同为 40px, 箭头列用 padding-top 避开标题行。
  * ============================================================ */
 
 function MappingSection() {
@@ -216,15 +230,20 @@ function MappingSection() {
   );
 
   return (
-    <div className="flush-section">
-      <div className="flush-title" style={{ marginBottom: 11 }}>
-        {t("liveRouting.map.title")}
+    <section className="card alt">
+      <div className="card-head">
+        <span className="card-title">{t("liveRouting.map.title")}</span>
+        <button className="btn sm" type="button" onClick={() => navigate("/virtual-models")}>
+          {t("liveRouting.map.goConfigure")} <ArrowRight size={12} />
+        </button>
       </div>
+      <div className="card-body">
 
       <div className="vm-map">
         {/* 左: 客户端可填的模型名 */}
         <div className="vm-map-col client">
           <div className="vm-map-head">
+            <span className="vm-map-num">1</span>
             <span>{t("liveRouting.map.colClient")}</span>
           </div>
           {rows.map((vm) => (
@@ -245,11 +264,12 @@ function MappingSection() {
           ))}
         </div>
 
-        <ArrowColumn count={rows.length} />
+        <ArrowColumn rows={rows} />
 
         {/* 中: cc-router 内部虚拟模型 */}
         <div className="vm-map-col router">
           <div className="vm-map-head">
+            <span className="vm-map-num">2</span>
             <span>{t("liveRouting.map.colVirtual")}</span>
           </div>
           {rows.map((vm) => (
@@ -262,19 +282,13 @@ function MappingSection() {
           ))}
         </div>
 
-        <ArrowColumn count={rows.length} />
+        <ArrowColumn rows={rows} />
 
         {/* 右: 真实模型 (读自「虚拟模型」页的绑定) */}
         <div className="vm-map-col real">
           <div className="vm-map-head">
+            <span className="vm-map-num">3</span>
             <span>{t("liveRouting.map.colReal")}</span>
-            <button
-              className="vm-map-goto"
-              type="button"
-              onClick={() => navigate("/virtual-models")}
-            >
-              {t("liveRouting.map.goConfigure")} <ArrowRight size={10} />
-            </button>
           </div>
           {rows.map((vm) => {
             const slot = vmNameToSlot(vm.name);
@@ -326,15 +340,22 @@ function MappingSection() {
         <span>{t("liveRouting.map.note.prefix")}</span>
         <span>{t("liveRouting.map.note.source")}</span>
       </div>
-    </div>
+      </div>
+    </section>
   );
 }
 
-function ArrowColumn({ count }: { count: number }) {
+/** 手画箭头列; 兜底行用虚线箭头, 与该行的虚线分隔呼应。两种笔迹交替, 免得像盖章 */
+function ArrowColumn({ rows }: { rows: VirtualModelDto[] }) {
   return (
     <div className="vm-map-arrows" aria-hidden>
-      {Array.from({ length: count }, (_, i) => (
-        <span key={i}>→</span>
+      {rows.map((vm, i) => (
+        <svg key={vm.name} viewBox="0 0 34 40" width="34" height="40">
+          <path
+            className={vm.name === "model-fallback" ? "fallback" : undefined}
+            d={i % 2 === 0 ? "M3 21 C 10 19, 20 23, 29 20 M23 15.5 L30 20 L23.5 25" : "M3 20 C 10 22, 20 18, 29 20 M23 15.5 L30 20 L23.5 25"}
+          />
+        </svg>
       ))}
     </div>
   );
