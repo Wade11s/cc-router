@@ -16,6 +16,8 @@ function Inline({ part }: { part: NotesInline }) {
         e.preventDefault();
         runtime.openExternal(part.url).catch(() => {});
       }}
+      // 中键点击不走 onClick, 也要拦住, 否则 webview 会自己开新窗口
+      onAuxClick={(e) => e.preventDefault()}
     >
       {part.text}
     </a>

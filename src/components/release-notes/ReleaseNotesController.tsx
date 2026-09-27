@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/tauri";
 import { runtime } from "@/runtime";
 import { useMarkReleaseNotesSeen, useReleaseNotes } from "@/hooks/useReleaseNotes";
+import { useSettings } from "@/hooks/useSettings";
 import type { ReleaseNotesDto, VersionNotes } from "@/types";
 import { ReleaseNotesDialog, type ReleaseNotesMode } from "./ReleaseNotesDialog";
 
@@ -52,6 +53,8 @@ export function ReleaseNotesProvider({ children }: { children: ReactNode }) {
     queryFn: () => api.getOnboardingState(),
     staleTime: Infinity,
   });
+  // 等设置加载完再自动弹: 弹窗的初始语言标签取自 preferred_language, 否则会先按系统语言选错
+  const settings = useSettings();
   const mark = useMarkReleaseNotesSeen();
   const [view, setView] = useState<View | null>(null);
   // 每次打开换 key, 让弹窗重新挂载: 语言标签回到界面语言、折叠行全部收起
@@ -61,13 +64,13 @@ export function ReleaseNotesProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (autoShown.current || !data || runtime.kind !== "desktop") return;
-    if (!onboarding.data?.completed || data.unseen.length === 0) return;
+    if (!settings.isSuccess || !onboarding.data?.completed || data.unseen.length === 0) return;
     const v = snapshot(data, "auto");
     if (!v) return;
     autoShown.current = true;
     setView(v);
     setOpenCount((n) => n + 1);
-  }, [data, onboarding.data]);
+  }, [data, onboarding.data, settings.isSuccess]);
 
   const openManual = () => {
     if (!data) return;
@@ -78,7 +81,9 @@ export function ReleaseNotesProvider({ children }: { children: ReactNode }) {
   };
 
   const close = () => {
-    if (hasUnread) mark.mutate();
+    if (hasUnread) {
+      mark.mutate(undefined, { onError: (e) => console.warn("mark_release_notes_seen failed", e) });
+    }
     setView(null);
   };
 

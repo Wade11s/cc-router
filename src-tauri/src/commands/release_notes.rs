@@ -17,9 +17,10 @@ pub async fn get_release_notes(state: State<'_, AppState>) -> AppResult<ReleaseN
 /// 发 settings_changed (已桥接到网页界面), 另一端的未读星号跟着消失。
 #[tauri::command]
 pub async fn mark_release_notes_seen(state: State<'_, AppState>) -> AppResult<()> {
+    // 先拿目录再改内存: 取目录失败时内存里的设置保持原样
+    let app_data_dir = paths::app_data_dir(&state.app_handle)?;
     let mut guard = state.settings.write().await;
     guard.last_seen_release_notes = Some(env!("CARGO_PKG_VERSION").to_string());
-    let app_data_dir = paths::app_data_dir(&state.app_handle)?;
     save(&app_data_dir, &guard).await?;
     drop(guard);
     let _ = state.app_handle.emit("settings_changed", ());

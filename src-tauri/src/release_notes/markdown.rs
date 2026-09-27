@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_syntax_with_line_numbers() {
-        assert_eq!(err_line("## A\n- 一\n![图](https://x/y.png)\n"), 3); // 图片
+        assert_eq!(err_line("## A\n- ![图](https://x/y.png)\n"), 2); // 图片 (行内 `![` 分支)
         assert_eq!(err_line("<img src=\"x\">\n"), 1); // HTML
         assert_eq!(err_line("### 三级标题\n"), 1);
         assert_eq!(err_line("# 一级标题\n"), 1);
