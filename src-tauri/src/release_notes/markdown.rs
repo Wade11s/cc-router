@@ -156,7 +156,22 @@ fn inlines(s: &str, line: usize) -> Result<Vec<Inline>, ParseError> {
             let close = rest.find("](").ok_or_else(|| err("`[` 后面缺少 `](链接)`".into()))?;
             let label = &rest[1..close];
             let after = &rest[close + 2..];
-            let end = after.find(')').ok_or_else(|| err("链接缺少 `)`".into()))?;
+            // Find closing ')' with balanced parenthesis matching
+            let mut depth = 0;
+            let mut end = None;
+            for (i, ch) in after.chars().enumerate() {
+                if ch == '(' {
+                    depth += 1;
+                } else if ch == ')' {
+                    if depth == 0 {
+                        end = Some(i);
+                        break;
+                    } else {
+                        depth -= 1;
+                    }
+                }
+            }
+            let end = end.ok_or_else(|| err("链接缺少 `)`".into()))?;
             let url = &after[..end];
             if label.is_empty() {
                 return Err(err("链接文字为空".into()));
@@ -222,6 +237,24 @@ mod tests {
     fn crlf_is_same_as_lf() {
         let lf = "摘要\n\n## A\n- 一\n  - 二\n";
         assert_eq!(parse(lf).unwrap(), parse(&lf.replace('\n', "\r\n")).unwrap());
+    }
+
+    #[test]
+    fn parses_links_with_parentheses_in_url() {
+        let doc = parse("## A\n- 见 [x](https://a.b/(c)) 完\n").unwrap();
+        assert_eq!(
+            doc.sections[0].items[0].text,
+            vec![
+                t("见 "),
+                Inline::Link { text: "x".into(), url: "https://a.b/(c)".into() },
+                t(" 完"),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_unclosed_link_with_parentheses() {
+        assert_eq!(err_line("## A\n- [x](https://a.b/(c)\n"), 2);
     }
 
     fn err_line(src: &str) -> usize {
