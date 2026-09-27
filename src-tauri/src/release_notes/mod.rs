@@ -130,12 +130,22 @@ pub fn compute_unseen(last_seen: Option<&str>, current: &str, versions: &[Versio
 }
 
 pub fn dto(last_seen: Option<&str>) -> ReleaseNotesDto {
-    let current = env!("CARGO_PKG_VERSION");
-    let versions = all();
+    dto_from(last_seen, env!("CARGO_PKG_VERSION"), all())
+}
+
+/// 当前是正式版时, 预发布版本的说明对用户隐藏 (unseen 与 versions 都不含);
+/// 当前本身是预发布 (测试用户) 时全部保留。
+fn dto_from(last_seen: Option<&str>, current: &str, versions: &[VersionNotes]) -> ReleaseNotesDto {
+    let stable = Version::parse(current).is_ok_and(|v| v.pre.is_empty());
+    let visible: Vec<VersionNotes> = versions
+        .iter()
+        .filter(|v| !stable || Version::parse(&v.version).is_ok_and(|ver| ver.pre.is_empty()))
+        .cloned()
+        .collect();
     ReleaseNotesDto {
         current: current.to_string(),
-        unseen: compute_unseen(last_seen, current, versions),
-        versions: versions.to_vec(),
+        unseen: compute_unseen(last_seen, current, &visible),
+        versions: visible,
     }
 }
 
@@ -218,9 +228,20 @@ mod tests {
 
     #[test]
     fn unseen_orders_prerelease_before_release() {
-        let list = ["6.1.0", "6.1.0-beta.1", "6.0.0"];
-        assert_eq!(unseen(Some("6.0.0"), "6.1.0", &list), ["6.1.0", "6.1.0-beta.1"]);
+        // 当前版本本身是预发布: 预发布说明全部保留, 按 semver 倒序
+        let list = ["6.1.0-beta.2", "6.1.0-beta.1", "6.0.0"];
+        let dto = dto_from(Some("6.0.0"), "6.1.0-beta.2", &versions(&list));
+        assert_eq!(dto.unseen, ["6.1.0-beta.2", "6.1.0-beta.1"]);
         assert_eq!(unseen(Some("6.0.0"), "6.1.0-beta.1", &list), ["6.1.0-beta.1"]);
+    }
+
+    #[test]
+    fn stable_current_hides_prerelease_notes() {
+        let list = ["6.1.0", "6.1.0-beta.1", "6.0.0"];
+        let dto = dto_from(Some("6.0.0"), "6.1.0", &versions(&list));
+        assert_eq!(dto.unseen, ["6.1.0"]);
+        let names: Vec<_> = dto.versions.iter().map(|v| v.version.as_str()).collect();
+        assert_eq!(names, ["6.1.0", "6.0.0"]);
     }
 
     /// 仓库里真实的 release-notes/ 必须全部合法; 写错格式在 cargo test 阶段就拦住。
