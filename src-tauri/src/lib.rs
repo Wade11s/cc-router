@@ -10,6 +10,7 @@ pub mod integrations;
 pub mod oauth;
 pub mod observability;
 pub mod provider;
+pub mod release_notes;
 pub mod proxy;
 pub mod runtime_file;
 pub mod settings;
