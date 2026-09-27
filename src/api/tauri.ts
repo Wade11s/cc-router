@@ -31,6 +31,7 @@ import type {
   ProxyStatus,
   ReceiptDto,
   ReceiptRange,
+  ReleaseNotesDto,
   RefreshBalanceResult,
   RefreshModelListResult,
   RequestLogFilters,
@@ -148,6 +149,10 @@ export const api = {
     filters?: EventFilters,
   ) =>
     invoke<ListEventsResult>("list_events", { page, pageSize, filters }),
+
+  // release notes
+  getReleaseNotes: () => invoke<ReleaseNotesDto>("get_release_notes"),
+  markReleaseNotesSeen: () => invoke<void>("mark_release_notes_seen"),
 
   // settings / proxy
   getSettings: () => invoke<Settings>("get_settings"),

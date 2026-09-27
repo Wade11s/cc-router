@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/tauri";
 import { runtime } from "@/runtime";
 import type { SettingsPatch, TuiInstallOutcome } from "@/types";
+import { RELEASE_NOTES_KEY } from "@/hooks/useReleaseNotes";
 
 export const SETTINGS_KEY = ["settings"] as const;
 export const PROXY_STATUS_KEY = ["proxy-status"] as const;
@@ -83,12 +84,14 @@ export function useTuiPathInstall() {
   };
 }
 
-/** 在 App 顶层挂一次: 托盘改了设置 (开机自启) 时后端发 settings_changed, 这里让设置缓存失效。 */
+/** 在 App 顶层挂一次: 后端发 settings_changed (托盘改开机自启 / 标记更新内容已读) 时让相关缓存失效。 */
 export function useSettingsEventBridge() {
   const queryClient = useQueryClient();
   useEffect(() => {
     const promise = runtime.listen("settings_changed", () => {
       queryClient.invalidateQueries({ queryKey: SETTINGS_KEY });
+      // 桌面与网页界面同时开着时, 一端标记「更新内容」已读, 另一端的未读星号跟着消失
+      queryClient.invalidateQueries({ queryKey: RELEASE_NOTES_KEY });
     });
     return () => {
       promise.then((unlisten) => unlisten()).catch(() => {});

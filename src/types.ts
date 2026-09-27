@@ -534,6 +534,8 @@ export interface Settings {
   web_ui_auth_enabled: boolean;
   /** 终端界面 (cc-router-tui) 是否允许接入. 默认关, 与 web_ui_enabled 互相独立 */
   tui_enabled: boolean;
+  /** 上次关闭「更新内容」弹窗时的 app 版本; null = 从没有此功能的老版本升上来。只读, 由 mark_release_notes_seen 写 */
+  last_seen_release_notes: string | null;
 }
 
 export type UpdateSource = "international" | "china";
@@ -957,4 +959,46 @@ export interface CodexWriteOutcome {
   /** Some=触发了备份; null=未触发或已有 .cc-router.bak */
   backup_path: string | null;
   bytes_written: number;
+}
+
+// === 更新内容 (src-tauri/src/release_notes) ===
+export type NotesLang = "zh" | "en" | "ja";
+
+export type NotesInline =
+  | { kind: "text"; text: string }
+  | { kind: "bold"; text: string }
+  | { kind: "code"; text: string }
+  | { kind: "link"; text: string; url: string };
+
+export interface NotesItem {
+  text: NotesInline[];
+  /** 二级列表项, 只有一层 */
+  children: NotesInline[][];
+}
+
+export interface NotesSection {
+  heading: string;
+  items: NotesItem[];
+}
+
+export interface NotesDoc {
+  /** 第一个分节之前的摘要段落 */
+  summary: NotesInline[][];
+  sections: NotesSection[];
+}
+
+export interface VersionNotes {
+  version: string;
+  date: string | null;
+  codename: string | null;
+  /** zh 必有, en / ja 可缺 */
+  notes: { zh: NotesDoc } & Partial<Record<"en" | "ja", NotesDoc>>;
+}
+
+export interface ReleaseNotesDto {
+  current: string;
+  /** 该自动弹出的版本, 倒序; 空 = 不弹 */
+  unseen: string[];
+  /** 全部内嵌版本, 倒序 */
+  versions: VersionNotes[];
 }
