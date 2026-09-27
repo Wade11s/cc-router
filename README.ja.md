@@ -235,7 +235,7 @@ Open WebUI、Cherry Studio、Cline、LobeChat など OpenAI Chat Completions し
 <details>
 <summary><b>Anthropic Messages 互換</b> —— メイン経路、リクエストをそのまま透過</summary>
 
-- 内蔵: Anthropic 公式、DeepSeek、智譜 GLM、Moonshot Kimi、MiniMax、Xiaomi MiMo、Alibaba Cloud Bailian、Volcengine Ark、Tencent Cloud、百度千帆、Stepfun、ModelScope、UCloud、Fireworks、OpenRouter、Requesty、xAI Grok、Aiberm、神馬中継、Ollama など。各社の Token Plan / Coding Plan / Agent Plan サブスクリプションと従量課金 API をカバー
+- 内蔵: Anthropic 公式、DeepSeek、智譜 GLM、Moonshot Kimi、MiniMax、Xiaomi MiMo、Alibaba Cloud Bailian、Volcengine Ark、Tencent Cloud、百度千帆、Stepfun、ModelScope、UCloud、Fireworks、OpenRouter、Requesty、xAI Grok、Aiberm、Ollama など。各社の Token Plan / Coding Plan / Agent Plan サブスクリプションと従量課金 API をカバー
 - カスタム: Anthropic Messages 互換の任意のエンドポイント（中継、自前ゲートウェイなど）。Base URL と Key を入力するだけ
 - プロトコル変換なし。thinking、`output_config.effort`、`cache_control`、画像、ツール呼び出しはすべて Anthropic ネイティブの意味論で動作します。**プロバイダがネイティブの Anthropic エンドポイントを提供しているなら、この経路を優先してください。** 変換経路では多かれ少なかれ情報が失われます
 

@@ -235,7 +235,7 @@ Open WebUI、Cherry Studio、Cline、LobeChat 等只支持 OpenAI Chat Completio
 <details>
 <summary><b>Anthropic Messages 兼容</b> —— 主路径，请求原样透传</summary>
 
-- 内置：Anthropic 官方、DeepSeek、智谱 GLM、Moonshot Kimi、MiniMax、小米 MiMo、阿里云百炼、火山方舟、腾讯云、百度千帆、阶跃星辰、魔搭 ModelScope、优云智算、Fireworks、OpenRouter、Requesty、xAI Grok、Aiberm、神马中转、Ollama 等，覆盖各家的 Token Plan / Coding Plan / Agent Plan 订阅与按量付费 API
+- 内置：Anthropic 官方、DeepSeek、智谱 GLM、Moonshot Kimi、MiniMax、小米 MiMo、阿里云百炼、火山方舟、腾讯云、百度千帆、阶跃星辰、魔搭 ModelScope、优云智算、Fireworks、OpenRouter、Requesty、xAI Grok、Aiberm、Ollama 等，覆盖各家的 Token Plan / Coding Plan / Agent Plan 订阅与按量付费 API
 - 自定义：任何 Anthropic Messages 兼容端点（中转站、自建网关等），填 Base URL + Key 即可
 - 不做协议翻译，thinking、`output_config.effort`、`cache_control`、图片、工具调用全部按 Anthropic 原生语义工作。**只要厂商提供原生 Anthropic 端点，就优先走这条路**，翻译路径多少会丢内容
 

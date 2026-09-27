@@ -21,7 +21,7 @@ pub enum ProviderCategory {
     /// AI 应用订阅 (Kiro / Cursor / Copilot 等). 不卖按 token 计费的模型 API,
     /// 而是基于他家(或自家)大模型做上层产品对终端用户卖订阅, 通常走 OAuth 接入.
     SecondParty,
-    /// API 分发 / 聚合站 (OpenRouter / whatai / aiberm 等). 不直接提供模型推理,
+    /// API 分发 / 聚合站 (OpenRouter / Requesty / aiberm 等). 不直接提供模型推理,
     /// 而是把多家原厂模型聚合成统一 API.
     Aggregator,
 }
