@@ -81,6 +81,8 @@ pub async fn start(state: AppState) -> AppResult<()> {
     // 两路 listener 都已绑定, 实际端口此刻才确定 (可能是 pref+n)。写给同机的 cc-router-tui 读。
     // 失败只 warn: TUI 用不了, 但代理必须照常工作。
     write_runtime_file(&state).await;
+    // 托盘状态行此刻才能显示真实端口
+    crate::tray::refresh(&state.app_handle);
 
     // 任一 listener 退出整体退出 (panic 拖垮 app 是接受的设计, 见 CLAUDE.md).
     for handle in tasks {

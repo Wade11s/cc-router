@@ -196,6 +196,14 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // 托盘菜单的「检查更新」一项在有新版本时换成「有新版本 vX · 查看」。
+  // 检测结果只在前端有 (Linux deb 的手动比对也在这里), 所以由前端推给托盘。
+  const detectedVersion = detected?.version ?? null;
+  useEffect(() => {
+    if (runtime.kind !== "desktop") return;
+    api.setTrayUpdate(detectedVersion).catch(() => {});
+  }, [detectedVersion]);
+
   const value = useMemo<UpdaterState>(
     () => ({
       status,

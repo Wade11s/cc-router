@@ -194,6 +194,8 @@ web_commands! {
     // 两边的 command 集合必须一致 (registered_matches_generate_handler), 所以照常登记, 但函数体是拒绝桩。
     install_tui_command() => Err::<(), AppError>(AppError::BadRequest(DESKTOP_ONLY.into())),
     uninstall_tui_command() => Err::<(), AppError>(AppError::BadRequest(DESKTOP_ONLY.into())),
+    // 托盘只属于桌面 app; 前端也只在桌面运行时才调它
+    set_tray_update() => Err::<(), AppError>(AppError::BadRequest(DESKTOP_ONLY.into())),
     // Claude Code / Codex integrations
     read_claude_code_settings() => commands::integrations::read_claude_code_settings(st).await,
     inspect_claude_code_settings() => commands::integrations::inspect_claude_code_settings(st).await,

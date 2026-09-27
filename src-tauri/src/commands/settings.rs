@@ -16,6 +16,15 @@ pub async fn update_settings(
     state: State<'_, AppState>,
     patch: SettingsPatch,
 ) -> AppResult<Settings> {
+    apply_settings_patch(&state, patch).await
+}
+
+/// `update_settings` 的实体, 托盘「开机自动启动」勾选框也走这里 —— 两个入口共用
+/// 「先改系统登录项、成功才落盘」的顺序与语言切换的托盘重建。
+pub(crate) async fn apply_settings_patch(
+    state: &AppState,
+    patch: SettingsPatch,
+) -> AppResult<Settings> {
     let autostart_change = patch.autostart;
 
     // autostart 副作用必须先成功才 apply, 否则 UI 显示「已启用」但 LaunchAgent 没注册.
@@ -57,6 +66,10 @@ pub async fn update_settings(
         }) {
             tracing::warn!(error = %e, "failed to dispatch tray menu rebuild");
         }
+    }
+    // 开机自启在设置页被改时, 托盘的勾选框跟上
+    if autostart_change.is_some() {
+        crate::tray::refresh(&state.app_handle);
     }
 
     Ok(snapshot)

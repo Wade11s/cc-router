@@ -183,6 +183,7 @@ pub fn run() {
             commands::tui::tui_launch_info,
             commands::tui::install_tui_command,
             commands::tui::uninstall_tui_command,
+            commands::tray::set_tray_update,
             commands::integrations::read_claude_code_settings,
             commands::integrations::inspect_claude_code_settings,
             commands::integrations::write_claude_code_settings,

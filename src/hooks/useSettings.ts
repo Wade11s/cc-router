@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/tauri";
+import { runtime } from "@/runtime";
 import type { SettingsPatch, TuiInstallOutcome } from "@/types";
 
 export const SETTINGS_KEY = ["settings"] as const;
@@ -80,6 +81,19 @@ export function useTuiPathInstall() {
     install: useMutation({ mutationFn: () => api.installTuiCommand(), onSuccess, onSettled }),
     uninstall: useMutation({ mutationFn: () => api.uninstallTuiCommand(), onSuccess, onSettled }),
   };
+}
+
+/** 在 App 顶层挂一次: 托盘改了设置 (开机自启) 时后端发 settings_changed, 这里让设置缓存失效。 */
+export function useSettingsEventBridge() {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const promise = runtime.listen("settings_changed", () => {
+      queryClient.invalidateQueries({ queryKey: SETTINGS_KEY });
+    });
+    return () => {
+      promise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [queryClient]);
 }
 
 export function useEnvSnippet() {

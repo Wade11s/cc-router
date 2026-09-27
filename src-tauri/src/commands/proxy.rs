@@ -43,25 +43,63 @@ pub async fn proxy_status(state: State<'_, AppState>) -> AppResult<ProxyStatus> 
     })
 }
 
+/// Claude Code 接入 cc-router 的环境变量 (键, 值), 顺序即输出顺序。
+/// 字段集与前端 `src/lib/recommendedClaudeCodeEnv.ts` 是同一份, 改一边要同步另一边。
+/// `env_snippet` (接入指南) 与托盘「复制 Claude Code 环境变量」共用。
+pub(crate) fn claude_code_env(base_url: &str, token: &str) -> Vec<(&'static str, String)> {
+    let fixed: [(&'static str, &str); 11] = [
+        ("API_TIMEOUT_MS", "3000000"),
+        ("ANTHROPIC_MODEL", "model-opus"),
+        ("ANTHROPIC_DEFAULT_FABLE_MODEL", "model-fable"),
+        ("ANTHROPIC_DEFAULT_OPUS_MODEL", "model-opus"),
+        ("ANTHROPIC_DEFAULT_SONNET_MODEL", "model-sonnet"),
+        ("ANTHROPIC_DEFAULT_HAIKU_MODEL", "model-haiku"),
+        ("CLAUDE_CODE_SUBAGENT_MODEL", "model-opus"),
+        ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"),
+        ("CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK", "1"),
+        ("CLAUDE_CODE_ATTRIBUTION_HEADER", "0"),
+        ("CLAUDE_CODE_EFFORT_LEVEL", "max"),
+    ];
+    let mut out = vec![
+        ("ANTHROPIC_BASE_URL", base_url.to_string()),
+        ("ANTHROPIC_AUTH_TOKEN", token.to_string()),
+    ];
+    out.extend(fixed.iter().map(|(k, v)| (*k, v.to_string())));
+    out
+}
+
+/// POSIX shell 形态: `export K=V`, 值原样 (URL / token / 常量里都没有需要转义的字符)。
+pub(crate) fn render_env_export(pairs: &[(&str, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(k, v)| format!("export {k}={v}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// PowerShell 形态: `$env:K = "V"`。双引号串里 `` ` `` / `"` / `$` 要用反引号转义。
+pub(crate) fn render_env_powershell(pairs: &[(&str, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(k, v)| {
+            let escaped: String = v
+                .chars()
+                .flat_map(|c| match c {
+                    '`' | '"' | '$' => vec!['`', c],
+                    _ => vec![c],
+                })
+                .collect();
+            format!("$env:{k} = \"{escaped}\"")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[tauri::command]
 pub async fn env_snippet(state: State<'_, AppState>) -> AppResult<String> {
     let base_url = state.local_base_url().await;
     let token = state.settings.read().await.auth_token.clone();
-    Ok(format!(
-        "export ANTHROPIC_BASE_URL={base_url}\n\
-         export ANTHROPIC_AUTH_TOKEN={token}\n\
-         export API_TIMEOUT_MS=3000000\n\
-         export ANTHROPIC_MODEL=model-opus\n\
-         export ANTHROPIC_DEFAULT_FABLE_MODEL=model-fable\n\
-         export ANTHROPIC_DEFAULT_OPUS_MODEL=model-opus\n\
-         export ANTHROPIC_DEFAULT_SONNET_MODEL=model-sonnet\n\
-         export ANTHROPIC_DEFAULT_HAIKU_MODEL=model-haiku\n\
-         export CLAUDE_CODE_SUBAGENT_MODEL=model-opus\n\
-         export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1\n\
-         export CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1\n\
-         export CLAUDE_CODE_ATTRIBUTION_HEADER=0\n\
-         export CLAUDE_CODE_EFFORT_LEVEL=max"
-    ))
+    Ok(render_env_export(&claude_code_env(&base_url, &token)))
 }
 
 /// 网页界面设置页展示局域网访问地址用. 只列非回环 IPv4.
@@ -80,4 +118,37 @@ pub async fn list_lan_addresses() -> AppResult<Vec<String>> {
     out.sort();
     out.dedup();
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 抽成 claude_code_env 之前 env_snippet 的原文, 锁住输出一个字符都不变。
+    #[test]
+    fn export_rendering_is_unchanged() {
+        let got = render_env_export(&claude_code_env("http://127.0.0.1:23456", "tok"));
+        assert_eq!(
+            got,
+            "export ANTHROPIC_BASE_URL=http://127.0.0.1:23456\n\
+             export ANTHROPIC_AUTH_TOKEN=tok\n\
+             export API_TIMEOUT_MS=3000000\n\
+             export ANTHROPIC_MODEL=model-opus\n\
+             export ANTHROPIC_DEFAULT_FABLE_MODEL=model-fable\n\
+             export ANTHROPIC_DEFAULT_OPUS_MODEL=model-opus\n\
+             export ANTHROPIC_DEFAULT_SONNET_MODEL=model-sonnet\n\
+             export ANTHROPIC_DEFAULT_HAIKU_MODEL=model-haiku\n\
+             export CLAUDE_CODE_SUBAGENT_MODEL=model-opus\n\
+             export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1\n\
+             export CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1\n\
+             export CLAUDE_CODE_ATTRIBUTION_HEADER=0\n\
+             export CLAUDE_CODE_EFFORT_LEVEL=max"
+        );
+    }
+
+    #[test]
+    fn powershell_rendering_quotes_and_escapes() {
+        let got = render_env_powershell(&[("A", "http://x:1".into()), ("B", "a$b\"c`d".into())]);
+        assert_eq!(got, "$env:A = \"http://x:1\"\n$env:B = \"a`$b`\"c``d\"");
+    }
 }

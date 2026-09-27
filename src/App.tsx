@@ -16,7 +16,8 @@ import { OnboardingDisclaimerPage } from "@/routes/OnboardingDisclaimer";
 import { OnboardingGate } from "@/components/layout/OnboardingGate";
 import { useSubscriptionEventBridge } from "@/hooks/useSubscriptions";
 import { useRouteFlashListener } from "@/hooks/useRouteFlash";
-import { useUpdateSourceAutoInit } from "@/hooks/useSettings";
+import { useSettingsEventBridge, useUpdateSourceAutoInit } from "@/hooks/useSettings";
+import { useTrayNavigation } from "@/hooks/useTrayNavigation";
 import { UpdaterProvider, useUpdaterAutoCheck } from "@/hooks/useUpdater";
 
 export default function App() {
@@ -29,6 +30,8 @@ export default function App() {
 
 function AppInner() {
   useSubscriptionEventBridge();
+  useSettingsEventBridge();
+  useTrayNavigation();
   useRouteFlashListener();
   useUpdateSourceAutoInit();
   useUpdaterAutoCheck();

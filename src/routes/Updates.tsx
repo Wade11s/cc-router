@@ -6,6 +6,8 @@ import {
   RefreshCw,
   RotateCw,
 } from "lucide-react";
+import { useEffect } from "react";
+import { useSearchParams } from "react-router";
 import { version as VERSION } from "../../package.json";
 import { LogoMark } from "@/components/sketch/LogoMark";
 import { useUpdater } from "@/hooks/useUpdater";
@@ -21,6 +23,18 @@ export function UpdatesPage() {
   const { status, check } = useUpdater();
   const settings = useSettings();
   const updateMut = useUpdateSettings();
+  const [params, setParams] = useSearchParams();
+
+  // 托盘「检查更新…」带着 ?check=1 进来: 立刻查一次, 并把参数抹掉 (刷新 / 返回不再重复触发)。
+  // 正在查 / 下载 / 等重启时不动 —— check() 会把状态打回 checking, 丢掉下载进度。
+  useEffect(() => {
+    if (params.get("check") !== "1") return;
+    setParams({}, { replace: true });
+    if (status === "checking" || status === "downloading" || status === "ready") return;
+    void check();
+    // 只响应参数本身; status / check 变化不该再触发一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
 
   // 更新源与设置页共用同一份 settings.update_source。
   // useUpdateSettings 的 onSuccess 已经 invalidate(['settings']), 两边 UI 自动同步 ——

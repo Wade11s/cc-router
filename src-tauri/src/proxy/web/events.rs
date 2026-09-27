@@ -34,6 +34,8 @@ pub const BRIDGED_EVENTS: &[&str] = &[
     "events_flushed",
     "route_attempt_started",
     "route_attempt_finished",
+    // 托盘改了设置 (开机自启), 让界面刷新设置缓存
+    "settings_changed",
     crate::commands::updater::PROGRESS_EVENT,
 ];
 

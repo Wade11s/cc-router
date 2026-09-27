@@ -178,6 +178,8 @@ export const api = {
   // updater (运行时按 settings.update_source 切换 manifest 源)
   checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
   downloadInstallUpdate: () => invoke<void>("download_install_update"),
+  /** 把检测到的新版本号推给托盘菜单 (null = 已是最新)。只在桌面运行时调用。 */
+  setTrayUpdate: (version: string | null) => invoke<void>("set_tray_update", { version }),
 
   // TLS / HTTPS 证书 (proxy_mode 包含 https 时使用)
   tlsGetStatus: () => invoke<TlsStatus>("tls_get_status"),

@@ -12,6 +12,7 @@ pub mod settings;
 pub mod statistics;
 pub mod subscriptions;
 pub mod tls;
+pub mod tray;
 pub mod tui;
 pub mod updater;
 pub mod virtual_models;
