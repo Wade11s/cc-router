@@ -986,5 +986,18 @@
   "webAuth.failed": "Incorrect token",
   "webAuth.locked": "Too many failed attempts — try again later",
   "webAuth.checking": "Checking sign-in status…",
-  "sidebar.logout": "Sign out"
+  "sidebar.logout": "Sign out",
+  "releaseNotes.entry": "What's new",
+  "releaseNotes.eyebrow": "What's new",
+  "releaseNotes.missed": "Also released since your last version",
+  "releaseNotes.earlier": "Earlier versions",
+  "releaseNotes.hint": "Reopen it any time from the popper at the bottom of the sidebar",
+  "releaseNotes.ok": "Got it",
+  "releaseNotes.close": "Close",
+  "releaseNotes.langs": "Notes language",
+  "releaseNotes.unread": "Unread release notes",
+  "releaseNotes.fallback": "No {lang} notes for this version, showing {shown}.",
+  "releaseNotes.lang.zh": "Chinese",
+  "releaseNotes.lang.en": "English",
+  "releaseNotes.lang.ja": "Japanese"
 }

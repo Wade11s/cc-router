@@ -8,7 +8,7 @@ import type { CSSProperties, ReactNode } from "react";
  */
 export type SidebarIconName =
   | "guide" | "live" | "vm" | "subs" | "logs" | "stats"
-  | "receipts" | "updates" | "settings" | "about" | "logout";
+  | "receipts" | "updates" | "settings" | "about" | "logout" | "whatsnew";
 
 interface Props {
   name: SidebarIconName;
@@ -176,6 +176,23 @@ const ICONS: Record<SidebarIconName, IconDef> = {
         <circle style={DOT} cx="13.6" cy="18" r="1.1" />
         <path d="M3.6 26.8 C 11 26.3, 20 27.2, 28.4 26.6" />
         <path d="M19.2 17.2 L27.4 17 M24.4 13.8 L27.6 17 L24.4 20.2" />
+      </>
+    ),
+  },
+  // 礼花筒 (侧栏底部「更新内容」入口): 筒身一道陶土色条纹, 筒口两条彩带、三颗彩屑
+  whatsnew: {
+    blob: BLOB.f,
+    fill: "var(--fill-butter)",
+    draw: (thin) => (
+      <>
+        <path style={PAPER} d="M4.8 27.2 L10.4 13.4 C 12.6 17.4, 14.6 19.4, 18.6 21.6 Z" />
+        <path style={{ ...ACCENT, strokeWidth: 0 }} d="M7.32 21 L11.01 24.68 L13.77 23.56 L8.44 18.23 Z" />
+        <path style={thin} d="M7.32 21 L11.01 24.68 M8.44 18.23 L13.77 23.56" />
+        <path d="M13.4 16.4 C 13 12.4, 17.4 12.8, 16.8 9.4 C 16.4 7.2, 18.4 5.4, 21 6.2" />
+        <path d="M16.6 19.4 C 19.8 17.2, 22.4 20.8, 25.4 18.6 C 26.8 17.6, 27.8 17.8, 28.6 18.8" />
+        <circle style={DOT} cx="21.8" cy="12.2" r="1.2" />
+        <circle style={{ ...ACCENT, stroke: "none" }} cx="25.8" cy="8.6" r="1.35" />
+        <path style={thin} d="M24.4 13.6 L26.4 14.4 M27.6 4.4 L26.8 6.2 M19.8 3 L20.4 4.8" />
       </>
     ),
   },

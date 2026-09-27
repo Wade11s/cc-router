@@ -986,5 +986,18 @@
   "webAuth.failed": "令牌不正确",
   "webAuth.locked": "失败次数过多，请稍后再试",
   "webAuth.checking": "正在检查登录状态…",
-  "sidebar.logout": "退出登录"
+  "sidebar.logout": "退出登录",
+  "releaseNotes.entry": "更新内容",
+  "releaseNotes.eyebrow": "更新内容",
+  "releaseNotes.missed": "期间还发布了 {count} 个版本",
+  "releaseNotes.earlier": "更早的版本",
+  "releaseNotes.hint": "之后可以点侧栏底部的礼花再次打开",
+  "releaseNotes.ok": "知道了",
+  "releaseNotes.close": "关闭",
+  "releaseNotes.langs": "说明语言",
+  "releaseNotes.unread": "有未读的更新内容",
+  "releaseNotes.fallback": "这个版本没有{lang}说明，下面显示{shown}。",
+  "releaseNotes.lang.zh": "中文",
+  "releaseNotes.lang.en": "英文",
+  "releaseNotes.lang.ja": "日文"
 }

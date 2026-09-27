@@ -986,5 +986,18 @@
   "webAuth.failed": "トークンが正しくありません",
   "webAuth.locked": "失敗回数が多すぎます。しばらくしてからお試しください",
   "webAuth.checking": "ログイン状態を確認中…",
-  "sidebar.logout": "ログアウト"
+  "sidebar.logout": "ログアウト",
+  "releaseNotes.entry": "リリースノート",
+  "releaseNotes.eyebrow": "リリースノート",
+  "releaseNotes.missed": "この間に出たバージョン",
+  "releaseNotes.earlier": "以前のバージョン",
+  "releaseNotes.hint": "サイドバー下のクラッカーからいつでも開き直せます",
+  "releaseNotes.ok": "OK",
+  "releaseNotes.close": "閉じる",
+  "releaseNotes.langs": "ノートの言語",
+  "releaseNotes.unread": "未読のリリースノート",
+  "releaseNotes.fallback": "このバージョンには{lang}のノートがないため、{shown}で表示しています。",
+  "releaseNotes.lang.zh": "中国語",
+  "releaseNotes.lang.en": "英語",
+  "releaseNotes.lang.ja": "日本語"
 }
