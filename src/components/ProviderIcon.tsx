@@ -19,6 +19,7 @@ import ModelScope from "@lobehub/icons/es/ModelScope";
 import OpenAI from "@lobehub/icons/es/OpenAI";
 import Gemini from "@lobehub/icons/es/Gemini";
 import Grok from "@lobehub/icons/es/Grok";
+import Requesty from "@/components/RequestyIcon";
 import { cn } from "@/lib/utils";
 
 type IconVariant = ComponentType<{ size?: number | string }>;
@@ -50,7 +51,12 @@ const BRAND_MAP: Record<string, BrandIcon> = {
   google: Gemini as unknown as BrandIcon,
   google_ai_studio: Gemini as unknown as BrandIcon,
   xai: Grok as unknown as BrandIcon,
+  requesty: Requesty as unknown as BrandIcon,
 };
+
+// 彩色变体在浅色 .logo 底上看不清的品牌, 一律走单色 (currentColor, 深浅模式自动反色)。
+// OpenRouter 2026 年新品牌色是荧光绿 #C8FF00, 官方只在黑底上用它; 单色版与其 favicon 观感一致。
+const MONO_ONLY = new Set(["openrouter"]);
 
 interface Props {
   iconId?: string | null;
@@ -79,7 +85,7 @@ export function ProviderIcon({ iconId, size = 20, className, monochrome = false 
       />
     );
   }
-  if (Brand.Color && !monochrome) {
+  if (Brand.Color && !monochrome && !MONO_ONLY.has(iconId!)) {
     return (
       <span className={cn("inline-flex shrink-0", className)} aria-hidden>
         <Brand.Color size={size} />

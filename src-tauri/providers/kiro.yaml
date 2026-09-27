@@ -23,7 +23,7 @@ endpoints:
     description: "走 runtime.eu-central-1.kiro.dev/generateAssistantResponse, 欧洲区域用户低延迟选择。"
     base_url: "https://runtime.eu-central-1.kiro.dev"
     messages_path: "/generateAssistantResponse"
-    region: global
+    region: eu
     billing: subscription
 
   - id: codewhisperer

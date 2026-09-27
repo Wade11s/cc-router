@@ -16,7 +16,7 @@
 
 id: requesty
 display_name: "Requesty"
-icon: ""
+icon: requesty
 category: aggregator
 description: "Requesty 模型路由网关，覆盖 Anthropic / OpenAI / Google / DeepSeek / xAI 等数百款模型"
 homepage: "https://requesty.ai"
@@ -40,7 +40,7 @@ endpoints:
     description: "Requesty 欧洲区域端点 (法兰克福)，与默认端点共用同一个 Key"
     base_url: "https://router.eu.requesty.ai"
     messages_path: "/v1/messages"
-    region: global
+    region: eu
     billing: pay_as_you_go
 
 default_endpoint: paygo
@@ -62,12 +62,16 @@ model_discovery:
   enabled: true
   path: "/v1/models/managed"
   cache_ttl_hours: 24
-  # 来源: /v1/models/managed 返回的模型策略 ID（2026-09 核对，仅作填写示例）
+  # 来源: /v1/models/managed 返回的模型策略 ID（2026-09-27 核对，仅作填写示例）
   # 排序原则: Claude 系列优先（cc-router 主场景）> 其他主流模型
   example_models:
+    - "claude-opus-5-5"
+    - "claude-sonnet-5"
+    - "claude-fable-5.1"
     - "claude-sonnet-4-5"
     - "claude-opus-4-6"
     - "claude-haiku-4-5"
+    - "gpt-6-sol"
     - "gpt-5.4"
     - "gemini-3.5-flash"
     - "deepseek-v4-flash"

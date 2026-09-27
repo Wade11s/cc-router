@@ -5,15 +5,34 @@ import { ProviderLogo } from "@/components/ProviderLogo";
 import { EmptyState } from "@/components/EmptyState";
 import { BalanceBadge } from "@/components/SubscriptionBalanceCard";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
+import { useProviders } from "@/hooks/useProviders";
 import { useT } from "@/i18n";
 import { fmtCompact, fmtTimeShort } from "@/lib/format";
 import { formatTokenShorthand } from "@/lib/quota";
 import { QUOTA_SEGMENTS } from "@/components/SubscriptionQuotaCard";
-import type { SubscriptionDto } from "@/types";
+import type { ProviderInfo, SubscriptionDto } from "@/types";
+
+// yaml endpoints[].region → 列表上的区域小标签; 不在表里的值 (local / 自定义订阅 / 未知) 不显示
+const REGION_LABEL_KEYS: Record<string, string> = {
+  china: "subscriptions.region.china",
+  global: "subscriptions.region.global",
+  eu: "subscriptions.region.eu",
+};
+
+// 按订阅的 provider + endpoint 现查 yaml 的 region —— 不像 provider_icon 那样存快照,
+// 改 yaml 的区域后老订阅也跟着变
+function regionOf(sub: SubscriptionDto, providers: ProviderInfo[] | undefined): string | undefined {
+  if (sub.is_user_defined) return undefined;
+  const endpoint = providers
+    ?.find((p) => p.id === sub.provider_id)
+    ?.endpoints.find((e) => e.id === sub.endpoint_id);
+  return endpoint?.region;
+}
 
 export function SubscriptionsPage() {
   const { t } = useT();
   const subs = useSubscriptions();
+  const providers = useProviders();
 
   return (
     <>
@@ -56,6 +75,7 @@ export function SubscriptionsPage() {
             </thead>
             <tbody>
               {subs.data.map((sub) => {
+                const regionKey = REGION_LABEL_KEYS[regionOf(sub, providers.data) ?? ""];
                 return (
                   <tr key={sub.id}>
                     <td>
@@ -74,6 +94,7 @@ export function SubscriptionsPage() {
                             <span style={{ fontWeight: 500, color: "var(--ink)" }}>
                               {sub.provider_display_name}
                             </span>
+                            {regionKey && <span className="pill tag region-tag">{t(regionKey)}</span>}
                             {sub.is_user_defined && (
                               <span
                                 style={{
