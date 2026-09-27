@@ -151,6 +151,8 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::generate_new_token,
+            commands::release_notes::get_release_notes,
+            commands::release_notes::mark_release_notes_seen,
             commands::proxy::proxy_status,
             commands::proxy::env_snippet,
             commands::proxy::list_lan_addresses,

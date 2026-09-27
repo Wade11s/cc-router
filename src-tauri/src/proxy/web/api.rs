@@ -168,6 +168,9 @@ web_commands! {
     proxy_status() => commands::proxy::proxy_status(st).await,
     env_snippet() => commands::proxy::env_snippet(st).await,
     list_lan_addresses() => commands::proxy::list_lan_addresses().await,
+    // release notes
+    get_release_notes() => commands::release_notes::get_release_notes(st).await,
+    mark_release_notes_seen() => commands::release_notes::mark_release_notes_seen(st).await,
     // onboarding
     get_onboarding_state() => commands::onboarding::get_onboarding_state(st).await,
     complete_onboarding() => commands::onboarding::complete_onboarding(st).await,

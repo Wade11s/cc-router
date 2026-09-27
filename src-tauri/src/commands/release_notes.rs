@@ -1,0 +1,27 @@
+use tauri::{Emitter, State};
+
+use crate::db::paths;
+use crate::error::AppResult;
+use crate::release_notes::{self, ReleaseNotesDto};
+use crate::settings::save;
+use crate::state::AppState;
+
+/// 全部内嵌的更新内容 + 该自动弹出的版本 (spec §4.5)。
+#[tauri::command]
+pub async fn get_release_notes(state: State<'_, AppState>) -> AppResult<ReleaseNotesDto> {
+    let last_seen = state.settings.read().await.last_seen_release_notes.clone();
+    Ok(release_notes::dto(last_seen.as_deref()))
+}
+
+/// 关闭弹窗时调用: 记下当前版本。由后端写自己的 CARGO_PKG_VERSION, 前端不传版本号。
+/// 发 settings_changed (已桥接到网页界面), 另一端的未读星号跟着消失。
+#[tauri::command]
+pub async fn mark_release_notes_seen(state: State<'_, AppState>) -> AppResult<()> {
+    let mut guard = state.settings.write().await;
+    guard.last_seen_release_notes = Some(env!("CARGO_PKG_VERSION").to_string());
+    let app_data_dir = paths::app_data_dir(&state.app_handle)?;
+    save(&app_data_dir, &guard).await?;
+    drop(guard);
+    let _ = state.app_handle.emit("settings_changed", ());
+    Ok(())
+}
