@@ -61,16 +61,16 @@ endpoints:
 
   - id: token_plan_ams
     label:
-      zh: "国际版 · Token Plan · 欧洲集群"
-      en: "International · Token Plan · Europe cluster"
-      ja: "国際版 · Token Plan · ヨーロッパクラスタ"
+      zh: "欧洲 · Token Plan · 欧洲集群"
+      en: "Europe · Token Plan · Europe cluster"
+      ja: "ヨーロッパ · Token Plan · ヨーロッパクラスタ"
     description:
       zh: "订阅制, 欧洲用户推荐"
       en: "Subscription-based, recommended for users in Europe"
       ja: "サブスクリプション制。ヨーロッパのユーザーにおすすめ"
     base_url: "https://token-plan-ams.xiaomimimo.com/anthropic"
     messages_path: "/v1/messages"
-    region: global
+    region: eu
     billing: subscription
 
 default_endpoint: token_plan_cn

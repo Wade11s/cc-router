@@ -463,10 +463,13 @@ pub async fn update_subscription(
         let endpoint = provider
             .endpoint(new_endpoint_id)
             .ok_or_else(|| AppError::EndpointNotFound(new_endpoint_id.clone()))?;
+        // model_discovery 也跟着 yaml 重拍: 内置订阅的这份只来自 yaml (不像自定义订阅会写回探测结果),
+        // 老快照可能带着写死的旧域名 url, 切到别的区域后会拿新区域的 Key 去查旧域名。
         Some((
             new_endpoint_id.clone(),
             endpoint.base_url.clone(),
             endpoint.messages_path.clone(),
+            provider.model_discovery.clone(),
         ))
     } else {
         None
@@ -511,10 +514,11 @@ pub async fn update_subscription(
         if let Some(v) = patch.forward_client_headers {
             guard.row.forward_client_headers = v;
         }
-        if let Some((eid, base, path)) = endpoint_resnapshot {
+        if let Some((eid, base, path, discovery)) = endpoint_resnapshot {
             guard.row.endpoint_id = eid;
             guard.row.base_url = base;
             guard.row.messages_path = path;
+            guard.row.model_discovery = discovery;
         }
         if let Some(conn) = patch.connection {
             if let Some(v) = conn.base_url {
