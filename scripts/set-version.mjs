@@ -3,7 +3,7 @@
 // src-tauri/crates/cc-router-tui/Cargo.toml / src-tauri/Cargo.lock。
 // 用法：pnpm version:set 0.2.0
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -76,8 +76,28 @@ updateCargoToml("src-tauri/Cargo.toml");
 updateCargoToml("src-tauri/crates/cc-router-tui/Cargo.toml");
 updateCargoLock("src-tauri/Cargo.lock", "cc-router");
 updateCargoLock("src-tauri/Cargo.lock", "cc-router-tui");
+scaffoldReleaseNotes();
 console.log("完成。建议接下来：");
-console.log(`  git add -u`);
+console.log(`  编辑 release-notes/${version}/zh.md (en.md / ja.md 可选)`);
+console.log(`  git add -u && git add release-notes/${version}`);
 console.log(`  git commit -m "Bump version to ${version}"`);
 console.log(`  git tag v${version}`);
 console.log(`  git push && git push --tags`);
+
+// 发版说明骨架: 只在目录不存在时生成; 只写 zh.md, 不生成 en / ja 的空文件
+// (空文件会被当成「已翻译」)。骨架只有分节标题, 解析器与 release-body --check 都会拒绝它,
+// 所以忘了写内容会在 cargo test / CI 的第一个 job 被拦住。
+function scaffoldReleaseNotes() {
+  const dir = resolve(root, "release-notes", version);
+  if (existsSync(dir)) {
+    console.log(`  release-notes/${version}/  (已存在, 不动)`);
+    return;
+  }
+  mkdirSync(dir, { recursive: true });
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  writeFileSync(resolve(dir, "meta.json"), JSON.stringify({ date }, null, 2) + "\n");
+  writeFileSync(resolve(dir, "zh.md"), "## 新功能\n\n## 修复\n\n## 其他\n");
+  console.log(`  release-notes/${version}/  →  已生成 meta.json 与 zh.md 骨架, 发版前填好`);
+}

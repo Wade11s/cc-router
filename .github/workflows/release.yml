@@ -13,8 +13,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # 发版说明必须先写好 (release-notes/<版本>/zh.md): 在花 30 分钟构建之前就拦住。
+  release-notes:
+    name: Check release notes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: zh.md must be written
+        run: node scripts/release-body.mjs --check "${{ github.ref_name }}"
+
   build-macos:
     name: Build macOS (Apple Silicon)
+    needs: [release-notes]
     runs-on: macos-latest
     environment: APPLE_CERTIFICATE
     env:
@@ -139,6 +156,7 @@ jobs:
 
   build-macos-x64:
     name: Build macOS (Intel)
+    needs: [release-notes]
     runs-on: macos-latest
     environment: APPLE_CERTIFICATE
     env:
@@ -263,6 +281,7 @@ jobs:
 
   build-windows:
     name: Build Windows x64
+    needs: [release-notes]
     runs-on: windows-latest
     environment: APPLE_CERTIFICATE
     env:
@@ -377,6 +396,7 @@ jobs:
 
   build-windows-arm:
     name: Build Windows arm64
+    needs: [release-notes]
     # 原生 arm64 runner (公开仓库免费); 避免从 x64 交叉编译 aws-lc-sys/ring 的 C/汇编坑
     runs-on: windows-11-arm
     environment: APPLE_CERTIFICATE
@@ -485,6 +505,7 @@ jobs:
 
   build-linux:
     name: Build Linux x64
+    needs: [release-notes]
     runs-on: ubuntu-22.04
     environment: APPLE_CERTIFICATE
     env:
@@ -603,6 +624,7 @@ jobs:
 
   build-linux-arm:
     name: Build Linux arm64
+    needs: [release-notes]
     # 原生 arm64 runner (公开仓库免费); 与 build-windows-arm 同思路,
     # 避免交叉编译 webkit2gtk/glib 这类系统 C 库所需的整套 sysroot。
     # 选 22.04 而非 24.04: 与 x64 job 的 glibc 保持一致(2.35)。
@@ -749,6 +771,16 @@ jobs:
 
       - name: List collected .sig files
         run: ls -la sigs
+
+      # Release 正文由 release-notes/ 生成 (维护者不再手写); 必须早于 Generate latest.json,
+      # 因为 generate-latest-json.mjs 读的是此刻 draft 的正文, latest.json.notes 才会一致。
+      - name: Write release body from release-notes/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          node scripts/release-body.mjs "$RELEASE_TAG" > release-body.md
+          gh release edit "$RELEASE_TAG" --notes-file release-body.md
 
       - name: Generate latest.json
         env:
