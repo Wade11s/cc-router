@@ -235,7 +235,7 @@ Outbound is grouped into three protocol families, plus a fourth group of OAuth-b
 <details>
 <summary><b>Anthropic Messages compatible</b> — primary path, requests passed through verbatim</summary>
 
-- Built-in: Anthropic official, DeepSeek, Zhipu GLM, Moonshot Kimi, MiniMax, Xiaomi MiMo, Alibaba Cloud Bailian, Volcengine Ark, Tencent Cloud, Baidu Qianfan, Stepfun, ModelScope, UCloud, Fireworks, OpenRouter, xAI Grok, Aiberm, Shenma relay, Ollama and more, covering each vendor's Token Plan / Coding Plan / Agent Plan subscriptions as well as pay-as-you-go APIs
+- Built-in: Anthropic official, DeepSeek, Zhipu GLM, Moonshot Kimi, MiniMax, Xiaomi MiMo, Alibaba Cloud Bailian, Volcengine Ark, Tencent Cloud, Baidu Qianfan, Stepfun, ModelScope, UCloud, Fireworks, OpenRouter, Requesty, xAI Grok, Aiberm, Shenma relay, Ollama and more, covering each vendor's Token Plan / Coding Plan / Agent Plan subscriptions as well as pay-as-you-go APIs
 - Custom: any Anthropic Messages-compatible endpoint (relays, self-hosted gateways, …) — just a Base URL and a key
 - No protocol translation: thinking, `output_config.effort`, `cache_control`, images and tool calls all keep their native Anthropic semantics. **If a vendor offers a native Anthropic endpoint, prefer this path** — the translated paths always lose something
 
