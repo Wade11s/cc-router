@@ -66,18 +66,23 @@ Highlights:
 - **Pool every token you have** — sequential / round-robin / session-affinity dispatch with automatic switching and failover
 - **Usage receipts** — export your token usage as a "supermarket receipt" in one click, handy for sharing or keeping records
 - **Fully translated UI** — 简体中文 / English / 日本語, follows your system locale or pick manually in Settings
+- **Desktop, web and terminal UIs** — besides the desktop GUI, open the exact same management UI in a browser via the [Web UI](#web-ui-optional-off-by-default), or use the [terminal UI (TUI)](#terminal-ui-optional-off-by-default) to manage subscriptions and watch live routing and request logs from the command line
 - **Virtual model aliases** — each of fable / opus / sonnet / haiku accepts multiple names; for opus that's `model-opus` / `claude-opus-4-7` / `anthropic/model-opus` / `anthropic/claude-opus-4-7`, all routed to the same virtual model — pick whatever naming your tool prefers
 - **Local HTTPS** — generate a self-signed CA and server cert in one click so HTTPS-only clients can talk to cc-router too; see the [setup guide](https://ccrouter.app/docs/claude-desktop-integration/)
 - **Claude Desktop App support** — combine local HTTPS with the virtual-model aliases above and Anthropic's official desktop app can route through cc-router's aggregated subscriptions; see the [setup guide](https://ccrouter.app/docs/claude-desktop-integration/)
 
 <table align="center">
   <tr>
-    <td width="50%"><img src="assets/screenshots/en/routing.png" alt="cc-router live routing page" /></td>
-    <td width="50%"><img src="assets/screenshots/en/models.png" alt="cc-router virtual model configuration page" /></td>
+    <td align="center" width="50%"><img src="assets/screenshots/en/routing.png" alt="cc-router live routing page" /><br /><sub><b>Live routing</b> · see where every request flows</sub></td>
+    <td align="center" width="50%"><img src="assets/screenshots/en/models.png" alt="cc-router virtual model configuration page" /><br /><sub><b>Virtual models</b> · drag to set subscription priority</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/screenshots/en/logs.png" alt="cc-router request logs page" /></td>
-    <td width="50%"><img src="assets/screenshots/en/receipts.png" alt="cc-router usage receipts page" /></td>
+    <td align="center" width="50%"><img src="assets/screenshots/en/logs.png" alt="cc-router request logs page" /><br /><sub><b>Request logs</b> · model, latency and tokens per request</sub></td>
+    <td align="center" width="50%"><img src="assets/screenshots/en/receipts.png" alt="cc-router usage receipts page" /><br /><sub><b>Usage receipts</b> · export token usage as a receipt</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><img src="assets/screenshots/en/tui-overview.png" alt="cc-router terminal UI overview" /><br /><sub><b>Terminal UI overview</b> · subscription health and quotas at a glance</sub></td>
+    <td align="center" width="50%"><img src="assets/screenshots/en/tui-log-detail.png" alt="cc-router terminal UI request detail" /><br /><sub><b>Terminal UI request detail</b> · the full record of a single request</sub></td>
   </tr>
 </table>
 
@@ -277,6 +282,14 @@ Settings → Web UI → once enabled, open `http://127.0.0.1:23456/ui/` in a bro
 
 - **What it covers** — overview, subscriptions (enable / disable, test connection, refresh models and balance, edit slots, add, delete), virtual models, live routing and request logs; press `?` to see every key. The UI language follows the desktop app's language setting (reopen the terminal UI after changing it)
 - **Known limitations** — the terminal must be at least 80×24; some symbols are “ambiguous-width” characters that East Asian locales may render two columns wide, which misaligns the layout — if you see that, turn on your terminal's option to display ambiguous-width characters as narrow (single-width); adding OAuth subscriptions and changing API keys still happen in the desktop app
+
+<table align="center">
+  <tr>
+    <td width="33%"><img src="assets/screenshots/en/tui-overview.png" alt="cc-router terminal UI overview" /></td>
+    <td width="33%"><img src="assets/screenshots/en/tui-subscriptions.png" alt="cc-router terminal UI subscriptions page" /></td>
+    <td width="33%"><img src="assets/screenshots/en/tui-log-detail.png" alt="cc-router terminal UI request detail" /></td>
+  </tr>
+</table>
 
 ## FAQ & Use Cases
 

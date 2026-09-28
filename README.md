@@ -66,18 +66,23 @@
 - **聚合所有模型Token** —— 顺序 / 轮询 / 会话亲和、自动切换、故障转移
 - **用量小票** —— token 用量一键导出成一张「超市小票」样式的消费凭证，晒图、留档都方便
 - **三语完整翻译** —— 简体中文 / English / 日本語，可跟随系统或在设置页手动切换
+- **桌面 / 网页 / 终端三种界面** —— 除了桌面 GUI，还能在浏览器里打开与桌面完全相同的[网页界面](#网页界面可选默认关闭)，或用[终端 TUI 界面](#终端界面可选默认关闭)在命令行里管理订阅、查看实时路由与请求日志
 - **虚拟模型多别名** —— fable / opus / sonnet / haiku 四个槽位各识别多种命名，以 opus 为例，`model-opus` / `claude-opus-4-7` / `anthropic/model-opus` / `anthropic/claude-opus-4-7` 都路由到同一虚拟模型，工具用什么命名都不挑
 - **本地 HTTPS** —— 一键生成自签 CA 与服务器证书，让只支持 HTTPS 的客户端也能接入 cc-router，详见[配置教程](https://ccrouter.app/docs/claude-desktop-integration/)
 - **接入 Claude Desktop App** —— 借助本地 HTTPS 与虚拟模型别名，Anthropic 官方桌面端可直接走 cc-router 聚合的多家订阅，详见[配置教程](https://ccrouter.app/docs/claude-desktop-integration/)
 
 <table align="center">
   <tr>
-    <td width="50%"><img src="assets/screenshots/zh/routing.png" alt="cc-router 实时路由页截图" /></td>
-    <td width="50%"><img src="assets/screenshots/zh/models.png" alt="cc-router 虚拟模型配置页截图" /></td>
+    <td align="center" width="50%"><img src="assets/screenshots/zh/routing.png" alt="cc-router 实时路由页截图" /><br /><sub><b>实时路由</b> · 请求流向一图看全</sub></td>
+    <td align="center" width="50%"><img src="assets/screenshots/zh/models.png" alt="cc-router 虚拟模型配置页截图" /><br /><sub><b>虚拟模型</b> · 拖拽排订阅优先级</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/screenshots/zh/logs.png" alt="cc-router 请求日志页截图" /></td>
-    <td width="50%"><img src="assets/screenshots/zh/receipts.png" alt="cc-router 用量小票页截图" /></td>
+    <td align="center" width="50%"><img src="assets/screenshots/zh/logs.png" alt="cc-router 请求日志页截图" /><br /><sub><b>请求日志</b> · 每次请求的模型、耗时与 token</sub></td>
+    <td align="center" width="50%"><img src="assets/screenshots/zh/receipts.png" alt="cc-router 用量小票页截图" /><br /><sub><b>用量小票</b> · token 用量导出成小票</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><img src="assets/screenshots/zh/tui-overview.png" alt="cc-router 终端界面总览页截图" /><br /><sub><b>终端界面总览</b> · 订阅健康与额度一屏看完</sub></td>
+    <td align="center" width="50%"><img src="assets/screenshots/zh/tui-log-detail.png" alt="cc-router 终端界面请求详情截图" /><br /><sub><b>终端界面请求详情</b> · 单次请求的完整记录</sub></td>
   </tr>
 </table>
 
@@ -277,6 +282,14 @@ Open WebUI、Cherry Studio、Cline、LobeChat 等只支持 OpenAI Chat Completio
 
 - **能做什么** —— 总览、订阅（启停 / 测试连接 / 刷新模型与余额 / 改槽位 / 新建 / 删除）、虚拟模型、实时路由、请求日志；按 `?` 查看全部键位。界面语言跟随桌面 app 的语言设置（改了之后重开终端界面生效）
 - **已知限制** —— 终端至少 80×24；部分符号属于「模糊宽度」字符，在东亚语言环境下可能按两列显示导致错位，遇到时在终端设置里打开「模糊宽度字符按窄字符（单宽）显示」一类的选项；新建 OAuth 类订阅与修改 API Key 仍需在桌面 app 里完成
+
+<table align="center">
+  <tr>
+    <td width="33%"><img src="assets/screenshots/zh/tui-overview.png" alt="cc-router 终端界面总览页截图" /></td>
+    <td width="33%"><img src="assets/screenshots/zh/tui-subscriptions.png" alt="cc-router 终端界面订阅页截图" /></td>
+    <td width="33%"><img src="assets/screenshots/zh/tui-log-detail.png" alt="cc-router 终端界面请求详情截图" /></td>
+  </tr>
+</table>
 
 ## 常见问题&使用场景
 

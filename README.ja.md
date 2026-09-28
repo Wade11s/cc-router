@@ -66,18 +66,23 @@
 - **手持ちのトークンをすべて集約** —— 順次 / ラウンドロビン / セッション親和のディスパッチ、自動切替とフェイルオーバー
 - **利用レシート** —— トークン使用量を「スーパーのレシート」風の画像にワンクリックで書き出し。共有にも記録にも便利
 - **3 言語完全翻訳** —— 简体中文 / English / 日本語、システム言語追従または設定画面で手動切替
+- **デスクトップ / Web / ターミナルの 3 つの UI** —— デスクトップ GUI に加えて、デスクトップと同じ管理画面をブラウザで開ける [Web UI](#web-uiオプションデフォルト無効) や、コマンドラインからサブスクリプションの管理・リアルタイムルーティング・リクエストログの確認ができる[ターミナル UI（TUI）](#ターミナル-uiオプションデフォルト無効) も使えます
 - **仮想モデルのエイリアス対応** —— fable / opus / sonnet / haiku の各スロットが複数の命名を識別。opus を例にすると `model-opus` / `claude-opus-4-7` / `anthropic/model-opus` / `anthropic/claude-opus-4-7` がすべて同じ仮想モデルにルーティングされ、ツール側の命名規約に左右されません
 - **ローカル HTTPS** —— ワンクリックで自己署名 CA とサーバー証明書を生成し、HTTPS しか受け付けないクライアントからも cc-router を呼び出せます。詳細は[設定ガイド](https://ccrouter.app/docs/claude-desktop-integration/)を参照
 - **Claude Desktop App 対応** —— ローカル HTTPS と仮想モデルエイリアスを組み合わせることで、Anthropic 公式デスクトップアプリから cc-router で集約した複数サブスクへ直接接続できます。詳細は[設定ガイド](https://ccrouter.app/docs/claude-desktop-integration/)を参照
 
 <table align="center">
   <tr>
-    <td width="50%"><img src="assets/screenshots/ja/routing.png" alt="cc-router リアルタイムルーティング画面" /></td>
-    <td width="50%"><img src="assets/screenshots/ja/models.png" alt="cc-router 仮想モデル設定画面" /></td>
+    <td align="center" width="50%"><img src="assets/screenshots/ja/routing.png" alt="cc-router リアルタイムルーティング画面" /><br /><sub><b>リアルタイムルーティング</b> · リクエストの流れを一目で</sub></td>
+    <td align="center" width="50%"><img src="assets/screenshots/ja/models.png" alt="cc-router 仮想モデル設定画面" /><br /><sub><b>仮想モデル</b> · ドラッグでサブスクの優先度を設定</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/screenshots/ja/logs.png" alt="cc-router リクエストログ画面" /></td>
-    <td width="50%"><img src="assets/screenshots/ja/receipts.png" alt="cc-router 利用レシート画面" /></td>
+    <td align="center" width="50%"><img src="assets/screenshots/ja/logs.png" alt="cc-router リクエストログ画面" /><br /><sub><b>リクエストログ</b> · リクエストごとのモデル・レイテンシ・トークン</sub></td>
+    <td align="center" width="50%"><img src="assets/screenshots/ja/receipts.png" alt="cc-router 利用レシート画面" /><br /><sub><b>利用レシート</b> · トークン使用量をレシートで書き出し</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><img src="assets/screenshots/ja/tui-overview.png" alt="cc-router ターミナル UI 概要画面" /><br /><sub><b>ターミナル UI 概要</b> · サブスクの状態と上限を一画面で</sub></td>
+    <td align="center" width="50%"><img src="assets/screenshots/ja/tui-log-detail.png" alt="cc-router ターミナル UI リクエスト詳細画面" /><br /><sub><b>ターミナル UI リクエスト詳細</b> · 1 件のリクエストの全記録</sub></td>
   </tr>
 </table>
 
@@ -277,6 +282,14 @@ Open WebUI、Cherry Studio、Cline、LobeChat など OpenAI Chat Completions し
 
 - **できること** —— 概要、サブスクリプション（有効化・無効化 / 接続テスト / モデル一覧と残高の更新 / スロット編集 / 新規作成 / 削除）、仮想モデル、リアルタイムルーティング、リクエストログ。`?` ですべてのキー操作を表示します。表示言語はデスクトップ app の言語設定に従います（変更後はターミナル UI を開き直すと反映されます）
 - **既知の制限** —— ターミナルは 80×24 以上が必要です。一部の記号は「曖昧幅」文字で、東アジア言語の環境では 2 列幅で表示されてレイアウトがずれることがあります。その場合はターミナルの設定で「曖昧幅の文字を半角（1 列幅）で表示する」類のオプションをオンにしてください。OAuth 系サブスクリプションの新規作成と API Key の変更は、引き続きデスクトップ app で行います
+
+<table align="center">
+  <tr>
+    <td width="33%"><img src="assets/screenshots/ja/tui-overview.png" alt="cc-router ターミナル UI 概要画面" /></td>
+    <td width="33%"><img src="assets/screenshots/ja/tui-subscriptions.png" alt="cc-router ターミナル UI サブスクリプション画面" /></td>
+    <td width="33%"><img src="assets/screenshots/ja/tui-log-detail.png" alt="cc-router ターミナル UI リクエスト詳細画面" /></td>
+  </tr>
+</table>
 
 ## FAQ・ユースケース
 
