@@ -33,6 +33,8 @@
 > 各家 provider 的 ToS 不一定明确允许"订阅 Key 接第三方代理 + 多虚拟模型混调度"的用法，尤其是 Coding Plan / Token Plan 这类 per-seat 订阅，可能触发风控。因使用本工具导致账号被限速、被封禁、订阅被取消的，作者不承担任何责任。
 >
 > 本软件按 As-Is 提供，不对任何因使用造成的直接或间接损失负责，包括但不限于额度异常消耗、数据丢失、业务中断。
+>
+> cc-router 是独立的第三方开源项目，与 Anthropic 无任何关联，未获其授权或背书，也不是 Claude / Claude Code 的官方应用。文中提及的 Anthropic、Claude、Claude Code 均为 Anthropic 的商标，仅用于说明兼容对象。
 
 架构与请求走向一览：
 

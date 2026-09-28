@@ -33,6 +33,8 @@ A locally-running LLM aggregation gateway with a desktop GUI, zero-code setup: b
 > Provider terms of service do not necessarily allow "routing a subscription key through a third-party proxy with multi-virtual-model dispatch" — especially for per-seat subscriptions like Coding Plans / Token Plans, where this pattern may trip risk controls. The author assumes no liability for any account being throttled, banned, or having its subscription cancelled as a result of using this tool.
 >
 > This software is provided As-Is, without warranty of any kind. The author is not liable for any direct or indirect damages arising from its use, including but not limited to abnormal quota consumption, data loss, or business interruption.
+>
+> cc-router is an independent, third-party open-source project. It is not affiliated with, authorized or endorsed by Anthropic, and is not an official Claude / Claude Code application. Anthropic, Claude and Claude Code are trademarks of Anthropic, mentioned here only to indicate compatibility.
 
 Architecture and request flow at a glance:
 

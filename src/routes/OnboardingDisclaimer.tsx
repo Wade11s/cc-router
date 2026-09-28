@@ -37,6 +37,7 @@ export function OnboardingDisclaimerPage() {
           <p>{t("about.disclaimer.usage")}</p>
           <p>{t("about.disclaimer.tos")}</p>
           <p>{t("about.disclaimer.warranty")}</p>
+          <p>{t("about.disclaimer.affiliation")}</p>
         </div>
         <button
           className="btn primary onboarding-disclaimer-accept"

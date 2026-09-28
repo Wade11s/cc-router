@@ -205,6 +205,7 @@
   "about.disclaimer.usage": "本ツールは「すでに保有しているサブスクリプションプラン間の自動切り替え」のみを目的としています。リクエストボディはほぼそのまま透過するだけで、リバースエンジニアリングや脱獄、回避行為は一切含みません。各プランの利用規約は利用者ご自身で遵守してください。Claude Code などのコーディングツール用途専用であり、それ以外の用途には使用しないでください。",
   "about.disclaimer.tos": "各プロバイダの利用規約が「サブスクリプションキーをサードパーティのプロキシ経由でルーティングし、複数仮想モデルでディスパッチする」用途を明示的に許可しているとは限りません。特に Coding Plan / Token Plan のような per-seat サブスクリプションでは、リスク管理機構に検知される可能性があります。本ツールの使用に起因するアカウントのレート制限、BAN、サブスクリプション解約等について、作者は一切の責任を負いません。",
   "about.disclaimer.warranty": "本ソフトウェアは As-Is（現状有姿）で提供され、明示・黙示を問わずいかなる保証もしません。クォータの異常消費、データ損失、業務中断を含む直接・間接の損害について作者は責任を負いません。",
+  "about.disclaimer.affiliation": "cc-router は独立したサードパーティ製のオープンソースプロジェクトです。Anthropic とは一切関係がなく、同社の許諾・推奨を受けたものでも、Claude / Claude Code の公式アプリでもありません。記載している Anthropic、Claude、Claude Code は Anthropic の商標であり、互換対象を示す目的でのみ使用しています。",
   "onboarding.disclaimer.title": "免責事項",
   "onboarding.disclaimer.subtitle": "cc-router の利用を開始する前に、以下をお読みください。",
   "onboarding.disclaimer.accept": "内容を理解し同意します",
