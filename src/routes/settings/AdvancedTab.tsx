@@ -24,7 +24,6 @@ import { useStorageStats } from "@/hooks/useStorageStats";
 import { fmtBytes, fmtNum } from "@/lib/format";
 import type { SettingsForm } from "./useSettingsForm";
 import { errorText } from "@/lib/errorText";
-import { BackupSection } from "./BackupSection";
 
 /** 高级: 数据存储 / 调试 / 危险区域 (恢复出厂). 危险区固定放最底部, 保持不容易顺手点到. */
 export function AdvancedTab({ form }: { form: SettingsForm }) {
@@ -159,7 +158,6 @@ export function AdvancedTab({ form }: { form: SettingsForm }) {
         </div>
       </div>
 
-      <BackupSection />
 
       {/* 危险区域 */}
       <div className="danger-card section">
