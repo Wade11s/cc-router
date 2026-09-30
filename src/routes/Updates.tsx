@@ -70,7 +70,7 @@ export function UpdatesPage() {
           <div className="setting-row">
             <div className="label-col">{t("updates.row.current")}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <LogoMark size={30} variant="compact" />
+              <LogoMark size={30} plainSize={28} variant="compact" />
               <span className="mono" style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
                 cc-router v{VERSION}
               </span>

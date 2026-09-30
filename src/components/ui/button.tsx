@@ -4,17 +4,32 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  // 与 styles.css 的 .btn 同一套手绘外形: 墨线 + 不规则圆角, 悬停歪一下并落出硬投影
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-(--r-sketch) border-[1.8px] border-(--stroke) text-sm font-medium transition-[transform,box-shadow,background-color] duration-150 hover:-translate-x-px hover:-translate-y-px hover:-rotate-[0.6deg] hover:shadow-[3px_3px_0_var(--fill-oat)] active:translate-x-px active:translate-y-px active:rotate-0 active:shadow-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent) disabled:pointer-events-none disabled:opacity-50 motion-reduce:hover:transform-none",
+  // 外形按画风分两套 (plain: / sketch: 前缀, 见 styles.css 的 @custom-variant):
+  // 经典是 shadcn 原样; 手绘与 styles.css 的 .btn 同款 —— 墨线 + 不规则圆角, 悬停歪一下并落出硬投影
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap text-sm font-medium disabled:pointer-events-none disabled:opacity-50 " +
+    "plain:rounded-md plain:transition-colors plain:focus-visible:outline-hidden plain:focus-visible:ring-1 plain:focus-visible:ring-ring " +
+    "sketch:rounded-(--r-sketch) sketch:border-[1.8px] sketch:border-(--stroke) sketch:transition-[transform,box-shadow,background-color] sketch:duration-150 sketch:hover:-translate-x-px sketch:hover:-translate-y-px sketch:hover:-rotate-[0.6deg] sketch:hover:shadow-[3px_3px_0_var(--fill-oat)] sketch:active:translate-x-px sketch:active:translate-y-px sketch:active:rotate-0 sketch:active:shadow-none sketch:focus-visible:outline-2 sketch:focus-visible:outline-offset-2 sketch:focus-visible:outline-(--accent) sketch:motion-reduce:hover:transform-none",
   {
     variants: {
       variant: {
-        default: "bg-(--accent) font-semibold text-[#141413] hover:shadow-[3px_3px_0_var(--stroke)]",
-        destructive: "rounded-(--r-sketch-alt) bg-(--fill-coral) font-semibold text-(--ink) hover:shadow-[3px_3px_0_var(--err)]",
-        outline: "bg-(--surface) text-(--ink)",
-        secondary: "bg-(--surface-3) text-(--ink)",
-        ghost: "border-transparent text-(--ink-2) hover:bg-(--surface-3) hover:text-(--ink) hover:shadow-none hover:transform-none",
-        link: "border-transparent text-(--accent-ink) underline-offset-4 hover:underline hover:shadow-none hover:transform-none",
+        default:
+          "plain:bg-primary plain:text-primary-foreground plain:hover:bg-primary/90 " +
+          "sketch:bg-(--accent) sketch:font-semibold sketch:text-[#141413] sketch:hover:shadow-[3px_3px_0_var(--stroke)]",
+        destructive:
+          "plain:bg-destructive plain:text-destructive-foreground plain:hover:bg-destructive/90 " +
+          "sketch:rounded-(--r-sketch-alt) sketch:bg-(--fill-coral) sketch:font-semibold sketch:text-(--ink) sketch:hover:shadow-[3px_3px_0_var(--err)]",
+        outline:
+          "plain:border plain:border-input plain:bg-background plain:hover:bg-accent plain:hover:text-accent-foreground " +
+          "sketch:bg-(--surface) sketch:text-(--ink)",
+        secondary:
+          "plain:bg-secondary plain:text-secondary-foreground plain:hover:bg-secondary/80 " +
+          "sketch:bg-(--surface-3) sketch:text-(--ink)",
+        ghost:
+          "plain:hover:bg-accent plain:hover:text-accent-foreground " +
+          "sketch:border-transparent sketch:text-(--ink-2) sketch:hover:bg-(--surface-3) sketch:hover:text-(--ink) sketch:hover:shadow-none sketch:hover:transform-none",
+        link:
+          "plain:text-primary plain:underline-offset-4 plain:hover:underline " +
+          "sketch:border-transparent sketch:text-(--accent-ink) sketch:underline-offset-4 sketch:hover:underline sketch:hover:shadow-none sketch:hover:transform-none",
       },
       size: {
         default: "h-9 px-4 py-2",
