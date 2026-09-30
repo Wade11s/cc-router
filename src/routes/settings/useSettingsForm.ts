@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useProxyStatus, useSettings, useUpdateSettings } from "@/hooks/useSettings";
+import { useProxyStatus, useRestartProxy, useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { useT, type LanguagePref } from "@/i18n";
+import { webRestartWarning, webUrlAfterRestart } from "@/lib/proxyRestart";
 import { runtime } from "@/runtime";
-import type { ProxyMode, UpdateSource } from "@/types";
+import type { ProxyMode, RestartProxyResult, UpdateSource } from "@/types";
 
 export function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -11,14 +12,19 @@ export function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {
 /**
  * 设置页的表单状态 + 保存 handler, 由 SettingsPage 持有、以 `form` prop 传给各 tab.
  *
- * 必须放在页面层而不是各 tab 里: tab 切换会卸载子组件, 若本地 state / baseline 跟着
- * 子组件走, 切一次 tab 就会把「需要重启」的判定基准重置成已保存的新值, 提示凭空消失.
+ * 必须放在页面层而不是各 tab 里: tab 切换会卸载子组件, 若本地 state 跟着
+ * 子组件走, 切一次 tab 就会把正在编辑的值丢掉.
  */
 export function useSettingsForm() {
   const { t } = useT();
   const settings = useSettings();
   const proxy = useProxyStatus();
   const updateMut = useUpdateSettings();
+  const restartMut = useRestartProxy();
+  // 上一次重启的结果, 停留到下一次设置保存成功
+  const [restartResult, setRestartResult] = useState<RestartProxyResult | null>(null);
+  // 需要「重启代理服务」才生效的判定由后端比较生效配置得出, 刷新页面 / 切走再回来都不丢.
+  const restartPending = proxy.data?.restart_pending ?? false;
 
   const [port, setPort] = useState<number>(23456);
   const [proxyMode, setProxyMode] = useState<ProxyMode>("http");
@@ -37,32 +43,12 @@ export function useSettingsForm() {
   const [webUiAuthEnabled, setWebUiAuthEnabled] = useState(true);
   const [tuiEnabled, setTuiEnabled] = useState(false);
 
-  // 仅在首次拿到 settings.data 时灌入本地 state + 记录 baseline. 后续 mutate refetch
+  // 仅在首次拿到 settings.data 时灌入本地 state. 后续 mutate refetch
   // 不再回灌, 否则会覆盖用户正在 input 里编辑但尚未 blur 的值 (port/cors origin 跳光标).
   const initializedRef = useRef(false);
-  // baseline = 进程启动时观测到的 proxy/tls 配置. 代理直到 app 重启才会按新值绑定, 所以
-  // "需要重启"的判定要拿 baseline (而非 settings.data) 比.
-  const baselineRef = useRef<{
-    proxy_port: number;
-    listen_all: boolean;
-    proxy_mode: ProxyMode;
-    https_port: number;
-    tls_extra_sans: string[];
-    https_enable_h2: boolean;
-    max_request_body_mb: number;
-  } | null>(null);
 
   useEffect(() => {
     if (!settings.data || initializedRef.current) return;
-    baselineRef.current = {
-      proxy_port: settings.data.proxy_port,
-      listen_all: settings.data.listen_all,
-      proxy_mode: settings.data.proxy_mode ?? "http",
-      https_port: settings.data.https_port ?? 23457,
-      tls_extra_sans: settings.data.tls_extra_sans ?? [],
-      https_enable_h2: settings.data.https_enable_h2 ?? true,
-      max_request_body_mb: settings.data.max_request_body_mb ?? 32,
-    };
     setPort(settings.data.proxy_port);
     setProxyMode(settings.data.proxy_mode ?? "http");
     setHttpsPort(settings.data.https_port ?? 23457);
@@ -82,26 +68,13 @@ export function useSettingsForm() {
     initializedRef.current = true;
   }, [settings.data]);
 
-  const needsRestart =
-    baselineRef.current !== null &&
-    (port !== baselineRef.current.proxy_port ||
-      listenAll !== baselineRef.current.listen_all ||
-      proxyMode !== baselineRef.current.proxy_mode ||
-      httpsPort !== baselineRef.current.https_port ||
-      !arraysEqual(
-        settings.data?.tls_extra_sans ?? [],
-        baselineRef.current.tls_extra_sans,
-      ) ||
-      (settings.data?.https_enable_h2 ?? true) !==
-        baselineRef.current.https_enable_h2 ||
-      maxBodyMb !== baselineRef.current.max_request_body_mb);
-
   const httpsEnabled = proxyMode === "https" || proxyMode === "both";
 
   // 失败保留本地 state 以便用户看到自己改了什么; 不做乐观回滚.
   async function patch(p: Parameters<typeof updateMut.mutateAsync>[0]) {
     try {
       await updateMut.mutateAsync(p);
+      setRestartResult(null);
     } catch (e) {
       alert(`${t("settings.saveFailed")}: ${e}`);
     }
@@ -179,10 +152,36 @@ export function useSettingsForm() {
     await patch({ cors_allow_origin: next });
   }
 
+  async function restartProxy() {
+    const s = settings.data;
+    if (runtime.kind === "web" && s) {
+      const warn = webRestartWarning(window.location, {
+        proxy_mode: s.proxy_mode ?? "http",
+        proxy_port: s.proxy_port,
+        https_port: s.https_port ?? 23457,
+        listen_all: s.listen_all,
+      });
+      if (warn && !confirm(t(warn))) return;
+    }
+    try {
+      const r = await restartMut.mutateAsync();
+      setRestartResult(r);
+      if (runtime.kind === "web" && r.outcome === "applied") {
+        const target = webUrlAfterRestart(window.location, r.status);
+        if (target) window.location.replace(target);
+      }
+    } catch (e) {
+      alert(`${t("settings.proxy.restart.requestFailed")}: ${e}`);
+    }
+  }
+
   return {
     settings,
     proxy,
-    needsRestart,
+    restartPending,
+    restartResult,
+    restarting: restartMut.isPending,
+    restartProxy,
     httpsEnabled,
     port,
     setPort,

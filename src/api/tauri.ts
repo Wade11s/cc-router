@@ -35,6 +35,7 @@ import type {
   RefreshBalanceResult,
   RefreshModelListResult,
   RequestLogFilters,
+  RestartProxyResult,
   Settings,
   SettingsPatch,
   StatsRange,
@@ -160,6 +161,7 @@ export const api = {
     invoke<Settings>("update_settings", { patch }),
   generateNewToken: () => invoke<Settings>("generate_new_token"),
   proxyStatus: () => invoke<ProxyStatus>("proxy_status"),
+  restartProxy: () => invoke<RestartProxyResult>("restart_proxy"),
   envSnippet: () => invoke<string>("env_snippet"),
   /** 局域网 IPv4 列表 (非回环), 设置页拼网页访问地址用 */
   listLanAddresses: () => invoke<string[]>("list_lan_addresses"),

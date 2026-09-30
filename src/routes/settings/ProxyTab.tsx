@@ -1,4 +1,3 @@
-import { TriangleAlert } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -8,6 +7,7 @@ import {
 } from "@/components/ui/select";
 import { useT } from "@/i18n";
 import { HttpsCertSection } from "./HttpsCertSection";
+import { ProxyRestartNotice } from "./ProxyRestartNotice";
 import type { SettingsForm } from "./useSettingsForm";
 
 /** 代理: 协议模式 / 端口 / 监听地址 / 请求体上限 + (https 时) 证书. */
@@ -188,12 +188,7 @@ export function ProxyTab({ form }: { form: SettingsForm }) {
             </Select>
           </div>
 
-          {form.needsRestart && (
-            <div className="alert warn">
-              <TriangleAlert size={14} />
-              {t("settings.proxy.needsRestart")}
-            </div>
-          )}
+          <ProxyRestartNotice form={form} />
         </div>
       </div>
 

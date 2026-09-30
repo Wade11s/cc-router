@@ -487,7 +487,7 @@ export type ProxyMode = "http" | "https" | "both";
 
 export interface Settings {
   proxy_port: number;
-  /** 代理监听协议组合, 默认 "http"; 切换需重启 app */
+  /** 代理监听协议组合, 默认 "http"; 切换后点「重启代理服务」生效 */
   proxy_mode: ProxyMode;
   /** HTTPS 端口, 默认 23457; 仅当 proxy_mode 包含 https 时使用 */
   https_port: number;
@@ -584,6 +584,16 @@ export type UpdaterProgressEvent =
   | { phase: "progress"; chunk_length: number }
   | { phase: "finished" };
 
+/** 代理正在运行的实例的生效配置 (后端 proxy/listeners.rs::ProxyConfig). 与设置不等 = 有未生效改动. */
+export interface AppliedProxyConfig {
+  proxy_mode: ProxyMode;
+  proxy_port: number;
+  https_port: number;
+  listen_all: boolean;
+  https_enable_h2: boolean;
+  max_request_body_mb: number;
+}
+
 export interface ProxyStatus {
   /** 兼容字段: HTTP 端口 (HTTPS-only 模式下回退到 HTTPS 端口) */
   port: number;
@@ -597,7 +607,17 @@ export interface ProxyStatus {
   listen_all: boolean;
   /** 客户端工具应连接的完整 base URL (含 scheme + port). 由后端 AppState::local_base_url 决定. */
   base_url: string;
+  /** 代理在运行且有需要「重启代理服务」才生效的改动 */
+  restart_pending: boolean;
+  /** 生效配置; null = 未运行 */
+  applied: AppliedProxyConfig | null;
+  /** 最近一次启动 / 重启 / 运行中崩溃的原因 */
+  last_error: string | null;
 }
+
+export type RestartProxyResult =
+  | { outcome: "applied"; status: ProxyStatus }
+  | { outcome: "rolled_back" | "stopped" | "failed"; status: ProxyStatus; error: string };
 
 /** TLS 状态 (cc-router 自签 CA 信息). 对应 Rust 侧 tls::TlsStatus */
 export interface TlsStatus {

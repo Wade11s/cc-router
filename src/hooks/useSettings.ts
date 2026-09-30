@@ -9,6 +9,8 @@ export const SETTINGS_KEY = ["settings"] as const;
 export const PROXY_STATUS_KEY = ["proxy-status"] as const;
 export const TUI_LAUNCH_INFO_KEY = ["tui-launch-info"] as const;
 
+export const ENV_SNIPPET_KEY = ["env-snippet"] as const;
+
 export function useSettings() {
   return useQuery({
     queryKey: SETTINGS_KEY,
@@ -22,6 +24,8 @@ export function useUpdateSettings() {
     mutationFn: (patch: SettingsPatch) => api.updateSettings(patch),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: SETTINGS_KEY });
+      // 让「有未生效改动」立即出现, 不等 5 秒轮询
+      queryClient.invalidateQueries({ queryKey: PROXY_STATUS_KEY });
     },
   });
 }
@@ -32,6 +36,18 @@ export function useGenerateNewToken() {
     mutationFn: () => api.generateNewToken(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: SETTINGS_KEY });
+    },
+  });
+}
+
+/** 进程内重启代理监听. 无论成败都刷新状态与环境变量片段 (端口可能顺延 / 回滚). */
+export function useRestartProxy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.restartProxy(),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: PROXY_STATUS_KEY });
+      queryClient.invalidateQueries({ queryKey: ENV_SNIPPET_KEY });
     },
   });
 }
@@ -84,7 +100,7 @@ export function useTuiPathInstall() {
   };
 }
 
-/** 在 App 顶层挂一次: 后端发 settings_changed (托盘改开机自启 / 标记更新内容已读) 时让相关缓存失效。 */
+/** 在 App 顶层挂一次: 后端发 settings_changed (托盘改开机自启 / 标记更新内容已读) 时让相关缓存失效; proxy_restarted 时刷新代理状态。 */
 export function useSettingsEventBridge() {
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -93,15 +109,21 @@ export function useSettingsEventBridge() {
       // 桌面与网页界面同时开着时, 一端标记「更新内容」已读, 另一端的未读星号跟着消失
       queryClient.invalidateQueries({ queryKey: RELEASE_NOTES_KEY });
     });
+    // 代理重启 / 停止后 (含另一端触发的), 状态与环境变量片段随之刷新
+    const proxyPromise = runtime.listen("proxy_restarted", () => {
+      queryClient.invalidateQueries({ queryKey: PROXY_STATUS_KEY });
+      queryClient.invalidateQueries({ queryKey: ENV_SNIPPET_KEY });
+    });
     return () => {
       promise.then((unlisten) => unlisten()).catch(() => {});
+      proxyPromise.then((unlisten) => unlisten()).catch(() => {});
     };
   }, [queryClient]);
 }
 
 export function useEnvSnippet() {
   return useQuery({
-    queryKey: ["env-snippet"],
+    queryKey: ENV_SNIPPET_KEY,
     queryFn: () => api.envSnippet(),
     refetchInterval: 5_000,
   });
