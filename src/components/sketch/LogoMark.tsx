@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { useTheme } from "@/hooks/useTheme";
+import { isPlainBased } from "@/themes";
 import logoClassicUrl from "@/assets/logo-classic.png";
 
 /**
@@ -12,7 +13,7 @@ import logoClassicUrl from "@/assets/logo-classic.png";
  * - mono: 只留墨线 (托盘 / 单色场景)
  * - tile: 画在 App 图标式的圆角底板上
  *
- * 经典画风 (data-art="plain") 下不画手绘版, 直接显示原来的像素 Logo, 尺寸与 tile 照旧。
+ * 经典 / Win2000 画风下不画手绘版, 直接显示原来的像素 Logo, 尺寸与 tile 照旧。
  */
 interface Props {
   size: number;
@@ -36,7 +37,7 @@ const LEGS_INNER = "M131 258 L130 299 L150 300 L150 259 Z M191 258 L190 299 L210
 
 export function LogoMark(props: Props) {
   const { art } = useTheme();
-  return art === "plain" ? <PixelLogo {...props} /> : <SketchLogo {...props} />;
+  return isPlainBased(art) ? <PixelLogo {...props} /> : <SketchLogo {...props} />;
 }
 
 function PixelLogo({ size, plainSize = size, tile = false, className, label }: Props) {

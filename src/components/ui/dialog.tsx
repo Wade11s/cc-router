@@ -34,13 +34,15 @@ export const DialogContent = React.forwardRef<
       className={cn(
         "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 p-6 duration-200 " +
           "plain:border plain:bg-background plain:shadow-lg plain:sm:rounded-lg " +
-          "sketch:border-2 sketch:border-(--stroke) sketch:bg-(--surface) sketch:shadow-[8px_8px_0_var(--fill-oat)] sketch:sm:rounded-(--r-card)",
+          "sketch:border-2 sketch:border-(--stroke) sketch:bg-(--surface) sketch:shadow-[8px_8px_0_var(--fill-oat)] sketch:sm:rounded-(--r-card) " +
+          "win2k:border-0 win2k:bg-(--w-face) win2k:shadow-(--bevel-window)",
         className,
       )}
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+      {/* dialog-close / dialog-title: Win2000 画风把它们画成标题栏上的关闭钮与渐变标题栏 (themes/win2k.css) */}
+      <DialogPrimitive.Close className="dialog-close absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
@@ -65,7 +67,7 @@ export const DialogTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn("text-lg font-semibold leading-none tracking-tight", className)}
+    className={cn("dialog-title text-lg font-semibold leading-none tracking-tight", className)}
     {...props}
   />
 ));

@@ -4,6 +4,7 @@ import { WindowChrome } from "./WindowChrome";
 import { runtime } from "@/runtime";
 import { ReleaseNotesProvider } from "@/components/release-notes/ReleaseNotesController";
 import { useTheme } from "@/hooks/useTheme";
+import { isPlainBased } from "@/themes";
 
 /**
  * 走「通栏布局」的页面: main 不留 padding, 自身收成 flex column + overflow hidden,
@@ -13,7 +14,7 @@ import { useTheme } from "@/hooks/useTheme";
  */
 const FLUSH_ROUTES = ["/subscriptions/:id"];
 
-/** 只在经典画风下通栏的路由: 经典版实时路由页是通栏布局, 手绘版是卡片 */
+/** 只在经典 / Win2000 画风下通栏的路由: 这两种画风用改版前的通栏实时路由页, 手绘版是卡片 */
 const PLAIN_FLUSH_ROUTES = ["/live-routing"];
 
 /**
@@ -25,7 +26,7 @@ const FLUSH_EXCEPTIONS = ["/subscriptions/new"];
 export function AppShell() {
   const { pathname } = useLocation();
   const { art } = useTheme();
-  const routes = art === "plain" ? [...FLUSH_ROUTES, ...PLAIN_FLUSH_ROUTES] : FLUSH_ROUTES;
+  const routes = isPlainBased(art) ? [...FLUSH_ROUTES, ...PLAIN_FLUSH_ROUTES] : FLUSH_ROUTES;
   const flush =
     !FLUSH_EXCEPTIONS.includes(pathname) &&
     routes.some((pattern) => matchPath(pattern, pathname) !== null);

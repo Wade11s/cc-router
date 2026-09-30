@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { PartyPopper } from "lucide-react";
 import { SidebarIcon } from "@/components/sketch/SidebarIcon";
+import { PixelIcon } from "@/components/win2k/PixelIcon";
 import { useTheme } from "@/hooks/useTheme";
 import type { NotesLang, VersionNotes } from "@/types";
 import { NotesDocView } from "./NotesDocView";
@@ -73,6 +74,8 @@ export function ReleaseNotesDialog({ open, onClose, mode, main, others }: Props)
               <div className="rn-doodle">
                 {art === "sketch" ? (
                   <SidebarIcon name="whatsnew" size={74} />
+                ) : art === "win2k" ? (
+                  <PixelIcon name="whatsnew" size={32} />
                 ) : (
                   <PartyPopper size={40} strokeWidth={1.5} aria-hidden="true" />
                 )}
