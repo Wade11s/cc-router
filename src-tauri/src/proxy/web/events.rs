@@ -69,13 +69,22 @@ pub async fn next_event(
     }
 }
 
+/// 事件流本身 (未转成 SSE 帧). 转发完 `proxy_restarted` 就结束:
+/// 代理重启会让旧实例做优雅关停, 而无尽的 SSE 响应会让旧实例永远排不空;
+/// 结束后浏览器 EventSource 自动重连到新实例, TUI 视为断线后重连.
+fn ui_event_stream(rx: broadcast::Receiver<UiEvent>) -> impl Stream<Item = UiEvent> {
+    futures::stream::unfold(Some(rx), |state| async move {
+        let (ev, rx) = next_event(state?).await?;
+        let next = if ev.name == "proxy_restarted" { None } else { Some(rx) };
+        Some((ev, next))
+    })
+}
+
 fn event_stream(
     rx: broadcast::Receiver<UiEvent>,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
-    futures::stream::unfold(rx, |rx| async move {
-        let (ev, rx) = next_event(rx).await?;
-        Some((Ok(Event::default().event(ev.name).data(ev.payload)), rx))
-    })
+    use futures::StreamExt;
+    ui_event_stream(rx).map(|ev| Ok(Event::default().event(ev.name).data(ev.payload)))
 }
 
 /// GET /ui/api/events
@@ -156,5 +165,28 @@ mod tests {
         assert_eq!(ev.name, "e4");
         drop(tx);
         assert!(next_event(rx).await.is_none(), "sender 关闭后结束");
+    }
+
+    #[tokio::test]
+    async fn stream_ends_right_after_proxy_restarted() {
+        use futures::StreamExt;
+        let (tx, rx) = tokio::sync::broadcast::channel::<UiEvent>(16);
+        let send = |name: &str| {
+            let _ = tx.send(UiEvent {
+                name: name.into(),
+                payload: "null".into(),
+            });
+        };
+        send("settings_changed");
+        send("proxy_restarted");
+        send("after_restart");
+        // tx 不 drop: 流必须靠 proxy_restarted 自己结束, 而不是等 sender 关闭
+        let got = tokio::time::timeout(
+            Duration::from_secs(2),
+            ui_event_stream(rx).map(|e| e.name).collect::<Vec<_>>(),
+        )
+        .await
+        .expect("proxy_restarted 之后事件流应结束");
+        assert_eq!(got, vec!["settings_changed", "proxy_restarted"]);
     }
 }

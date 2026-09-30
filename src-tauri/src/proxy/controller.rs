@@ -21,8 +21,9 @@ use tracing::{info, warn};
 use crate::error::{AppError, AppResult};
 use crate::proxy::listeners::{bind_all, BindOpts, Bound, BoundPorts, ListenSpec, ProxyConfig};
 
-/// HTTPS 路的排空上限, 与 http_client 的 600s 总超时对齐. HTTP 路 axum 不支持上限,
-/// 但在途请求同样受那个超时约束, 最终一定结束.
+/// HTTPS 路的排空上限, 与 http_client 的 600s 总超时对齐. HTTP 路 axum 不支持上限:
+/// 普通请求同样受那个超时约束, 最终一定结束; 无尽的事件流 (/ui/api/events) 则靠
+/// 转发 `proxy_restarted` 之后主动结束来让旧实例排空.
 const HTTPS_DRAIN: Duration = Duration::from_secs(600);
 
 pub trait ProxyHooks: Clone + Send + Sync + 'static {
@@ -143,7 +144,9 @@ impl ProxyController {
                     let msg = plain(&e);
                     warn!(error = %msg, "代理重启在动 listener 之前失败, 旧实例保持运行");
                     if running.is_none() {
+                        // 没有旧实例可保留: 这是「已停止」而不是「旧实例仍在运行」
                         self.set_snapshot(None, Some(msg.clone()));
+                        return RestartOutcome::Stopped(msg);
                     }
                     return RestartOutcome::Failed(msg);
                 }
@@ -381,6 +384,7 @@ mod tests {
         desired: Arc<std::sync::Mutex<ProxyConfig>>,
         tls_dir: Arc<tempfile::TempDir>,
         bound: Arc<std::sync::Mutex<Vec<Option<BoundPorts>>>>,
+        tls_fail: Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl TestHooks {
@@ -389,6 +393,7 @@ mod tests {
                 desired: Arc::new(std::sync::Mutex::new(cfg)),
                 tls_dir: Arc::new(tempfile::tempdir().unwrap()),
                 bound: Arc::new(std::sync::Mutex::new(Vec::new())),
+                tls_fail: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             }
         }
         fn set(&self, cfg: ProxyConfig) {
@@ -404,6 +409,9 @@ mod tests {
             *self.desired.lock().unwrap()
         }
         async fn tls_config(&self, enable_h2: bool) -> AppResult<Arc<rustls::ServerConfig>> {
+            if self.tls_fail.load(Ordering::SeqCst) {
+                return Err(AppError::internal("证书不可用"));
+            }
             crate::tls::load_or_init_server_config(self.tls_dir.path(), &[], enable_h2).await
         }
         fn build_router(&self, cfg: &ProxyConfig) -> Router {
@@ -682,5 +690,42 @@ mod tests {
         c.handle_exit(gen + 100, "http", "old".into(), hooks.clone()).await;
         assert_eq!(current_gen(&c).await, Some(gen));
         assert_eq!(c.snapshot().last_error, None);
+    }
+
+    #[tokio::test]
+    async fn tls_failure_on_first_start_is_stopped() {
+        let hooks = TestHooks::new(ProxyConfig {
+            proxy_mode: ProxyMode::Https,
+            https_port: free_port(),
+            ..http(0)
+        });
+        hooks.tls_fail.store(true, Ordering::SeqCst);
+        let c = ctl(BindOpts::DEFAULT);
+        assert!(matches!(
+            c.restart(hooks.clone()).await,
+            RestartOutcome::Stopped(m) if m == "证书不可用"
+        ));
+        assert_eq!(
+            c.snapshot(),
+            Snapshot { applied: None, last_error: Some("证书不可用".into()) }
+        );
+    }
+
+    #[tokio::test]
+    async fn tls_failure_with_running_instance_keeps_it() {
+        let p = free_port();
+        let hooks = TestHooks::new(http(p));
+        let c = ctl(BindOpts::DEFAULT);
+        assert_eq!(c.restart(hooks.clone()).await, RestartOutcome::Applied);
+        let before = c.snapshot();
+        hooks.tls_fail.store(true, Ordering::SeqCst);
+        hooks.set(ProxyConfig {
+            proxy_mode: ProxyMode::Https,
+            https_port: free_port(),
+            ..http(0)
+        });
+        assert!(matches!(c.restart(hooks.clone()).await, RestartOutcome::Failed(_)));
+        assert_eq!(c.snapshot(), before);
+        assert_eq!(get_text(p, "/ping").await.unwrap(), "pong");
     }
 }

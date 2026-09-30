@@ -142,7 +142,7 @@ pub async fn bind_with_fallback(
                 Some(next) => port = next,
                 None => break,
             },
-            Err(e) => return Err(AppError::Io(e)),
+            Err(e) => return Err(AppError::internal(format!("端口 {port} 无法绑定: {e}"))),
         }
     }
     Err(AppError::internal(if last == start_port {

@@ -51,9 +51,13 @@ pub async fn tls_regenerate_leaf(state: State<'_, AppState>) -> AppResult<TlsSta
     tls::ensure_ca(&app_data_dir).await?;
     tls::regenerate_leaf(&app_data_dir, &extra_sans).await?;
     // 运行中含 HTTPS 就热替换, 新握手立即用新证书; 没在跑 HTTPS 时下次带 HTTPS 启动自然读到.
-    state
+    // 磁盘上的重新生成已成功, 热替换失败不能让整条命令报错 (下次重启代理仍会读到新证书)
+    if let Err(e) = state
         .proxy
         .reload_tls(&crate::proxy::server::AppHooks(state.inner().clone()))
-        .await?;
+        .await
+    {
+        tracing::warn!(error = %e, "叶证书已重新生成, 但热替换运行中的 TLS 配置失败");
+    }
     tls::read_status(&app_data_dir).await
 }
