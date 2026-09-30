@@ -21,8 +21,8 @@ export function useSettingsForm() {
   const proxy = useProxyStatus();
   const updateMut = useUpdateSettings();
   const restartMut = useRestartProxy();
-  // 上一次重启的结果, 停留到下一次设置保存成功
-  const [restartResult, setRestartResult] = useState<RestartProxyResult | null>(null);
+  // 上一次重启的结果, 取自 mutation 自身的 data, 下一次设置保存成功时 reset
+  const restartResult: RestartProxyResult | null = restartMut.data ?? null;
   // 需要「重启代理服务」才生效的判定由后端比较生效配置得出, 刷新页面 / 切走再回来都不丢.
   const restartPending = proxy.data?.restart_pending ?? false;
 
@@ -74,7 +74,7 @@ export function useSettingsForm() {
   async function patch(p: Parameters<typeof updateMut.mutateAsync>[0]) {
     try {
       await updateMut.mutateAsync(p);
-      setRestartResult(null);
+      restartMut.reset();
     } catch (e) {
       alert(`${t("settings.saveFailed")}: ${e}`);
     }
@@ -165,7 +165,6 @@ export function useSettingsForm() {
     }
     try {
       const r = await restartMut.mutateAsync();
-      setRestartResult(r);
       if (runtime.kind === "web" && r.outcome === "applied") {
         const target = webUrlAfterRestart(window.location, r.status);
         if (target) window.location.replace(target);

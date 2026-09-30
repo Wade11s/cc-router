@@ -13,24 +13,34 @@ export function ProxyRestartNotice({ form }: { form: SettingsForm }) {
   if (!status) return null;
   const stopped = !status.running;
 
-  let tone: Tone;
-  let text: string;
-  if (form.restarting) {
-    tone = "warn";
-    text = t("settings.proxy.restart.running");
-  } else if (form.restartResult) {
-    [tone, text] = describeResult(form.restartResult, t);
-  } else if (stopped) {
-    tone = "err";
-    text = status.last_error
+  const stoppedNotice: [Tone, string] = [
+    "err",
+    status.last_error
       ? t("settings.proxy.restart.stopped", { error: status.last_error })
-      : t("settings.proxy.restart.stoppedNoReason");
+      : t("settings.proxy.restart.stoppedNoReason"),
+  ];
+  const pendingNotice: [Tone, string] = ["warn", t("settings.proxy.needsRestart")];
+  const result = form.restartResult;
+
+  // 实时状态优先于上一次重启的结果: 结果可能已过期 (之后代理崩溃 / 另一端改了配置),
+  // 不能让「已按新配置运行」的旧文案盖住真实状态.
+  let notice: [Tone, string];
+  if (form.restarting) {
+    notice = ["warn", t("settings.proxy.restart.running")];
+  } else if (stopped && result?.outcome !== "stopped") {
+    notice = stoppedNotice;
+  } else if (form.restartPending && result?.outcome === "applied") {
+    notice = pendingNotice;
+  } else if (result) {
+    notice = describeResult(result, t);
+  } else if (stopped) {
+    notice = stoppedNotice;
   } else if (form.restartPending) {
-    tone = "warn";
-    text = t("settings.proxy.needsRestart");
+    notice = pendingNotice;
   } else {
     return null;
   }
+  const [tone, text] = notice;
 
   const showButton = form.restarting || stopped || form.restartPending;
   return (
