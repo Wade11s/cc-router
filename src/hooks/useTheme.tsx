@@ -6,29 +6,48 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
+import {
+  applyThemeAttrs,
+  DEFAULT_THEME_ID,
+  isThemeId,
+  THEME_ID_KEY,
+  themeDef,
+  type ThemeArt,
+  type ThemeId,
+} from "@/themes";
 
-export type Theme = "light" | "dark" | "system";
-type ResolvedTheme = "light" | "dark";
+/** 明暗模式 (与界面主题正交: 每个主题都有明暗两套) */
+export type ColorMode = "light" | "dark" | "system";
+type ResolvedMode = "light" | "dark";
 
-const THEME_KEY = "cc-router-theme";
+// 键名沿用明暗模式最早的叫法, 改名会丢掉老用户的选择
+const MODE_KEY = "cc-router-theme";
 
-function getStoredTheme(): Theme {
+function readStorage(key: string): string | null {
   try {
-    if (typeof window === "undefined") return "system";
-    const v = window.localStorage.getItem(THEME_KEY);
-    if (v === "light" || v === "dark") return v;
-    return "system";
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(key);
   } catch {
-    return "system";
+    return null;
   }
 }
 
-function storeTheme(theme: Theme) {
+function writeStorage(key: string, value: string) {
   try {
-    window.localStorage.setItem(THEME_KEY, theme);
+    window.localStorage.setItem(key, value);
   } catch {
     // localStorage 不可用时静默降级
   }
+}
+
+function getStoredMode(): ColorMode {
+  const v = readStorage(MODE_KEY);
+  return v === "light" || v === "dark" ? v : "system";
+}
+
+function getStoredThemeId(): ThemeId {
+  const v = readStorage(THEME_ID_KEY);
+  return isThemeId(v) ? v : DEFAULT_THEME_ID;
 }
 
 function getSystemDark(): boolean {
@@ -40,40 +59,53 @@ function getSystemDark(): boolean {
 }
 
 interface ThemeContextValue {
-  theme: Theme;
-  resolved: ResolvedTheme;
-  setTheme: (t: Theme) => void;
+  mode: ColorMode;
+  resolved: ResolvedMode;
+  setMode: (m: ColorMode) => void;
+  themeId: ThemeId;
+  /** 当前主题的画风; 按画风换组件 (侧栏图标 / Logo / 路由图) 时读它 */
+  art: ThemeArt;
+  setThemeId: (id: ThemeId) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: "system",
+  mode: "system",
   resolved: "light",
-  setTheme: () => {},
+  setMode: () => {},
+  themeId: DEFAULT_THEME_ID,
+  art: themeDef(DEFAULT_THEME_ID).art,
+  setThemeId: () => {},
 });
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(getStoredTheme);
+  const [mode, setModeState] = useState<ColorMode>(getStoredMode);
+  const [themeId, setThemeIdState] = useState<ThemeId>(getStoredThemeId);
   const [systemDark, setSystemDark] = useState<boolean>(getSystemDark);
 
-  const setTheme = useCallback((t: Theme) => {
-    storeTheme(t);
-    setThemeState(t);
+  const setMode = useCallback((m: ColorMode) => {
+    writeStorage(MODE_KEY, m);
+    setModeState(m);
   }, []);
 
-  const resolved: ResolvedTheme =
-    theme === "system" ? (systemDark ? "dark" : "light") : theme;
+  const setThemeId = useCallback((id: ThemeId) => {
+    writeStorage(THEME_ID_KEY, id);
+    setThemeIdState(id);
+  }, []);
+
+  const resolved: ResolvedMode =
+    mode === "system" ? (systemDark ? "dark" : "light") : mode;
 
   // 同步 .dark class 到 <html>
   useEffect(() => {
-    const root = document.documentElement;
-    if (resolved === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
+    document.documentElement.classList.toggle("dark", resolved === "dark");
   }, [resolved]);
 
-  // 监听系统主题变化 (theme === "system" 时 resolved 随之重算)
+  // 同步 data-theme / data-art 到 <html> (首帧由 index.html 内联脚本先打好)
+  useEffect(() => {
+    applyThemeAttrs(themeId);
+  }, [themeId]);
+
+  // 监听系统明暗变化 (mode === "system" 时 resolved 随之重算)
   useEffect(() => {
     try {
       const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -86,7 +118,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <ThemeContext.Provider value={{ theme, resolved, setTheme }}>
+    <ThemeContext.Provider
+      value={{ mode, resolved, setMode, themeId, art: themeDef(themeId).art, setThemeId }}
+    >
       {children}
     </ThemeContext.Provider>
   );

@@ -25,7 +25,7 @@ export function AboutPage() {
         </div>
         <div className="card-body">
           <div className="about-hero">
-            <LogoMark size={64} tile label="cc-router" className="app-mark" />
+            <LogoMark size={64} plainSize={56} tile label="cc-router" className="app-mark" />
             <div style={{ minWidth: 0 }}>
               <div className="about-name">cc-router</div>
               <div className="about-meta">

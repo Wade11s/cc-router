@@ -8,7 +8,9 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     <input
       type={type}
       className={cn(
-        "flex h-9 w-full rounded-(--r-sketch-alt) border-[1.5px] border-(--line-2) bg-(--surface) px-3 py-1 text-sm transition-[border-color,box-shadow] file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground hover:border-(--ink-4) focus-visible:border-(--stroke) focus-visible:shadow-[3px_3px_0_var(--fill-butter)] focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
+        "flex h-9 w-full px-3 py-1 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50 " +
+          "plain:rounded-md plain:border plain:border-input plain:bg-transparent plain:shadow-xs plain:transition-colors plain:focus-visible:ring-1 plain:focus-visible:ring-ring " +
+          "sketch:rounded-(--r-sketch-alt) sketch:border-[1.5px] sketch:border-(--line-2) sketch:bg-(--surface) sketch:transition-[border-color,box-shadow] sketch:hover:border-(--ink-4) sketch:focus-visible:border-(--stroke) sketch:focus-visible:shadow-[3px_3px_0_var(--fill-butter)]",
         className,
       )}
       ref={ref}

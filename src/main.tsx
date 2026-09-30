@@ -11,6 +11,9 @@ import { applyPlatformAttr } from "@/lib/platform";
 import { runtime } from "@/runtime";
 import "./fonts";
 import "./styles.css";
+// 主题样式必须排在 styles.css 之后: 同权重的覆盖靠源码顺序生效
+import "./themes/classic.css";
+import "./themes/plain.css";
 
 // 首帧前打平台标记: 拖窗带高度 / 窗口三键的排版靠 <html data-platform> 分流
 applyPlatformAttr();

@@ -1,5 +1,24 @@
 import { NavLink } from "react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  Activity,
+  BarChart3,
+  BookOpen,
+  Info,
+  Key,
+  Layers,
+  LogOut,
+  Moon,
+  Palette,
+  PartyPopper,
+  Receipt,
+  RefreshCw,
+  ScrollText,
+  Settings as SettingsIcon,
+  Sun,
+  SunMoon,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useVirtualModels } from "@/hooks/useVirtualModels";
@@ -10,6 +29,38 @@ import { runtime, webLogout, webSession } from "@/runtime";
 import { LogoMark } from "@/components/sketch/LogoMark";
 import { SidebarIcon, type SidebarIconName } from "@/components/sketch/SidebarIcon";
 import { useReleaseNotesDialog } from "@/components/release-notes/ReleaseNotesController";
+import { useTheme, type ColorMode } from "@/hooks/useTheme";
+import { nextThemeId, themeDef, type ThemeArt } from "@/themes";
+
+/** 经典画风下的侧栏图标 (手绘改版前的 lucide 线性图标) */
+const PLAIN_ICONS: Record<SidebarIconName, LucideIcon> = {
+  guide: BookOpen,
+  live: Activity,
+  vm: Layers,
+  subs: Key,
+  logs: ScrollText,
+  stats: BarChart3,
+  receipts: Receipt,
+  updates: RefreshCw,
+  settings: SettingsIcon,
+  about: Info,
+  logout: LogOut,
+  whatsnew: PartyPopper,
+  "mode-system": SunMoon,
+  "mode-light": Sun,
+  "mode-dark": Moon,
+  theme: Palette,
+};
+
+/** 按画风出图标: 手绘 = 涂鸦小图 (28px), 经典 = lucide 线性图标 (16px) */
+function NavIcon({ name, art }: { name: SidebarIconName; art: ThemeArt }) {
+  if (art === "sketch") return <SidebarIcon name={name} size={28} />;
+  const Ico = PLAIN_ICONS[name];
+  return <Ico size={16} strokeWidth={1.6} />;
+}
+
+/** 明暗模式按钮的轮换顺序: 跟随系统 → 浅色 → 暗色 → 跟随系统 */
+const NEXT_MODE: Record<ColorMode, ColorMode> = { system: "light", light: "dark", dark: "system" };
 
 interface NavItem {
   to: string;
@@ -30,6 +81,7 @@ export function Sidebar() {
   const { detected } = useUpdater();
   const vms = useVirtualModels();
   const notes = useReleaseNotesDialog();
+  const { art, mode, setMode, themeId, setThemeId } = useTheme();
 
   const subsCount = subs.data?.length ?? 0;
   const running = proxy.data?.running ?? false;
@@ -75,16 +127,14 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <LogoMark size={44} variant="compact" className="brand-mark" />
+        <LogoMark size={44} plainSize={32} variant="compact" className="brand-mark" />
         <div className="brand-text">
           <div className="brand-name">cc-router</div>
           <div className="brand-tag">{t("sidebar.brand.tag")}</div>
         </div>
       </div>
-      {/* 手画波浪分隔线 */}
-      <svg className="brand-rule" viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M0 5 C 15 1, 45 9, 60 5 C 75 1, 105 9, 120 5 C 135 1, 165 9, 180 5 C 195 1, 225 9, 240 5" />
-      </svg>
+      {/* 手画波浪分隔线; 经典画风用品牌区的下边框代替 */}
+      {art === "sketch" && <SketchRule className="brand-rule" />}
       {/* 代理地址/端口不在这里展示: 地址在「实时路由」页可复制 —— 侧边栏只留导航。
        * 版本号只以手写小字出现在底部「更新内容」入口上 (已读时)。 */}
       {items.map((it) => {
@@ -96,12 +146,13 @@ export function Sidebar() {
             className={({ isActive }) => cn("nav-item", isActive && "active")}
           >
             <span className="nav-icon">
-              <SidebarIcon name={it.icon} size={28} />
+              <NavIcon name={it.icon} art={art} />
             </span>
             <span className="nav-label">{it.label}</span>
             {badge && <span className="badge mono">{badge}</span>}
             {!badge && it.dot && (
               <NavDot
+                art={art}
                 tone={it.dotTone ?? "err"}
                 label={t(it.dotLabelKey ?? "sidebar.updateAvailable")}
               />
@@ -110,23 +161,21 @@ export function Sidebar() {
         );
       })}
       <div className="nav-footer">
+        {/* 与品牌区下方对称的手画波浪线 */}
+        {art === "sketch" && <SketchRule className="foot-rule" />}
         {notes.hasNotes && (
           <>
-            {/* 与品牌区下方对称的手画波浪线 */}
-            <svg className="foot-rule" viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true">
-              <path d="M0 5 C 15 1, 45 9, 60 5 C 75 1, 105 9, 120 5 C 135 1, 165 9, 180 5 C 195 1, 225 9, 240 5" />
-            </svg>
             <button
               type="button"
               className={cn("nav-item", notes.openMode === "manual" && "active")}
               onClick={notes.openManual}
             >
               <span className="nav-icon">
-                <SidebarIcon name="whatsnew" size={28} />
+                <NavIcon name="whatsnew" art={art} />
               </span>
               <span className="nav-label">{t("releaseNotes.entry")}</span>
               {notes.hasUnread ? (
-                <NavDot tone="err" label={t("releaseNotes.unread")} />
+                <NavDot art={art} tone="err" label={t("releaseNotes.unread")} />
               ) : (
                 notes.current && <span className="nav-ver">v{notes.current}</span>
               )}
@@ -142,18 +191,61 @@ export function Sidebar() {
             }}
           >
             <span className="nav-icon">
-              <SidebarIcon name="logout" size={28} />
+              <NavIcon name="logout" art={art} />
             </span>
             <span className="nav-label">{t("sidebar.logout")}</span>
           </button>
         )}
+        {/* 明暗 / 主题: 只有图案的两枚按钮, 图案随当前状态变; 文字只在悬停提示与读屏里 */}
+        <div className="nav-toggles">
+          <ToggleButton
+            label={t("sidebar.toggle.mode", { mode: t(`settings.theme.${mode}`) })}
+            onClick={() => setMode(NEXT_MODE[mode])}
+          >
+            <NavIcon name={`mode-${mode}`} art={art} />
+          </ToggleButton>
+          <ToggleButton
+            label={t("sidebar.toggle.theme", { theme: t(themeDef(themeId).labelKey) })}
+            onClick={() => setThemeId(nextThemeId(themeId))}
+          >
+            <NavIcon name="theme" art={art} />
+          </ToggleButton>
+        </div>
       </div>
     </aside>
   );
 }
 
-/** 侧栏状态点: ok = 绿色手画圆点带放射短线 (代理在跑), err = 陶土色星号 (有可用更新) */
-function NavDot({ tone, label }: { tone: "ok" | "err"; label: string }) {
+function ToggleButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button type="button" className="nav-toggle" onClick={onClick} aria-label={label} title={label}>
+      {children}
+    </button>
+  );
+}
+
+function SketchRule({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 5 C 15 1, 45 9, 60 5 C 75 1, 105 9, 120 5 C 135 1, 165 9, 180 5 C 195 1, 225 9, 240 5" />
+    </svg>
+  );
+}
+
+/** 侧栏状态点。手绘: ok = 绿色手画圆点带放射短线 (代理在跑), err = 陶土色星号 (有可用更新);
+ *  经典: 一粒实心圆点 (绿 / 红) */
+function NavDot({ art, tone, label }: { art: ThemeArt; tone: "ok" | "err"; label: string }) {
+  if (art === "plain") {
+    return <span className={tone === "ok" ? "nav-dot ok" : "nav-dot"} role="img" aria-label={label} title={label} />;
+  }
   if (tone === "ok") {
     return (
       <svg className="nav-dot ok" viewBox="0 0 18 18" width="18" height="18" role="img" aria-label={label}>
