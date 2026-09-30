@@ -7,7 +7,12 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use super::format::{export_to_row, header_field, ExportFile, ExportSubscription, SecretsPlain, FIELD_API_KEY};
+use crate::commands::subscriptions::{
+    validate_base_url, validate_gemini_messages_path, validate_messages_path,
+    validate_required_headers, validate_slot_efforts, validate_token_quotas,
+};
 use crate::error::{AppError, AppResult};
+use crate::provider::model::AuthType;
 use crate::subscription::model::SubscriptionRow;
 use crate::virtual_model::model::{RoutingMode, VirtualModelName};
 
@@ -22,6 +27,8 @@ pub enum PreviewStatus {
     New,
     SkipExistingId,
     SkipOauth,
+    /// Fails the same checks create/update apply (the plaintext part is untrusted).
+    SkipInvalid,
 }
 
 #[derive(Debug, Serialize)]
@@ -34,6 +41,8 @@ pub struct PreviewItem {
     pub status: PreviewStatus,
     pub has_api_key: bool,
     pub redacted_headers: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalid_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,13 +54,55 @@ pub struct ImportPreview {
     pub subscriptions: Vec<PreviewItem>,
 }
 
-fn status_of(sub: &ExportSubscription, local: &LocalState) -> PreviewStatus {
+/// Re-runs the checks `create_subscription` / `update_subscription` apply, so an edited file
+/// cannot create a row the UI could never create. Deliberately independent of secrets: preview
+/// (no password) and apply must reach the same verdict. Redacted headers are checked by name only
+/// (their value is either encrypted or written back blank on purpose).
+fn validate_entry(sub: &ExportSubscription) -> Result<(), String> {
+    fn check(sub: &ExportSubscription) -> AppResult<()> {
+        validate_base_url(&sub.base_url)?;
+        validate_messages_path(&sub.messages_path)?;
+        if let Some(u) = sub.model_discovery.url.as_deref().filter(|u| !u.trim().is_empty()) {
+            validate_base_url(u)?;
+        }
+        if let Some(b) = &sub.balance_discovery {
+            validate_base_url(&b.url)?;
+        }
+        if sub.auth_type == AuthType::GeminiApiKey {
+            validate_gemini_messages_path(&sub.messages_path)?;
+        }
+        let mut headers = sub.required_headers.clone();
+        for name in &sub.redacted_headers {
+            headers.entry(name.clone()).or_insert_with(|| "redacted".into());
+        }
+        validate_required_headers(&headers, &sub.auth_header_name)?;
+        validate_slot_efforts(&sub.slot_efforts)?;
+        validate_token_quotas(&sub.token_quotas)?;
+        Ok(())
+    }
+    check(sub).map_err(|e| match e {
+        AppError::BadRequest(msg) => msg,
+        other => other.to_string(),
+    })
+}
+
+enum Verdict {
+    New,
+    SkipExistingId,
+    SkipOauth,
+    SkipInvalid(String),
+}
+
+/// Shared by `preview` and `plan` so the preview and the actual import cannot disagree.
+fn verdict_of(sub: &ExportSubscription, local: &LocalState) -> Verdict {
     if local.existing_ids.contains(&sub.id) {
-        PreviewStatus::SkipExistingId
+        Verdict::SkipExistingId
     } else if sub.is_oauth() {
-        PreviewStatus::SkipOauth
+        Verdict::SkipOauth
+    } else if let Err(reason) = validate_entry(sub) {
+        Verdict::SkipInvalid(reason)
     } else {
-        PreviewStatus::New
+        Verdict::New
     }
 }
 
@@ -64,15 +115,24 @@ pub fn preview(file: &ExportFile, local: &LocalState) -> ImportPreview {
         subscriptions: file
             .subscriptions
             .iter()
-            .map(|s| PreviewItem {
-                id: s.id.to_string(),
-                display_name: s.display_name.clone(),
-                provider_id: s.provider_id.clone(),
-                provider_display_name: s.provider_display_name.clone(),
-                provider_icon: s.provider_icon.clone(),
-                status: status_of(s, local),
-                has_api_key: s.has_api_key,
-                redacted_headers: s.redacted_headers.clone(),
+            .map(|s| {
+                let (status, invalid_reason) = match verdict_of(s, local) {
+                    Verdict::New => (PreviewStatus::New, None),
+                    Verdict::SkipExistingId => (PreviewStatus::SkipExistingId, None),
+                    Verdict::SkipOauth => (PreviewStatus::SkipOauth, None),
+                    Verdict::SkipInvalid(reason) => (PreviewStatus::SkipInvalid, Some(reason)),
+                };
+                PreviewItem {
+                    id: s.id.to_string(),
+                    display_name: s.display_name.clone(),
+                    provider_id: s.provider_id.clone(),
+                    provider_display_name: s.provider_display_name.clone(),
+                    provider_icon: s.provider_icon.clone(),
+                    status,
+                    has_api_key: s.has_api_key,
+                    redacted_headers: s.redacted_headers.clone(),
+                    invalid_reason,
+                }
             })
             .collect(),
     }
@@ -117,11 +177,18 @@ pub fn resolve_secrets(file: &ExportFile, plain: SecretsPlain) -> AppResult<Reso
     Ok(out)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InvalidEntry {
+    pub name: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct ImportReport {
     pub imported: usize,
     pub skipped_existing: usize,
     pub skipped_oauth: Vec<String>,
+    pub skipped_invalid: Vec<InvalidEntry>,
     pub disabled_missing_key: Vec<String>,
     pub token_imported: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -148,16 +215,20 @@ pub fn plan(
     let mut new_ids = HashSet::new();
 
     for sub in &file.subscriptions {
-        match status_of(sub, local) {
-            PreviewStatus::SkipExistingId => {
+        match verdict_of(sub, local) {
+            Verdict::SkipExistingId => {
                 report.skipped_existing += 1;
                 continue;
             }
-            PreviewStatus::SkipOauth => {
+            Verdict::SkipOauth => {
                 report.skipped_oauth.push(sub.display_name.clone());
                 continue;
             }
-            PreviewStatus::New => {}
+            Verdict::SkipInvalid(reason) => {
+                report.skipped_invalid.push(InvalidEntry { name: sub.display_name.clone(), reason });
+                continue;
+            }
+            Verdict::New => {}
         }
         let api_key = secrets.and_then(|s| s.api_keys.get(&sub.id)).cloned();
         let recovered = secrets.and_then(|s| s.headers.get(&sub.id));
@@ -241,17 +312,23 @@ mod tests {
     }
 
     /// rows[0]: 有 Key + 敏感头, rows[1]: 本来没 Key (本地模型), rows[2]: ChatGPT OAuth
+    /// 连接信息必须能过导入校验 (test_fixture 默认是空串)。
     fn fixture(with_secrets: bool) -> Fixture {
         let mut a = SubscriptionRow::test_fixture("zhipu", "cn");
         a.display_name = "A".into();
         a.base_url = "https://a.example".into();
+        a.messages_path = "/v1/messages".into();
         a.api_key = "sk-a".into();
         a.required_headers.insert("x-relay-key".into(), "hk".into());
         let mut b = SubscriptionRow::test_fixture("custom", "custom");
         b.display_name = "B".into();
+        b.base_url = "http://127.0.0.1:11434".into();
+        b.messages_path = "/v1/messages".into();
         b.api_key = String::new();
         let mut c = SubscriptionRow::test_fixture("openai_codex", "default");
         c.display_name = "C".into();
+        c.base_url = "https://chatgpt.com/backend-api/codex".into();
+        c.messages_path = "/responses".into();
         c.auth_type = AuthType::ChatgptOauth;
         c.api_key = String::new();
         let rows = vec![a, b, c];
@@ -442,5 +519,109 @@ mod tests {
         plan.inserts.push(dup); // second insert hits the primary key
         assert!(apply(&dst, &plan).await.is_err());
         assert!(load_runtime(&dst).await.unwrap().is_empty(), "整体回滚");
+    }
+
+    fn find_mut<'a>(f: &'a mut Fixture, name: &str) -> &'a mut ExportSubscription {
+        f.file.subscriptions.iter_mut().find(|s| s.display_name == name).unwrap()
+    }
+
+    #[test]
+    fn invalid_entries_are_skipped_and_reported_with_a_reason() {
+        let mut f = fixture(false);
+        find_mut(&mut f, "A").messages_path = "v1/messages".into();
+
+        let p = preview(&f.file, &empty_local());
+        let a = p.subscriptions.iter().find(|s| s.display_name == "A").unwrap();
+        assert_eq!(a.status, PreviewStatus::SkipInvalid);
+        assert!(a.invalid_reason.as_deref().unwrap().contains("messages_path"), "{:?}", a.invalid_reason);
+
+        let plan = plan(&f.file, None, &empty_local(), Utc::now());
+        assert!(plan.inserts.iter().all(|r| r.display_name != "A"));
+        assert_eq!(plan.report.skipped_invalid.len(), 1);
+        assert_eq!(plan.report.skipped_invalid[0].name, "A");
+        assert!(plan.report.skipped_invalid[0].reason.contains("messages_path"));
+        assert!(
+            plan.bindings.iter().all(|(_, ids)| !ids.contains(&f.rows[0].id)),
+            "skipped entries never enter bindings"
+        );
+    }
+
+    #[test]
+    fn existing_id_wins_over_invalid() {
+        let mut f = fixture(false);
+        find_mut(&mut f, "A").base_url = "ftp://a.example".into();
+        let mut local = empty_local();
+        local.existing_ids.insert(f.rows[0].id);
+        let plan = plan(&f.file, None, &local, Utc::now());
+        assert_eq!(plan.report.skipped_existing, 1);
+        assert!(plan.report.skipped_invalid.is_empty());
+    }
+
+    #[test]
+    fn each_create_time_rule_is_enforced() {
+        type Mutate = fn(&mut ExportSubscription);
+        let cases: [(&str, Mutate); 8] = [
+            ("base_url", |s| s.base_url = "a.example".into()),
+            ("messages_path", |s| s.messages_path = "no-slash".into()),
+            ("models url", |s| s.model_discovery.url = Some("file:///etc/passwd".into())),
+            ("reserved header", |s| {
+                s.required_headers.insert("Host".into(), "x".into());
+            }),
+            ("auth header clash", |s| {
+                s.auth_header_name = "X-Custom-Auth".into();
+                s.required_headers.insert("x-custom-auth".into(), "x".into());
+            }),
+            ("gemini {model}", |s| {
+                s.auth_type = AuthType::GeminiApiKey;
+                s.messages_path = "/v1beta/models/gemini:generateContent".into();
+            }),
+            ("slot effort", |s| s.slot_efforts.opus = Some("turbo".into())),
+            ("zero quota", |s| s.token_quotas.daily = Some(0)),
+        ];
+        for (what, mutate) in cases {
+            let mut f = fixture(false);
+            mutate(find_mut(&mut f, "B"));
+            let plan = plan(&f.file, None, &empty_local(), Utc::now());
+            assert_eq!(
+                plan.report.skipped_invalid.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+                vec!["B"],
+                "{what} should make B invalid"
+            );
+        }
+    }
+
+    #[test]
+    fn blank_placeholder_for_a_redacted_header_is_not_an_empty_value_error() {
+        // A's x-relay-key is redacted; without secrets it is written back as "".
+        let f = fixture(false);
+        let plan = plan(&f.file, None, &empty_local(), Utc::now());
+        assert!(plan.report.skipped_invalid.is_empty(), "{:?}", plan.report.skipped_invalid);
+        assert!(plan.inserts.iter().any(|r| r.display_name == "A"));
+    }
+
+    /// Every built-in provider endpoint, snapshotted the way create_subscription does it, must
+    /// pass import validation — otherwise a plain backup of a built-in subscription would be skipped.
+    #[test]
+    fn every_builtin_provider_endpoint_passes_import_validation() {
+        use crate::backup::format::subscription_to_export;
+        let providers = crate::provider::loader::load_all().unwrap();
+        for p in providers.values() {
+            for ep in &p.endpoints {
+                let mut row = SubscriptionRow::test_fixture(&p.id, &ep.id);
+                row.auth_type = p.auth.auth_type;
+                row.base_url = ep.base_url.clone();
+                row.messages_path = ep.messages_path.clone();
+                row.auth_header_name = p.auth.header_name.clone();
+                row.auth_header_format = p.auth.header_format.clone();
+                row.required_headers = p.required_headers.clone();
+                row.forward_headers = p.forward_headers.clone();
+                row.model_discovery = p.model_discovery.clone();
+                row.balance_discovery = p.balance_discovery.clone();
+                let (exp, _) = subscription_to_export(&row);
+                if let Err(reason) = validate_entry(&exp) {
+                    panic!("{}/{} rejected: {reason}", p.id, ep.id);
+                }
+            }
+        }
     }
 }

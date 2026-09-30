@@ -1032,7 +1032,7 @@ export interface ExportSummary {
   with_secrets: boolean;
 }
 
-export type ImportPreviewStatus = "new" | "skip_existing_id" | "skip_oauth";
+export type ImportPreviewStatus = "new" | "skip_existing_id" | "skip_oauth" | "skip_invalid";
 
 export interface ImportPreviewItem {
   id: string;
@@ -1044,6 +1044,8 @@ export interface ImportPreviewItem {
   status: ImportPreviewStatus;
   has_api_key: boolean;
   redacted_headers: string[];
+  /** 仅 status = skip_invalid 时有: 与新建订阅相同的校验没通过的原因 (后端原文) */
+  invalid_reason?: string;
 }
 
 export interface ImportPreview {
@@ -1064,6 +1066,8 @@ export interface ImportReport {
   imported: number;
   skipped_existing: number;
   skipped_oauth: string[];
+  /** 没通过新建订阅校验而跳过的订阅 */
+  skipped_invalid: { name: string; reason: string }[];
   disabled_missing_key: string[];
   token_imported: boolean;
   token_error?: string;

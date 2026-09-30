@@ -111,7 +111,7 @@ pub(crate) const ALLOWED_SLOT_EFFORTS: &[&str] = &["low", "medium", "high", "xhi
 
 /// 校验 patch 里的槽位 effort 都在白名单内 (空/缺失 = auto, 合法)。
 /// 显式列四个槽位而不是遍历: 将来给 ModelSlots 加槽位时这里会因缺字段而被注意到。
-fn validate_slot_efforts(e: &SlotEfforts) -> AppResult<()> {
+pub(crate) fn validate_slot_efforts(e: &SlotEfforts) -> AppResult<()> {
     for (slot, v) in [
         ("fable", &e.fable),
         ("opus", &e.opus),
@@ -301,10 +301,8 @@ pub async fn create_subscription(
             let is_openai = protocol == CustomProtocol::OpenaiResponses;
             let is_openai_chat = protocol == CustomProtocol::OpenaiChatCompletions;
             let is_gemini_interactions = protocol == CustomProtocol::GeminiInteractions;
-            if is_gemini && !messages_path.contains("{model}") {
-                return Err(AppError::BadRequest(
-                    "Gemini 兼容订阅的 messages_path 必须包含 {model} 占位符".into(),
-                ));
+            if is_gemini {
+                validate_gemini_messages_path(&messages_path)?;
             }
             // Interactions API 的 model 在 body 里, messages_path 是固定 /v1beta/interactions,
             // 不需要 (也不应有) {model} 占位符 — 与旧 generateContent 的 Gemini 分支区别。
@@ -888,7 +886,7 @@ pub async fn refresh_subscription_balance(
     }
 }
 
-fn validate_base_url(s: &str) -> AppResult<()> {
+pub(crate) fn validate_base_url(s: &str) -> AppResult<()> {
     if !(s.starts_with("http://") || s.starts_with("https://")) {
         return Err(AppError::BadRequest(
             "base_url 必须以 http:// 或 https:// 开头".into(),
@@ -897,9 +895,19 @@ fn validate_base_url(s: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn validate_messages_path(s: &str) -> AppResult<()> {
+pub(crate) fn validate_messages_path(s: &str) -> AppResult<()> {
     if !s.starts_with('/') {
         return Err(AppError::BadRequest("messages_path 必须以 / 开头".into()));
+    }
+    Ok(())
+}
+
+/// Gemini generateContent 把 model 嵌在 URL 路径里, dispatch 层靠 `{model}` 占位符替换。
+pub(crate) fn validate_gemini_messages_path(s: &str) -> AppResult<()> {
+    if !s.contains("{model}") {
+        return Err(AppError::BadRequest(
+            "Gemini 兼容订阅的 messages_path 必须包含 {model} 占位符".into(),
+        ));
     }
     Ok(())
 }
@@ -919,7 +927,7 @@ const MAX_REQUIRED_HEADERS: usize = 20;
 /// 校验自定义订阅的额外出站 header。`auth_header_name` 须传「patch 后生效的」鉴权头名。
 /// 用 reqwest::header::{HeaderName, HeaderValue} 解析 —— 与 dispatch 层七处注入点同类型,
 /// 保证校验通过的 header 不会在出站时被静默跳过 (dispatch 对非法项是 if let Ok 静默 skip)。
-fn validate_required_headers(
+pub(crate) fn validate_required_headers(
     headers: &BTreeMap<String, String>,
     auth_header_name: &str,
 ) -> AppResult<()> {
@@ -989,7 +997,7 @@ async fn referenced_by_names(state: &AppState, id: &Uuid) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn validate_token_quotas(q: &TokenQuotas) -> AppResult<()> {
+pub(crate) fn validate_token_quotas(q: &TokenQuotas) -> AppResult<()> {
     for p in crate::subscription::quota::ALL_PERIODS {
         if q.limit(p) == Some(0) {
             return Err(AppError::BadRequest(format!(

@@ -174,6 +174,9 @@ export function ImportConfigDialog({
                           <span>{s.display_name}</span>
                           <span className="field-hint">{providerLabel(s.provider_id, s.provider_display_name)}</span>
                         </div>
+                        {s.invalid_reason && (
+                          <div className="field-hint" style={{ color: "var(--err)", marginTop: 2 }}>{s.invalid_reason}</div>
+                        )}
                       </td>
                       <td style={{ whiteSpace: "nowrap" }}>
                         <span className={s.status === "new" ? "pill" : "pill tag"}>
@@ -229,6 +232,16 @@ export function ImportConfigDialog({
             )}
             {report.skipped_oauth.length > 0 && (
               <li>{t("backup.import.report.skippedOauth", { names: report.skipped_oauth.join(t("backup.import.nameSeparator")) })}</li>
+            )}
+            {report.skipped_invalid.length > 0 && (
+              <li>
+                {t("backup.import.report.skippedInvalid", { count: report.skipped_invalid.length })}
+                <ul style={{ paddingLeft: 18 }}>
+                  {report.skipped_invalid.map((e) => (
+                    <li key={e.name + e.reason}>{t("backup.import.report.invalidItem", { name: e.name, reason: e.reason })}</li>
+                  ))}
+                </ul>
+              </li>
             )}
             {report.disabled_missing_key.length > 0 && (
               <li>{t("backup.import.report.missingKey", { names: report.disabled_missing_key.join(t("backup.import.nameSeparator")) })}</li>
