@@ -20,7 +20,9 @@ export function ProxyRestartNotice({ form }: { form: SettingsForm }) {
       : t("settings.proxy.restart.stoppedNoReason"),
   ];
   const pendingNotice: [Tone, string] = ["warn", t("settings.proxy.needsRestart")];
-  const result = form.restartResult;
+  // 「已停止」的结果在代理已经跑起来 (比如另一端启动了它) 之后就过期了, 走实时状态分支
+  const result =
+    form.restartResult?.outcome === "stopped" && !stopped ? null : form.restartResult;
 
   // 实时状态优先于上一次重启的结果: 结果可能已过期 (之后代理崩溃 / 另一端改了配置),
   // 不能让「已按新配置运行」的旧文案盖住真实状态.

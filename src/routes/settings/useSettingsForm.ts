@@ -70,14 +70,23 @@ export function useSettingsForm() {
 
   const httpsEnabled = proxyMode === "https" || proxyMode === "both";
 
+  // 最近一次保存的 promise 与「重启是否在途」: 输入框失焦触发保存后紧接着点重启按钮时,
+  // 重启要等保存落盘再读设置; 保存完成也不能清掉在途重启的结果.
+  const lastPatchRef = useRef<Promise<void> | null>(null);
+  const restartInFlightRef = useRef(false);
+
   // 失败保留本地 state 以便用户看到自己改了什么; 不做乐观回滚.
-  async function patch(p: Parameters<typeof updateMut.mutateAsync>[0]) {
-    try {
-      await updateMut.mutateAsync(p);
-      restartMut.reset();
-    } catch (e) {
-      alert(`${t("settings.saveFailed")}: ${e}`);
-    }
+  function patch(p: Parameters<typeof updateMut.mutateAsync>[0]): Promise<void> {
+    const run = (async () => {
+      try {
+        await updateMut.mutateAsync(p);
+        if (!restartInFlightRef.current) restartMut.reset();
+      } catch (e) {
+        alert(`${t("settings.saveFailed")}: ${e}`);
+      }
+    })();
+    lastPatchRef.current = run;
+    return run;
   }
 
   async function changeLanguage(next: LanguagePref) {
@@ -153,7 +162,10 @@ export function useSettingsForm() {
   }
 
   async function restartProxy() {
-    const s = settings.data;
+    // 保存失败已在 patch 里提示过, 这里只等它结束
+    await lastPatchRef.current?.catch(() => {});
+    // 网页端要按刚保存的设置判断重启后地址会不会变, 缓存里的可能还是旧的
+    const s = runtime.kind === "web" ? (await settings.refetch()).data : settings.data;
     if (runtime.kind === "web" && s) {
       const warn = webRestartWarning(window.location, {
         proxy_mode: s.proxy_mode ?? "http",
@@ -163,6 +175,7 @@ export function useSettingsForm() {
       });
       if (warn && !confirm(t(warn))) return;
     }
+    restartInFlightRef.current = true;
     try {
       const r = await restartMut.mutateAsync();
       if (runtime.kind === "web" && r.outcome === "applied") {
@@ -171,6 +184,8 @@ export function useSettingsForm() {
       }
     } catch (e) {
       alert(`${t("settings.proxy.restart.requestFailed")}: ${e}`);
+    } finally {
+      restartInFlightRef.current = false;
     }
   }
 
