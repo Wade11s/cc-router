@@ -1,4 +1,5 @@
 pub mod client_fingerprint;
+pub mod controller;
 pub mod effort_log;
 pub mod extractors;
 pub mod forward;
