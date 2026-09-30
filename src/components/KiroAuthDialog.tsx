@@ -9,6 +9,7 @@ import type {
   KiroDisguise,
   KiroImportResult,
 } from "@/types";
+import { errorText } from "@/lib/errorText";
 
 interface Props {
   open: boolean;
@@ -113,7 +114,7 @@ export function KiroAuthDialog({ open, onClose, onSuccess }: Props) {
         }
       } catch (e) {
         if (stopped) return;
-        setErrorMsg(String(e));
+        setErrorMsg(errorText(e));
         setPhase("error");
       }
     };
@@ -135,7 +136,7 @@ export function KiroAuthDialog({ open, onClose, onSuccess }: Props) {
       setAuthMethod(res.preview.auth_method);
       setPhase("disguise_form");
     } catch (e) {
-      setErrorMsg(String(e));
+      setErrorMsg(errorText(e));
       setPhase("error");
     }
   }
@@ -155,7 +156,7 @@ export function KiroAuthDialog({ open, onClose, onSuccess }: Props) {
       setAuthMethod(res.preview.auth_method);
       setPhase("disguise_form");
     } catch (e) {
-      setErrorMsg(String(e));
+      setErrorMsg(errorText(e));
       setPhase("error");
     }
   }
@@ -175,7 +176,7 @@ export function KiroAuthDialog({ open, onClose, onSuccess }: Props) {
       const launchUrl = start.verification_uri_complete ?? start.verification_uri;
       runtime.openExternal(launchUrl).catch(() => {});
     } catch (e) {
-      setErrorMsg(String(e));
+      setErrorMsg(errorText(e));
       setPhase("error");
     }
   }

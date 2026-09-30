@@ -7,6 +7,7 @@ import { useT } from "@/i18n";
 import { runtime } from "@/runtime";
 import type { TlsStatus } from "@/types";
 import { arraysEqual } from "./useSettingsForm";
+import { errorText } from "@/lib/errorText";
 
 /** TLS 证书管理子组件: 显示 CA 指纹 + 导出 + 重新生成 leaf + 自定义 SAN. 仅 proxy_mode 包含 https 时挂载. */
 export function HttpsCertSection() {
@@ -34,7 +35,7 @@ export function HttpsCertSection() {
       qc.setQueryData(["tlsStatus"], fresh);
       alert(t("settings.https.cert.sans.regenerated"));
     } catch (err) {
-      alert(`${t("settings.https.cert.regenerateFailed")}: ${err}`);
+      alert(`${t("settings.https.cert.regenerateFailed")}: ${errorText(err)}`);
     }
   }
 
@@ -58,7 +59,7 @@ export function HttpsCertSection() {
       await api.tlsExportCaPem(`${stem}.crt`);
       alert(t("settings.https.cert.exportOk"));
     } catch (e) {
-      alert(`${t("settings.https.cert.exportFailed")}: ${e}`);
+      alert(`${t("settings.https.cert.exportFailed")}: ${errorText(e)}`);
     }
   }
 
@@ -69,7 +70,7 @@ export function HttpsCertSection() {
       qc.setQueryData(["tlsStatus"], fresh);
       alert(t("settings.https.cert.regenerateOk"));
     } catch (e) {
-      alert(`${t("settings.https.cert.regenerateFailed")}: ${e}`);
+      alert(`${t("settings.https.cert.regenerateFailed")}: ${errorText(e)}`);
     }
   }
 
@@ -94,7 +95,7 @@ export function HttpsCertSection() {
                 try {
                   await updateMut.mutateAsync({ https_enable_h2: v });
                 } catch (e) {
-                  alert(`${t("settings.saveFailed")}: ${e}`);
+                  alert(`${t("settings.saveFailed")}: ${errorText(e)}`);
                 }
               })();
             }}

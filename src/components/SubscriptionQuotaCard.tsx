@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { fmtCompact, fmtTime, fmtTimeShort } from "@/lib/format";
 import { formatTokenShorthand } from "@/lib/quota";
 import type { QuotaUsageDto, SubscriptionDto } from "@/types";
+import { errorText } from "@/lib/errorText";
 
 interface Props {
   subscription: SubscriptionDto;
@@ -40,7 +41,7 @@ export function SubscriptionQuotaCard({ subscription, onChanged }: Props) {
       await resetMut.mutateAsync(subscription.id);
       onChanged?.();
     } catch (e) {
-      setResetError(String(e));
+      setResetError(errorText(e));
     }
   }
 

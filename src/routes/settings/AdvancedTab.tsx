@@ -23,6 +23,7 @@ import { runtime } from "@/runtime";
 import { useStorageStats } from "@/hooks/useStorageStats";
 import { fmtBytes, fmtNum } from "@/lib/format";
 import type { SettingsForm } from "./useSettingsForm";
+import { errorText } from "@/lib/errorText";
 
 /** 高级: 数据存储 / 调试 / 危险区域 (恢复出厂). 危险区固定放最底部, 保持不容易顺手点到. */
 export function AdvancedTab({ form }: { form: SettingsForm }) {
@@ -37,7 +38,7 @@ export function AdvancedTab({ form }: { form: SettingsForm }) {
     try {
       await api.openDebugDumpDir();
     } catch (e) {
-      alert(`${t("settings.debug.open.alertFailed")}: ${e}`);
+      alert(`${t("settings.debug.open.alertFailed")}: ${errorText(e)}`);
     }
   }
 
@@ -47,7 +48,7 @@ export function AdvancedTab({ form }: { form: SettingsForm }) {
       await api.clearDebugDumps();
       setClearDumpsDialog(false);
     } catch (e) {
-      alert(`${t("settings.debug.clear.alertFailed")}: ${e}`);
+      alert(`${t("settings.debug.clear.alertFailed")}: ${errorText(e)}`);
     } finally {
       setClearingDumps(false);
     }
@@ -61,7 +62,7 @@ export function AdvancedTab({ form }: { form: SettingsForm }) {
     } catch (e) {
       setResetting(false);
       setResetDialog(false);
-      alert(`${t("settings.danger.alertFailed")}: ${e}`);
+      alert(`${t("settings.danger.alertFailed")}: ${errorText(e)}`);
     }
   }
 

@@ -12,6 +12,7 @@ import type {
   BalanceSeverity,
   SubscriptionDto,
 } from "@/types";
+import { errorText } from "@/lib/errorText";
 
 interface Props {
   subscription: SubscriptionDto;
@@ -85,7 +86,7 @@ export function SubscriptionBalanceCard({ subscription, onChanged }: Props) {
         setError(result.reason);
       }
     } catch (e) {
-      setError(String(e));
+      setError(errorText(e));
     } finally {
       setLoading(false);
     }

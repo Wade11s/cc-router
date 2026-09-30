@@ -19,6 +19,7 @@ import {
   type CodexSnapshot,
 } from "@/lib/recommendedCodexConfig";
 import type { CodexSyncStatus } from "@/types";
+import { errorText } from "@/lib/errorText";
 
 type BadgeKey = CodexSyncStatus | "loading";
 
@@ -167,7 +168,7 @@ function CodexConfigCard({ statusLabels, draft, setDraft }: SubCardProps) {
       window.alert(msg);
       setDraft(null);
     } catch (e) {
-      window.alert(t("guide.codex.toast.saveFail", { reason: String(e) }));
+      window.alert(t("guide.codex.toast.saveFail", { reason: errorText(e) }));
     }
   };
 
@@ -303,7 +304,7 @@ function CodexAuthCard({ statusLabels, draft, setDraft }: SubCardProps) {
       window.alert(msg);
       setDraft(null);
     } catch (e) {
-      window.alert(t("guide.codex.toast.saveFail", { reason: String(e) }));
+      window.alert(t("guide.codex.toast.saveFail", { reason: errorText(e) }));
     }
   };
 

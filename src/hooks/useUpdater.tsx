@@ -19,6 +19,7 @@ import { api } from "@/api/tauri";
 import { useSettings } from "@/hooks/useSettings";
 import type { UpdaterProgressEvent } from "@/types";
 import { version as PKG_VERSION } from "../../package.json";
+import { errorText } from "@/lib/errorText";
 
 export type UpdaterStatus =
   | "idle"
@@ -150,7 +151,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
       setStatus("available");
     } catch (e) {
       console.warn("[updater] check failed", e);
-      setErrorMessage(e instanceof Error ? e.message : String(e));
+      setErrorMessage(errorText(e));
       setStatus("error");
     }
   }, [settings?.update_source]);
@@ -168,7 +169,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
       setStatus("ready");
     } catch (e) {
       console.warn("[updater] install failed", e);
-      setErrorMessage(e instanceof Error ? e.message : String(e));
+      setErrorMessage(errorText(e));
       setStatus("error");
     }
   }, [detected]);

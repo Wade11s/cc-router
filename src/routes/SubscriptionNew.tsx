@@ -36,6 +36,7 @@ import type {
   VirtualModelName,
 } from "@/types";
 import { allSlotsFilled, uniformSlots } from "@/lib/modelSlots";
+import { errorText } from "@/lib/errorText";
 
 type Step = 1 | 2;
 
@@ -331,7 +332,7 @@ export function SubscriptionNewPage() {
           if (fallback) setSlots(uniformSlots(fallback));
         }
       } catch (e) {
-        setModelFetchError(String(e));
+        setModelFetchError(errorText(e));
         const fallback = provider.model_discovery.example_models[0] ?? "";
         if (fallback) setSlots(uniformSlots(fallback));
       }
@@ -339,7 +340,7 @@ export function SubscriptionNewPage() {
       setCreatedId(created.id);
       setStep(2);
     } catch (e) {
-      setModelFetchError(`${t("subscriptionNew.errCreate")}: ${e}`);
+      setModelFetchError(`${t("subscriptionNew.errCreate")}: ${errorText(e)}`);
     } finally {
       setFetchingModels(false);
     }
@@ -367,7 +368,7 @@ export function SubscriptionNewPage() {
       }
       navigate(returnTo ?? `/subscriptions/${createdId}`);
     } catch (e) {
-      setSubmitError(`${t("subscriptionNew.errCreate")}: ${e}`);
+      setSubmitError(`${t("subscriptionNew.errCreate")}: ${errorText(e)}`);
     } finally {
       setSubmitting(false);
     }
@@ -401,7 +402,7 @@ export function SubscriptionNewPage() {
       setCreatedId(created.id);
       setStep(2);
     } catch (e) {
-      setModelFetchError(`${t("subscriptionNew.errCreate")}: ${e}`);
+      setModelFetchError(`${t("subscriptionNew.errCreate")}: ${errorText(e)}`);
     } finally {
       setFetchingModels(false);
     }
@@ -427,7 +428,7 @@ export function SubscriptionNewPage() {
       }
       navigate(returnTo ?? `/subscriptions/${createdId}`);
     } catch (e) {
-      setSubmitError(`${t("subscriptionNew.errCreate")}: ${e}`);
+      setSubmitError(`${t("subscriptionNew.errCreate")}: ${errorText(e)}`);
     } finally {
       setSubmitting(false);
     }
@@ -468,12 +469,12 @@ export function SubscriptionNewPage() {
           setModelFetchError(result.reason);
         }
       } catch (e) {
-        setModelFetchError(String(e));
+        setModelFetchError(errorText(e));
       }
       setCreatedId(created.id);
       setStep(2);
     } catch (e) {
-      setModelFetchError(`${t("subscriptionNew.errCreate")}: ${e}`);
+      setModelFetchError(`${t("subscriptionNew.errCreate")}: ${errorText(e)}`);
     } finally {
       setFetchingModels(false);
     }
@@ -496,7 +497,7 @@ export function SubscriptionNewPage() {
         setModelFetchError(result.reason);
       }
     } catch (e) {
-      setModelFetchError(String(e));
+      setModelFetchError(errorText(e));
     } finally {
       setFetchingModels(false);
     }
@@ -586,7 +587,7 @@ export function SubscriptionNewPage() {
     } catch (e) {
       setModels(null);
       setCustomProbe(null);
-      setModelFetchError(String(e));
+      setModelFetchError(errorText(e));
     } finally {
       setFetchingModels(false);
     }
@@ -652,7 +653,7 @@ export function SubscriptionNewPage() {
       }
       navigate(returnTo ?? `/subscriptions/${created.id}`);
     } catch (e) {
-      setSubmitError(`${t("subscriptionNew.errCreate")}: ${e}`);
+      setSubmitError(`${t("subscriptionNew.errCreate")}: ${errorText(e)}`);
     } finally {
       setSubmitting(false);
     }

@@ -4,6 +4,7 @@ import { useT, type LanguagePref } from "@/i18n";
 import { webRestartWarning, webUrlAfterRestart } from "@/lib/proxyRestart";
 import { runtime } from "@/runtime";
 import type { ProxyMode, RestartProxyResult, UpdateSource } from "@/types";
+import { errorText } from "@/lib/errorText";
 
 export function arraysEqual<T>(a: readonly T[], b: readonly T[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -82,7 +83,7 @@ export function useSettingsForm() {
         await updateMut.mutateAsync(p);
         if (!restartInFlightRef.current) restartMut.reset();
       } catch (e) {
-        alert(`${t("settings.saveFailed")}: ${e}`);
+        alert(`${t("settings.saveFailed")}: ${errorText(e)}`);
       }
     })();
     lastPatchRef.current = run;
@@ -183,7 +184,7 @@ export function useSettingsForm() {
         if (target) window.location.replace(target);
       }
     } catch (e) {
-      alert(`${t("settings.proxy.restart.requestFailed")}: ${e}`);
+      alert(`${t("settings.proxy.restart.requestFailed")}: ${errorText(e)}`);
     } finally {
       restartInFlightRef.current = false;
     }

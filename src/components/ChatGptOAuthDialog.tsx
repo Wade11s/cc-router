@@ -5,6 +5,7 @@ import { Spinner } from "@/components/Spinner";
 import { useT } from "@/i18n";
 import { api } from "@/api/tauri";
 import type { ChatGptAccount } from "@/types";
+import { errorText } from "@/lib/errorText";
 
 interface Props {
   open: boolean;
@@ -53,7 +54,7 @@ export function ChatGptOAuthDialog({ open, onClose, onSuccess }: Props) {
         runtime.openExternal(res.verification_uri).catch(() => {});
       })
       .catch((e) => {
-        setErrorMsg(String(e));
+        setErrorMsg(errorText(e));
         setPhase("error");
       });
   }, [open]);
@@ -73,7 +74,7 @@ export function ChatGptOAuthDialog({ open, onClose, onSuccess }: Props) {
         }
       } catch (e) {
         if (stopped) return;
-        setErrorMsg(String(e));
+        setErrorMsg(errorText(e));
         setPhase("error");
       }
     };

@@ -14,6 +14,7 @@ import { useT } from "@/i18n";
 import { runtime } from "@/runtime";
 import type { TuiLaunchInfo } from "@/types";
 import type { SettingsForm } from "./useSettingsForm";
+import { errorText } from "@/lib/errorText";
 
 /** 安全与访问: 鉴权 token / CORS / 网页界面. */
 export function AccessTab({ form }: { form: SettingsForm }) {
@@ -52,7 +53,7 @@ export function AccessTab({ form }: { form: SettingsForm }) {
       if (regenerateTimerRef.current) clearTimeout(regenerateTimerRef.current);
       regenerateTimerRef.current = setTimeout(() => setTokenJustRegenerated(false), 2000);
     } catch (e) {
-      alert(`${t("settings.auth.token.alertFailed")}: ${e}`);
+      alert(`${t("settings.auth.token.alertFailed")}: ${errorText(e)}`);
     }
   }
 
@@ -323,11 +324,6 @@ function TuiLaunchRow({ enabled }: { enabled: boolean }) {
   );
 }
 
-/** 后端错误是 `{ code, message }` 对象 (Tauri 拒绝值 / 网页端 JSON), 不是 Error. */
-function errorText(e: unknown): string {
-  if (e && typeof e === "object" && "message" in e) return String((e as { message: unknown }).message);
-  return String(e);
-}
 
 /** 「添加到 PATH」一栏. 三个平台做法不同, 说明文字跟着 install_kind 走. */
 function TuiPathRow({ info, enabled }: { info: TuiLaunchInfo; enabled: boolean }) {

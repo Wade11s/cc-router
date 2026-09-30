@@ -13,6 +13,7 @@ import {
   type ClaudeCodeEnvSnapshot,
 } from "@/lib/recommendedClaudeCodeEnv";
 import type { ClaudeCodeSyncStatus } from "@/types";
+import { errorText } from "@/lib/errorText";
 
 type BadgeKey = ClaudeCodeSyncStatus | "loading";
 
@@ -117,7 +118,7 @@ export function ClaudeCodeSettingsEditor() {
       window.alert(msg);
       setDraft(null);
     } catch (e) {
-      window.alert(t("guide.editor.toast.saveFail", { reason: String(e) }));
+      window.alert(t("guide.editor.toast.saveFail", { reason: errorText(e) }));
     }
   };
 

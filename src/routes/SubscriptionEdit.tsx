@@ -56,6 +56,7 @@ import { uniformSlots } from "@/lib/modelSlots";
 import { lastErrorText, testResultText } from "@/lib/backendText";
 import { providerName } from "@/lib/providerText";
 import { formatTokenShorthand, parseTokenShorthand } from "@/lib/quota";
+import { errorText } from "@/lib/errorText";
 
 export function SubscriptionEditPage() {
   const { t, locale } = useT();
@@ -161,7 +162,7 @@ export function SubscriptionEditPage() {
         setModelError(result.reason);
       }
     } catch (e) {
-      setModelError(String(e));
+      setModelError(errorText(e));
     } finally {
       setFetchingModels(false);
     }
@@ -204,7 +205,7 @@ export function SubscriptionEditPage() {
     try {
       await updateMut.mutateAsync({ id, patch });
     } catch (e) {
-      setSaveError(`${t("subscriptionEdit.errSave")}: ${e}`);
+      setSaveError(`${t("subscriptionEdit.errSave")}: ${errorText(e)}`);
     }
   }
 
@@ -220,7 +221,7 @@ export function SubscriptionEditPage() {
     try {
       await updateQuotasMut.mutateAsync({ id, quotas: out });
     } catch (e) {
-      setQuotaError(String(e));
+      setQuotaError(errorText(e));
     }
   }
 
