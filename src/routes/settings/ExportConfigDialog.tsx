@@ -25,6 +25,8 @@ export function ExportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [generated, setGenerated] = useState<string | null>(null);
+  const [copyStatus, setCopyStatus] = useState<"copied" | "failed" | null>(null);
 
   const tooShort = withSecrets && [...password].length < MIN_PASSWORD_CHARS;
   const mismatch = withSecrets && password !== confirm;
@@ -36,13 +38,18 @@ export function ExportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
     setConfirm("");
     setMessage(null);
     setError(null);
+    setGenerated(null);
+    setCopyStatus(null);
   }
 
   function fillGenerated() {
     const p = generateStrongPassword();
     setPassword(p);
     setConfirm(p);
-    void runtime.copyText(p);
+    setGenerated(p);
+    runtime.copyText(p)
+      .then(() => setCopyStatus("copied"))
+      .catch(() => setCopyStatus("failed"));
   }
 
   async function submit() {
@@ -112,7 +119,11 @@ export function ExportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
               autoComplete="new-password"
               placeholder={t("backup.export.password")}
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setGenerated(null);
+                setCopyStatus(null);
+              }}
             />
             <input
               className="input mono"
@@ -120,7 +131,11 @@ export function ExportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
               autoComplete="new-password"
               placeholder={t("backup.export.passwordConfirm")}
               value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
+              onChange={(e) => {
+                setConfirm(e.target.value);
+                setGenerated(null);
+                setCopyStatus(null);
+              }}
             />
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <button className="btn sm" type="button" onClick={fillGenerated}>
@@ -133,6 +148,17 @@ export function ExportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
                 <span className="field-hint">{t("backup.export.passwordMismatch")}</span>
               )}
             </div>
+            {generated && (
+              <>
+                <div className="mono" style={{ userSelect: "all", padding: 8, backgroundColor: "var(--surface-2)", borderRadius: 4 }}>
+                  {generated}
+                </div>
+                <div className="field-hint">
+                  {copyStatus === "copied" && t("backup.export.copied")}
+                  {copyStatus === "failed" && <span style={{ color: "var(--err)" }}>{t("backup.export.copyFailed")}</span>}
+                </div>
+              </>
+            )}
             <div className="field-hint" style={{ color: "var(--warn)" }}>
               {t("backup.export.passwordWarning")}
             </div>

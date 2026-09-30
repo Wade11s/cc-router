@@ -202,6 +202,8 @@
   "backup.export.success": "已导出 {count} 条订阅",
   "backup.export.successWithSecrets": "已导出 {count} 条订阅（含加密的密钥）",
   "backup.export.failed": "导出失败",
+  "backup.export.copied": "已复制到剪贴板，请保存好这个密码",
+  "backup.export.copyFailed": "复制失败，请手动记下这个密码",
   "settings.section.danger": "危险区域 · 恢复出厂设置",
   "settings.danger.desc": "清空所有订阅、API Key、虚拟模型绑定、请求日志、设置文件。app 会自动重启并进入初始欢迎页。此操作不可撤销。",
   "settings.danger.button": "恢复出厂设置",
