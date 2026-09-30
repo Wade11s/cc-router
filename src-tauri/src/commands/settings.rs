@@ -75,16 +75,21 @@ pub(crate) async fn apply_settings_patch(
     Ok(snapshot)
 }
 
-/// 重新生成 auth_token 并立即持久化。返回新 settings 让前端拿到新 token 显示。
-#[tauri::command]
-pub async fn generate_new_token(state: State<'_, AppState>) -> AppResult<Settings> {
+/// 替换 auth_token 并立即持久化; 网页会话凭旧 token 登录, 换 token 后全部作废。
+/// 「重新生成令牌」与「导入配置时带入令牌」共用, 保证副作用一致。
+pub(crate) async fn replace_auth_token(state: &AppState, token: String) -> AppResult<Settings> {
     let mut guard = state.settings.write().await;
-    guard.auth_token = generate_token();
+    guard.auth_token = token;
     let app_data_dir = paths::app_data_dir(&state.app_handle)?;
     save(&app_data_dir, &guard).await?;
-    // 网页会话凭旧 token 登录, 换 token 后全部作废
     if let Ok(mut sessions) = state.web_sessions.lock() {
         sessions.clear();
     }
     Ok(guard.clone())
+}
+
+/// 重新生成 auth_token 并立即持久化。返回新 settings 让前端拿到新 token 显示。
+#[tauri::command]
+pub async fn generate_new_token(state: State<'_, AppState>) -> AppResult<Settings> {
+    replace_auth_token(&state, generate_token()).await
 }

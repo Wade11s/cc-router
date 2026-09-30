@@ -1,4 +1,5 @@
 pub mod app;
+pub mod backup;
 pub mod debug;
 pub mod events;
 pub mod integrations;

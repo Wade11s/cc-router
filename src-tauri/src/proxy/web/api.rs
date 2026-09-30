@@ -97,6 +97,7 @@ macro_rules! web_commands {
     };
 }
 
+use crate::commands::backup::ImportOptions;
 use crate::commands::events::EventFilters;
 use crate::commands::oauth::{CreateChatGptOAuthSubscriptionInput, CreateKiroSubscriptionInput};
 use crate::commands::receipts::ReceiptRange;
@@ -192,6 +193,11 @@ web_commands! {
     tls_export_ca_pem(dest: String) => commands::tls::tls_export_ca_pem(st, args.dest).await,
     tls_get_ca_pem_text() => commands::tls::tls_get_ca_pem_text(st).await,
     tls_regenerate_leaf() => commands::tls::tls_regenerate_leaf(st).await,
+    // 配置导入导出。带密钥导出会把全部 API Key 写进文件, 网页界面从设计上读不到任何 Key, 所以只留桌面端。
+    export_config() => Err::<(), AppError>(AppError::BadRequest(DESKTOP_ONLY.into())),
+    export_config_text() => commands::backup::export_config_text(st).await,
+    preview_config_import(text: String) => commands::backup::preview_config_import(st, args.text).await,
+    apply_config_import(text: String, options: ImportOptions) => commands::backup::apply_config_import(st, args.text, args.options).await,
     // TUI
     tui_launch_info() => Ok::<_, AppError>(commands::tui::tui_launch_info().await),
     // 这两条只能从桌面窗口调用: 不能让局域网上的网页用户 (或 TUI) 在宿主机上弹系统授权框 / 改宿主机 PATH。
@@ -276,6 +282,19 @@ mod tests {
             assert!(line.contains("DESKTOP_ONLY") && line.contains("Err::<"), "{name} 不是拒绝桩: {line}");
             assert!(!line.contains("commands::tui::"), "{name} 调到了真实实现: {line}");
         }
+    }
+
+    /// 带密钥导出会把全部 API Key 写进文件; 网页界面从设计上读不到任何 Key, 这个口子不能开。
+    #[test]
+    fn secret_export_is_a_refusal_stub_here() {
+        let src = include_str!("api.rs");
+        assert!(REGISTERED.contains(&"export_config"), "export_config 必须登记 (两边集合要一致)");
+        let line = src
+            .lines()
+            .find(|l| l.trim_start().starts_with("export_config()"))
+            .expect("找不到 export_config 的登记行");
+        assert!(line.contains("DESKTOP_ONLY") && line.contains("Err::<"), "export_config 不是拒绝桩: {line}");
+        assert!(!line.contains("commands::backup::"), "export_config 调到了真实实现: {line}");
     }
 
     #[test]

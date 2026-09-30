@@ -508,6 +508,9 @@ pub struct SubscriptionDto {
     pub provider_names: Option<LocalizedText>,
     pub provider_icon: String,
     pub is_user_defined: bool,
+    /// api_key 是否非空。DTO 不带 Key 本身; 前端据此提示「待填写 API Key」(导入时缺 Key 的订阅)。
+    #[serde(default)]
+    pub has_api_key: bool,
 
     /// 凭据来源类型. 默认 'api_key' 兼容老 DTO 消费者.
     #[serde(default = "default_auth_type")]
@@ -664,6 +667,7 @@ impl SubscriptionDto {
                 .map(|p| p.display_name.clone()),
             provider_icon: rt.row.provider_icon.clone(),
             is_user_defined: rt.row.is_user_defined,
+            has_api_key: !rt.row.api_key.is_empty(),
             auth_type: rt.row.auth_type,
             oauth_account: oauth_account_dto(&rt.row),
         }
