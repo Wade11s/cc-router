@@ -1,104 +1,48 @@
-//! 代理 HTTP / HTTPS 服务. 监听 127.0.0.1 默认或 0.0.0.0 (listen_all=true),
-//! 端口按 ProxyMode 同时启 HTTP / HTTPS / 二者 (双端口). 占用时 +1 最多 100 次.
+//! 代理的 router 与 app 侧钩子. listener 的绑定 / 关停 / 重启在 `listeners.rs` 与
+//! `controller.rs`; `AppHooks` 把它们接到 AppState、runtime.json、托盘与界面事件上.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 
 use axum::routing::post;
 use axum::Router;
-use tokio::net::TcpListener;
-use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tauri::Emitter;
+use tracing::{info, warn};
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
+use crate::proxy::controller::ProxyHooks;
+use crate::proxy::listeners::{BoundPorts, ProxyConfig};
 use crate::proxy::{handler, middleware as cc_middleware};
 use crate::state::AppState;
 
-const MAX_PORT_TRIES: u16 = 100;
+#[derive(Clone)]
+pub struct AppHooks(pub AppState);
 
-pub async fn start(state: AppState) -> AppResult<()> {
-    let (mode, http_port_pref, https_port_pref, listen_all, body_limit) = {
-        let g = state.settings.read().await;
-        (
-            g.proxy_mode,
-            g.proxy_port,
-            g.https_port,
-            g.listen_all,
-            g.max_request_body_bytes(),
-        )
-    };
-    let host: IpAddr = if listen_all {
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-    } else {
-        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
-    };
-
-    let router = build_router(state.clone(), body_limit);
-
-    let mut tasks: Vec<JoinHandle<AppResult<()>>> = Vec::new();
-
-    if mode.includes_http() {
-        let (listener, port) = bind_with_fallback(host, http_port_pref).await?;
-        *state.http_bound_port.write().await = Some(port);
-        info!(%host, port, mode = ?mode, "proxy HTTP listening");
-        let r = router.clone();
-        tasks.push(tokio::spawn(async move {
-            axum::serve(listener, r.into_make_service_with_connect_info::<SocketAddr>())
-                .await
-                .map_err(|e| AppError::internal(format!("axum http: {e}")))
-        }));
+impl ProxyHooks for AppHooks {
+    async fn desired_config(&self) -> ProxyConfig {
+        ProxyConfig::from_settings(&*self.0.settings.read().await)
     }
 
-    if mode.includes_https() {
-        let cfg = state
-            .tls_config
-            .clone()
-            .ok_or_else(|| AppError::internal("HTTPS 模式但 TLS config 未初始化"))?;
-        // 端口冲突 (HTTP 已抢走 https_port_pref) 由 bind_with_fallback 内置 +1 探测兜底.
-        let (listener, port) = bind_with_fallback(host, https_port_pref).await?;
-        let std_listener = listener.into_std().map_err(AppError::Io)?;
-        std_listener
-            .set_nonblocking(true)
-            .map_err(AppError::Io)?;
-        *state.https_bound_port.write().await = Some(port);
-        info!(%host, port, mode = ?mode, "proxy HTTPS listening");
-        let r = router.clone();
-        tasks.push(tokio::spawn(async move {
-            axum_server::from_tcp_rustls(
-                std_listener,
-                axum_server::tls_rustls::RustlsConfig::from_config(cfg),
-            )
-            .map_err(|e| AppError::internal(format!("axum-server from_tcp: {e}")))?
-            .serve(r.into_make_service_with_connect_info::<SocketAddr>())
-            .await
-            .map_err(|e| AppError::internal(format!("axum-server tls: {e}")))
-        }));
+    async fn tls_config(&self, enable_h2: bool) -> AppResult<Arc<rustls::ServerConfig>> {
+        let dir = crate::db::paths::app_data_dir(&self.0.app_handle)?;
+        let sans = self.0.settings.read().await.tls_extra_sans.clone();
+        crate::tls::load_or_init_server_config(&dir, &sans, enable_h2).await
     }
 
-    if tasks.is_empty() {
-        return Err(AppError::internal("proxy_mode 没有任何 listener 被启用"));
+    fn build_router(&self, cfg: &ProxyConfig) -> Router {
+        build_router(self.0.clone(), cfg.body_limit_bytes())
     }
 
-    // 两路 listener 都已绑定, 实际端口此刻才确定 (可能是 pref+n)。写给同机的 cc-router-tui 读。
-    // 失败只 warn: TUI 用不了, 但代理必须照常工作。
-    write_runtime_file(&state).await;
-    // 托盘状态行此刻才能显示真实端口
-    crate::tray::refresh(&state.app_handle);
-
-    // 任一 listener 退出整体退出 (panic 拖垮 app 是接受的设计, 见 CLAUDE.md).
-    for handle in tasks {
-        match handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                error!(?e, "proxy listener stopped with error");
-                return Err(e);
-            }
-            Err(join_err) => {
-                error!(?join_err, "proxy listener task panicked");
-                return Err(AppError::internal(format!("join: {join_err}")));
-            }
+    async fn on_bound(&self, ports: Option<BoundPorts>) {
+        let p = ports.unwrap_or_default();
+        *self.0.http_bound_port.write().await = p.http;
+        *self.0.https_bound_port.write().await = p.https;
+        // 停止时不删 runtime.json: TUI 连不上会重读, 读到旧端口照样连不上, 按「未运行」处理.
+        if ports.is_some() {
+            write_runtime_file(&self.0).await;
         }
+        crate::tray::refresh(&self.0.app_handle);
+        let _ = self.0.app_handle.emit("proxy_restarted", ());
     }
-    Ok(())
 }
 
 fn build_router(state: AppState, body_limit: usize) -> Router {
@@ -113,7 +57,7 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         // cors_layer —— 未知路径的 OPTIONS 预检会收到裸 404 而不是带 CORS 头的 204.
         .fallback(|| async { axum::http::StatusCode::NOT_FOUND })
         // axum 对 Bytes extractor 默认 2 MiB 上限, Codex 多图 base64 请求会 413
-        // (issue #41); 上限来自 settings.max_request_body_mb, 改动需重启生效
+        // (issue #41); 上限来自生效配置快照, 改动点「重启代理服务」生效
         .layer(axum::extract::DefaultBodyLimit::max(body_limit))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -131,25 +75,6 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .with_state(state)
 }
 
-async fn bind_with_fallback(host: IpAddr, start_port: u16) -> AppResult<(TcpListener, u16)> {
-    let mut port = start_port;
-    for _ in 0..MAX_PORT_TRIES {
-        let addr = SocketAddr::new(host, port);
-        match TcpListener::bind(addr).await {
-            Ok(listener) => return Ok((listener, port)),
-            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                port = port.saturating_add(1);
-                continue;
-            }
-            Err(e) => return Err(AppError::Io(e)),
-        }
-    }
-    Err(AppError::internal(format!(
-        "无法绑定端口 {start_port}..{}",
-        start_port.saturating_add(MAX_PORT_TRIES)
-    )))
-}
-
 async fn write_runtime_file(state: &AppState) {
     let app_data_dir = match crate::db::paths::app_data_dir(&state.app_handle) {
         Ok(d) => d,
@@ -160,7 +85,7 @@ async fn write_runtime_file(state: &AppState) {
     };
     // 与托盘 `tray::TrayLocale::from_pref` 读的是同一个 API: 原始标签直接下发给 TUI, 映射规则
     // (zh*/ja*/其余) 由 TUI 侧的 `Lang::resolve` 做, 这里不解析。偏好语言只在这里取一次:
-    // `update_settings` 改语言时不重写 runtime.json (这个文件只有启动时这一个写入点)。
+    // `update_settings` 改语言时不重写 runtime.json (写入点只有代理绑定成功这一处: 启动 / 重启 / 回滚)。
     let preferred_language = state.settings.read().await.preferred_language.clone();
     let file = crate::runtime_file::RuntimeFile::new(
         &app_data_dir,
@@ -170,7 +95,7 @@ async fn write_runtime_file(state: &AppState) {
         tauri_plugin_os::locale(),
     )
     .with_preferred_language(Some(preferred_language));
-    // 同步小文件写入, 只在启动时发生一次, 不值得 spawn_blocking。
+    // 同步小文件写入, 只在绑定成功时发生, 不值得 spawn_blocking。
     match crate::runtime_file::write(&app_data_dir, &file) {
         Ok(()) => info!(http = ?file.http_port, https = ?file.https_port, "runtime.json written"),
         Err(e) => warn!(?e, "runtime.json 写入失败, cc-router-tui 将无法连接"),

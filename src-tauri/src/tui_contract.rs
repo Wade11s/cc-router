@@ -129,6 +129,9 @@ fn proxy_status_matches() {
         https_port: Some(23457),
         listen_all: true,
         base_url: "http://127.0.0.1:23456".into(),
+        restart_pending: false,
+        applied: None,
+        last_error: None,
     };
     let view: dto::ProxyStatus = through_json(&real);
     assert_eq!(

@@ -36,6 +36,8 @@ pub const BRIDGED_EVENTS: &[&str] = &[
     "route_attempt_finished",
     // 托盘改了设置 (开机自启), 让界面刷新设置缓存
     "settings_changed",
+    // 代理按新配置重建 listener / 回滚 / 意外停止后发, 让界面刷新代理状态与接入地址
+    "proxy_restarted",
     crate::commands::updater::PROGRESS_EVENT,
 ];
 

@@ -154,6 +154,7 @@ pub fn run() {
             commands::release_notes::get_release_notes,
             commands::release_notes::mark_release_notes_seen,
             commands::proxy::proxy_status,
+            commands::proxy::restart_proxy,
             commands::proxy::env_snippet,
             commands::proxy::list_lan_addresses,
             commands::onboarding::get_onboarding_state,
@@ -303,21 +304,6 @@ async fn bootstrap(
     let chatgpt_oauth = Arc::new(oauth::chatgpt::ChatGptOAuthManager::new(pool.clone()));
     let kiro_oauth = Arc::new(oauth::kiro::KiroOAuthManager::new(pool.clone()));
 
-    // TLS 初始化: 只在 proxy_mode 包含 HTTPS 时加载/生成证书. HTTP-only 模式下 None,
-    // 切到 HTTPS 后由用户重启 app 触发. 失败 fatal (HTTPS 模式但起不来比 fallback 到 HTTP 更安全).
-    let tls_config = if settings.proxy_mode.includes_https() {
-        Some(
-            tls::load_or_init_server_config(
-                &app_data_dir,
-                &settings.tls_extra_sans,
-                settings.https_enable_h2,
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
-
     let state = AppState {
         db: pool,
         providers: Arc::new(providers),
@@ -326,7 +312,9 @@ async fn bootstrap(
         settings: Arc::new(RwLock::new(settings)),
         http_bound_port: Arc::new(RwLock::new(None)),
         https_bound_port: Arc::new(RwLock::new(None)),
-        tls_config,
+        proxy: Arc::new(proxy::controller::ProxyController::new(
+            proxy::listeners::BindOpts::DEFAULT,
+        )),
         request_log_tx: log_tx,
         event_log_tx: event_tx,
         body_dump_tx,
@@ -351,11 +339,13 @@ async fn bootstrap(
     // 7b. 网页界面事件桥: Tauri emit → broadcast (SSE 订阅方在 proxy/web/events.rs)
     proxy::web::events::install_bridge(&handle, state.ui_events.clone());
 
-    // 8. 启动代理
+    // 8. 启动代理. 失败不 fatal: 界面显示「未运行」与原因, 用户可点「启动代理服务」重试.
     let proxy_state = state.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = proxy::server::start(proxy_state).await {
-            error!(?e, "proxy server stopped");
+        let hooks = proxy::server::AppHooks(proxy_state.clone());
+        let outcome = proxy_state.proxy.restart(hooks).await;
+        if outcome != proxy::controller::RestartOutcome::Applied {
+            error!(?outcome, "proxy failed to start");
         }
     });
 

@@ -33,7 +33,7 @@ pub struct Settings {
     /// 兼容老 settings.json; HTTPS 单独由 `https_port` 控制.
     #[serde(default = "default_port")]
     pub proxy_port: u16,
-    /// 代理监听协议组合, 默认仅 HTTP. 切换需要重启 app.
+    /// 代理监听协议组合, 默认仅 HTTP. 切换后点「重启代理服务」生效.
     #[serde(default)]
     pub proxy_mode: ProxyMode,
     /// HTTPS 端口 (仅在 proxy_mode 包含 Https 时使用). 默认 23457.
@@ -42,7 +42,7 @@ pub struct Settings {
     /// 用户配置的额外 SAN (Subject Alternative Name) 列表. 每条字符串按 IpAddr::from_str 尝试解析:
     /// 成功 = IP SAN; 失败 = DnsName SAN (rcgen 进一步校验, 不合规的静默丢弃).
     /// 内置 localhost / 127.0.0.1 / ::1 永远在 SAN 列表里, 此 vec 是追加项.
-    /// 改动后需点「重新生成 leaf」按钮 + 重启 app 才生效.
+    /// 改动后需「重新生成 leaf」, HTTPS 运行中立即热替换生效.
     #[serde(default)]
     pub tls_extra_sans: Vec<String>,
     /// true: 监听 0.0.0.0（局域网可访问）；false: 监听 127.0.0.1（仅本机）。
@@ -51,7 +51,7 @@ pub struct Settings {
     /// HTTPS 端口是否启用 HTTP/2 (通过 TLS ALPN 协商). 默认 true.
     /// true: ServerConfig.alpn_protocols = ["h2","http/1.1"], 客户端按 ALPN 协商选 h2 或 h1.
     /// false: 不设 alpn_protocols, rustls 不返 ALPN extension, 双方退回 HTTP/1.1.
-    /// 切换需重启 app (axum-server 已绑定 listener 无法运行时换 TLS config).
+    /// 切换后点「重启代理服务」生效.
     #[serde(default = "default_https_enable_h2")]
     pub https_enable_h2: bool,
     #[serde(default)]
@@ -89,7 +89,7 @@ pub struct Settings {
     pub debug_mode: bool,
     /// 入站请求体上限 (MiB)。axum 默认 2 MiB 会让 Codex 多图 base64 请求 413
     /// (issue #41), 默认 32 对齐 Anthropic /v1/messages 官方请求上限。
-    /// 改动需要重启 app 才生效 (router 构建时读取, 同端口/监听地址)。
+    /// 改动后点「重启代理服务」生效 (router 构建时读取)。
     #[serde(default = "default_max_request_body_mb")]
     pub max_request_body_mb: u32,
     /// 是否在代理端口上提供网页管理界面 (/ui). 默认关闭.
@@ -259,12 +259,6 @@ impl Settings {
             self.tui_enabled = p;
         }
     }
-
-    /// 入站 body 上限的字节数。0 (或用户手改出的异常小值) 按 1 MiB 兜底,
-    /// 防止把代理配成完全收不了请求。
-    pub fn max_request_body_bytes(&self) -> usize {
-        self.max_request_body_mb.max(1) as usize * 1024 * 1024
-    }
 }
 
 #[cfg(test)]
@@ -349,19 +343,6 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(s.max_request_body_mb, 8);
-    }
-
-    #[test]
-    fn max_request_body_bytes_clamps_zero_to_one_mib() {
-        // 用户手改 settings.json 填 0 时按 1 MiB 兜底, 不能把代理配成完全收不了请求
-        let mut s = Settings::default();
-        s.max_request_body_mb = 0;
-        assert_eq!(s.max_request_body_bytes(), 1024 * 1024);
-    }
-
-    #[test]
-    fn max_request_body_bytes_converts_mib() {
-        assert_eq!(Settings::default().max_request_body_bytes(), 32 * 1024 * 1024);
     }
 
     #[test]

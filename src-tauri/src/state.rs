@@ -27,12 +27,13 @@ pub struct AppState {
     pub virtual_models: Arc<RwLock<HashMap<VirtualModelName, VirtualModelConfig>>>,
     pub settings: Arc<RwLock<Settings>>,
     /// HTTP listener 实际绑定到的端口. None=HTTP listener 未启用 (HTTPS-only 模式).
-    /// 实际值在启动绑定完成后写入, 可能因端口冲突 +1 与 settings.proxy_port 不同.
+    /// 实际值在每次绑定完成后写入, 可能因端口冲突 +1 与 settings.proxy_port 不同.
     pub http_bound_port: Arc<RwLock<Option<u16>>>,
     /// HTTPS listener 实际绑定到的端口. None=HTTPS listener 未启用 (HTTP-only 模式).
     pub https_bound_port: Arc<RwLock<Option<u16>>>,
-    /// rustls server config, 只有 HTTPS 模式启动时填值; HTTP-only 模式为 None.
-    pub tls_config: Option<Arc<rustls::ServerConfig>>,
+    /// 代理 listener 的生命周期 (启动 / 重启 / 回滚 / 证书热替换). 上面两个 bound_port
+    /// 由它在绑定成功 / 停止时维护.
+    pub proxy: Arc<crate::proxy::controller::ProxyController>,
     pub request_log_tx: mpsc::Sender<RequestLogEntry>,
     pub event_log_tx: mpsc::Sender<EventEntry>,
     /// 调试模式 dump channel. 仅在 settings.debug_mode=true 时被插桩点投递,

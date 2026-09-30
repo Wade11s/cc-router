@@ -166,6 +166,7 @@ web_commands! {
     update_settings(patch: SettingsPatch) => commands::settings::update_settings(st, args.patch).await,
     generate_new_token() => commands::settings::generate_new_token(st).await,
     proxy_status() => commands::proxy::proxy_status(st).await,
+    restart_proxy() => commands::proxy::restart_proxy(st).await,
     env_snippet() => commands::proxy::env_snippet(st).await,
     list_lan_addresses() => commands::proxy::list_lan_addresses().await,
     // release notes

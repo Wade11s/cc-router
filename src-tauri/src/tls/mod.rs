@@ -30,7 +30,7 @@ pub use config::TlsStatus;
 /// (避免每次启动覆盖用户已固定的证书). 改动后需显式调 `regenerate_leaf`.
 ///
 /// `enable_h2` 控制是否在 TLS ALPN 中通告 h2; true 时 client 可协商 HTTP/2, false 时
-/// 强制 HTTP/1.1. 切换需重启 app (axum-server 已绑定 listener 无法运行时换 TLS config).
+/// 强制 HTTP/1.1. 切换后点「重启代理服务」生效 (h2 取重启时的生效配置).
 pub async fn load_or_init_server_config(
     app_data_dir: &Path,
     extra_sans: &[String],

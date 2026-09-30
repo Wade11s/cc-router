@@ -50,5 +50,10 @@ pub async fn tls_regenerate_leaf(state: State<'_, AppState>) -> AppResult<TlsSta
     let extra_sans = state.settings.read().await.tls_extra_sans.clone();
     tls::ensure_ca(&app_data_dir).await?;
     tls::regenerate_leaf(&app_data_dir, &extra_sans).await?;
+    // 运行中含 HTTPS 就热替换, 新握手立即用新证书; 没在跑 HTTPS 时下次带 HTTPS 启动自然读到.
+    state
+        .proxy
+        .reload_tls(&crate::proxy::server::AppHooks(state.inner().clone()))
+        .await?;
     tls::read_status(&app_data_dir).await
 }

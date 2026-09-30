@@ -2,6 +2,9 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::error::AppResult;
+use crate::proxy::controller::RestartOutcome;
+use crate::proxy::listeners::ProxyConfig;
+use crate::proxy::server::AppHooks;
 use crate::settings::model::ProxyMode;
 use crate::state::AppState;
 
@@ -20,26 +23,62 @@ pub struct ProxyStatus {
     /// 客户端工具应连接的完整 base URL (含 scheme + port). 由 [`AppState::local_base_url`] 决定.
     /// 前端硬拼 URL 容易在 HTTPS-only / 端口冲突 +1 时出错, 改由后端给定唯一真相.
     pub base_url: String,
+    /// 代理在运行且当前设置与生效配置不同 (有需要「重启代理服务」才生效的改动).
+    pub restart_pending: bool,
+    /// 正在运行的实例的生效配置; None = 未运行. 与实际端口比较可知是否发生了顺延.
+    pub applied: Option<ProxyConfig>,
+    /// 最近一次启动 / 重启 / 运行中崩溃的原因.
+    pub last_error: Option<String>,
 }
 
 #[tauri::command]
 pub async fn proxy_status(state: State<'_, AppState>) -> AppResult<ProxyStatus> {
+    Ok(status_of(state.inner()).await)
+}
+
+async fn status_of(state: &AppState) -> ProxyStatus {
     let http_port = *state.http_bound_port.read().await;
     let https_port = *state.https_bound_port.read().await;
-    let (mode, listen_all) = {
-        let g = state.settings.read().await;
-        (g.proxy_mode, g.listen_all)
-    };
+    let desired = ProxyConfig::from_settings(&*state.settings.read().await);
+    let snap = state.proxy.snapshot();
+    // 运行中报生效配置 (设置可能已改但未重启), 未运行时退回设置值.
+    let shown = snap.applied.unwrap_or(desired);
     let primary = http_port.or(https_port).unwrap_or(0);
-    let base_url = state.local_base_url().await;
-    Ok(ProxyStatus {
+    ProxyStatus {
         port: primary,
         running: primary != 0,
-        mode,
+        mode: shown.proxy_mode,
         http_port,
         https_port,
-        listen_all,
-        base_url,
+        listen_all: shown.listen_all,
+        base_url: state.local_base_url().await,
+        restart_pending: state.proxy.restart_pending(&desired),
+        applied: snap.applied,
+        last_error: snap.last_error,
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum RestartProxyResult {
+    Applied { status: ProxyStatus },
+    RolledBack { status: ProxyStatus, error: String },
+    Stopped { status: ProxyStatus, error: String },
+    Failed { status: ProxyStatus, error: String },
+}
+
+/// 按当前设置在进程内重建代理 listener. 网页界面也能调: 这个请求本身走的是旧 listener
+/// 上已建立的连接, 属于在途请求, 优雅关停会等它的响应写完再关连接.
+#[tauri::command]
+pub async fn restart_proxy(state: State<'_, AppState>) -> AppResult<RestartProxyResult> {
+    let st = state.inner();
+    let outcome = st.proxy.restart(AppHooks(st.clone())).await;
+    let status = status_of(st).await;
+    Ok(match outcome {
+        RestartOutcome::Applied => RestartProxyResult::Applied { status },
+        RestartOutcome::RolledBack(error) => RestartProxyResult::RolledBack { status, error },
+        RestartOutcome::Stopped(error) => RestartProxyResult::Stopped { status, error },
+        RestartOutcome::Failed(error) => RestartProxyResult::Failed { status, error },
     })
 }
 
