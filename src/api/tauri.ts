@@ -18,7 +18,11 @@ import type {
   DailySeriesPointDto,
   DeviceFlowStart,
   EventFilters,
+  ExportSummary,
   HeatmapDayDto,
+  ImportOptions,
+  ImportPreview,
+  ImportReport,
   KiroAccount,
   KiroDeviceFlowStart,
   KiroDisguise,
@@ -127,6 +131,18 @@ export const api = {
   /** 网页端导出: 返回 CSV 文本 (含 BOM), 由浏览器下载 */
   exportRequestsCsvText: (filters?: RequestLogFilters) =>
     invoke<string>("export_requests_csv_text", { filters }),
+
+  // config backup / import
+  exportConfig: (path: string, password?: string) =>
+    invoke<ExportSummary>("export_config", { path, password: password ?? null }),
+
+  exportConfigText: () => invoke<string>("export_config_text"),
+
+  previewConfigImport: (text: string) =>
+    invoke<ImportPreview>("preview_config_import", { text }),
+
+  applyConfigImport: (text: string, options: ImportOptions) =>
+    invoke<ImportReport>("apply_config_import", { text, options }),
 
   // statistics (聚合表查询, 跨范围全局)
   getOverallStats: (range: StatsRange) =>

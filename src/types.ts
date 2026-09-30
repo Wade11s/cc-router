@@ -335,6 +335,8 @@ export interface SubscriptionDto {
   provider_names?: LocalizedText;
   provider_icon: string;
   is_user_defined: boolean;
+  /** api_key 是否非空 (DTO 不带 Key 本身); 导入时缺 Key 的订阅据此提示「待填写 API Key」 */
+  has_api_key: boolean;
 
   /** 凭据来源类型. 默认 "api_key" 兼容老 DTO 消费者. */
   auth_type: AuthType;
@@ -1021,4 +1023,48 @@ export interface ReleaseNotesDto {
   unseen: string[];
   /** 全部内嵌版本, 倒序 */
   versions: VersionNotes[];
+}
+
+// ---- 配置导入导出 (commands/backup.rs) ----
+
+export interface ExportSummary {
+  subscriptions: number;
+  with_secrets: boolean;
+}
+
+export type ImportPreviewStatus = "new" | "skip_existing_id" | "skip_oauth";
+
+export interface ImportPreviewItem {
+  id: string;
+  display_name: string;
+  provider_id: string;
+  /** 导出时的厂商名快照 (中文); 本机能按 provider_id 找到内置厂商时优先用本地化名 */
+  provider_display_name: string;
+  provider_icon: string;
+  status: ImportPreviewStatus;
+  has_api_key: boolean;
+  redacted_headers: string[];
+}
+
+export interface ImportPreview {
+  app_version: string;
+  exported_at: number;
+  has_secrets: boolean;
+  local_subscription_count: number;
+  subscriptions: ImportPreviewItem[];
+}
+
+export interface ImportOptions {
+  password?: string;
+  skip_secrets: boolean;
+  import_token: boolean;
+}
+
+export interface ImportReport {
+  imported: number;
+  skipped_existing: number;
+  skipped_oauth: string[];
+  disabled_missing_key: string[];
+  token_imported: boolean;
+  token_error?: string;
 }
