@@ -85,6 +85,9 @@ export function SubscriptionsPage() {
                         {sub.quota_usage.some((q) => q.exceeded) && (
                           <span className="pill warn">{t("quota.exceeded")}</span>
                         )}
+                        {!sub.has_api_key && !sub.enabled && sub.auth_type !== "chatgpt_oauth" && sub.auth_type !== "kiro_oauth" && (
+                          <span className="pill warn">{t("subscriptions.missingKey")}</span>
+                        )}
                       </div>
                     </td>
                     <td>
