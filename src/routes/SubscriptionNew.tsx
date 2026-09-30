@@ -157,6 +157,7 @@ export function SubscriptionNewPage() {
   const vms = useVirtualModels();
 
   const [importOpen, setImportOpen] = useState(false);
+  const onboardingDoneByImportRef = useRef(false);
   const [step, setStep] = useState<Step>(1);
   const [providerId, setProviderId] = useState<string>("");
   const [endpointId, setEndpointId] = useState<string>("");
@@ -536,13 +537,14 @@ export function SubscriptionNewPage() {
     ]);
   }
 
-  // 引导期从备份导入: 导入已经还原了虚拟模型绑定, 所以只标记引导完成, 不走 bindToVirtualModelsIfOnboarding
+  // 引导期从备份导入: 导入已经还原了虚拟模型绑定, 所以只标记引导完成, 不走 bindToVirtualModelsIfOnboarding。
+  // 不在这里跳转: 弹窗接着显示导入报告 (哪些订阅缺 Key 被停用、哪些 OAuth 被跳过), 用户关掉报告后再去 /guide。
   async function onBackupImported(report: ImportReport) {
     if (report.imported <= 0) return;
     try {
       await api.completeOnboarding();
       await queryClient.invalidateQueries({ queryKey: ["onboarding-state"] });
-      navigate("/guide", { replace: true });
+      onboardingDoneByImportRef.current = true;
     } catch (e) {
       // 导入本身已成功, 引导标记失败时留在原页, 用户可手动继续
       console.warn("complete onboarding after import failed", e);
@@ -1230,7 +1232,10 @@ export function SubscriptionNewPage() {
       {isOnboarding && (
         <ImportConfigDialog
           open={importOpen}
-          onOpenChange={setImportOpen}
+          onOpenChange={(v) => {
+            setImportOpen(v);
+            if (!v && onboardingDoneByImportRef.current) navigate("/guide", { replace: true });
+          }}
           onImported={(r) => void onBackupImported(r)}
         />
       )}
