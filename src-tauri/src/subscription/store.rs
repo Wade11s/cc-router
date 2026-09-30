@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use tokio::sync::RwLock;
 use tracing::warn;
 use uuid::Uuid;
@@ -193,6 +193,13 @@ fn opt_to_json<T: serde::Serialize>(v: Option<&T>) -> serde_json::Result<Option<
 }
 
 pub async fn insert(pool: &SqlitePool, sub: &SubscriptionRow) -> AppResult<()> {
+    let mut conn = pool.acquire().await?;
+    insert_on(&mut conn, sub).await
+}
+
+/// Same as [`insert`] but on a caller-provided connection, so several writes can share one
+/// transaction (config import writes every row + binding atomically).
+pub async fn insert_on(conn: &mut SqliteConnection, sub: &SubscriptionRow) -> AppResult<()> {
     let required_json = serde_json::to_string(&sub.required_headers)?;
     let forward_json = serde_json::to_string(&sub.forward_headers)?;
     let discovery_json = serde_json::to_string(&sub.model_discovery)?;
@@ -247,7 +254,7 @@ pub async fn insert(pool: &SqlitePool, sub: &SubscriptionRow) -> AppResult<()> {
     .bind(oauth_json)
     .bind(slot_efforts_json)
     .bind(token_quotas_json)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }
@@ -674,6 +681,29 @@ mod tests {
         let loaded = load_runtime(&pool).await.expect("load");
         let rt = loaded.get(&row.id).expect("订阅不应被整条跳过");
         assert_eq!(rt.read().await.row.slot_efforts.get(SubscriptionSlot::Opus), None);
+    }
+}
+
+#[cfg(test)]
+mod tx_tests {
+    use super::*;
+    use crate::db::run_migrations;
+    use crate::subscription::model::SubscriptionRow;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn insert_on_respects_the_callers_transaction() {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let row = SubscriptionRow::test_fixture("p", "e");
+
+        let mut tx = pool.begin().await.unwrap();
+        insert_on(&mut *tx, &row).await.unwrap();
+        tx.rollback().await.unwrap();
+        assert!(load_runtime(&pool).await.unwrap().is_empty(), "回滚后不应留下行");
+
+        insert(&pool, &row).await.unwrap();
+        assert!(load_runtime(&pool).await.unwrap().contains_key(&row.id));
     }
 }
 

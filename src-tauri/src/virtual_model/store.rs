@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
@@ -59,6 +59,15 @@ pub async fn save_mode(
     name: VirtualModelName,
     mode: RoutingMode,
 ) -> AppResult<()> {
+    let mut conn = pool.acquire().await?;
+    save_mode_on(&mut conn, name, mode).await
+}
+
+pub async fn save_mode_on(
+    conn: &mut SqliteConnection,
+    name: VirtualModelName,
+    mode: RoutingMode,
+) -> AppResult<()> {
     let mode_str = match mode {
         RoutingMode::Sequential => "sequential",
         RoutingMode::RoundRobin => "round_robin",
@@ -71,7 +80,7 @@ pub async fn save_mode(
     )
     .bind(name.as_str())
     .bind(mode_str)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }
@@ -82,9 +91,19 @@ pub async fn save_bindings(
     subscription_ids: &[Uuid],
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
+    save_bindings_on(&mut tx, name, subscription_ids).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn save_bindings_on(
+    conn: &mut SqliteConnection,
+    name: VirtualModelName,
+    subscription_ids: &[Uuid],
+) -> AppResult<()> {
     sqlx::query("DELETE FROM virtual_model_bindings WHERE virtual_model_name = ?")
         .bind(name.as_str())
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     for (position, sub_id) in subscription_ids.iter().enumerate() {
         sqlx::query(
@@ -94,10 +113,9 @@ pub async fn save_bindings(
         .bind(name.as_str())
         .bind(position as i64)
         .bind(sub_id.to_string())
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     }
-    tx.commit().await?;
     Ok(())
 }
 
@@ -116,5 +134,17 @@ mod sticky_tests {
         assert_eq!(all[&VirtualModelName::Sonnet].mode, RoutingMode::Sticky);
         // serde 值
         assert_eq!(serde_json::to_string(&RoutingMode::Sticky).unwrap(), "\"sticky\"");
+    }
+
+    #[tokio::test]
+    async fn on_variants_respect_the_callers_transaction() {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        save_mode_on(&mut *tx, VirtualModelName::Haiku, RoutingMode::RoundRobin).await.unwrap();
+        save_bindings_on(&mut *tx, VirtualModelName::Haiku, &[]).await.unwrap();
+        tx.rollback().await.unwrap();
+        let all = load_all(&pool).await.unwrap();
+        assert_eq!(all[&VirtualModelName::Haiku].mode, RoutingMode::Sequential, "回滚后保持默认");
     }
 }
