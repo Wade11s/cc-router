@@ -12,13 +12,14 @@ import { MODE_LABEL_KEY, VM_ORDER, vmNameToSlot } from "@/lib/virtualModels";
 import { useT } from "@/i18n";
 import { API_ROUTES, CLIENT_ALIASES } from "@/lib/liveRouting";
 import { useTheme } from "@/hooks/useTheme";
+import { isPlainBased } from "@/themes";
 import { ClassicLiveRoutingPage } from "./LiveRoutingClassic";
 import type { SubscriptionDto, VirtualModelDto } from "@/types";
 
-/** 实时路由页按画风整页切换: 经典 = 通栏布局 (LiveRoutingClassic), 手绘 = 卡片 + 速写路由图 */
+/** 实时路由页按画风整页切换: 经典 / Win2000 = 通栏布局 (LiveRoutingClassic), 手绘 = 卡片 + 速写路由图 */
 export function LiveRoutingPage() {
   const { art } = useTheme();
-  return art === "plain" ? <ClassicLiveRoutingPage /> : <SketchLiveRoutingPage />;
+  return isPlainBased(art) ? <ClassicLiveRoutingPage /> : <SketchLiveRoutingPage />;
 }
 
 function SketchLiveRoutingPage() {

@@ -9,7 +9,7 @@
   <body>
     <script>
       // 首帧前同步明暗与界面主题, 避免启动时先闪一下别的配色。
-      // 键名与主题表须与 src/hooks/useTheme.tsx 的 MODE_KEY、src/themes/index.ts 的 THEMES 保持一致。
+      // 键名与主题表须与 src/hooks/useTheme.tsx 的 MODE_KEY、src/themes/index.ts 的 THEMES / ART_ATTR 保持一致。
       (function () {
         var root = document.documentElement;
         var theme = "sketch";
@@ -20,10 +20,14 @@
             (t !== "light" &&
               window.matchMedia("(prefers-color-scheme: dark)").matches);
           if (dark) root.classList.add("dark");
-          if (localStorage.getItem("cc-router-ui-theme") === "classic") theme = "classic";
+          var saved = localStorage.getItem("cc-router-ui-theme");
+          if (saved === "classic" || saved === "win2000") theme = saved;
         } catch (e) {}
         root.setAttribute("data-theme", theme);
-        root.setAttribute("data-art", theme === "sketch" ? "sketch" : "plain");
+        root.setAttribute(
+          "data-art",
+          { sketch: "sketch", classic: "plain", win2000: "plain win2k" }[theme]
+        );
       })();
     </script>
     <div id="root"></div>

@@ -30,7 +30,8 @@ import { LogoMark } from "@/components/sketch/LogoMark";
 import { SidebarIcon, type SidebarIconName } from "@/components/sketch/SidebarIcon";
 import { useReleaseNotesDialog } from "@/components/release-notes/ReleaseNotesController";
 import { useTheme, type ColorMode } from "@/hooks/useTheme";
-import { nextThemeId, themeDef, type ThemeArt } from "@/themes";
+import { PixelIcon } from "@/components/win2k/PixelIcon";
+import { isPlainBased, nextThemeId, themeDef, type ThemeArt } from "@/themes";
 
 /** 经典画风下的侧栏图标 (手绘改版前的 lucide 线性图标) */
 const PLAIN_ICONS: Record<SidebarIconName, LucideIcon> = {
@@ -52,9 +53,10 @@ const PLAIN_ICONS: Record<SidebarIconName, LucideIcon> = {
   theme: Palette,
 };
 
-/** 按画风出图标: 手绘 = 涂鸦小图 (28px), 经典 = lucide 线性图标 (16px) */
+/** 按画风出图标: 手绘 = 涂鸦小图 (28px), 经典 = lucide 线性图标 (16px), Win2000 = 像素图标 (16px) */
 function NavIcon({ name, art }: { name: SidebarIconName; art: ThemeArt }) {
   if (art === "sketch") return <SidebarIcon name={name} size={28} />;
+  if (art === "win2k") return <PixelIcon name={name} />;
   const Ico = PLAIN_ICONS[name];
   return <Ico size={16} strokeWidth={1.6} />;
 }
@@ -136,65 +138,70 @@ export function Sidebar() {
       {/* 手画波浪分隔线; 经典画风用品牌区的下边框代替 */}
       {art === "sketch" && <SketchRule className="brand-rule" />}
       {/* 代理地址/端口不在这里展示: 地址在「实时路由」页可复制 —— 侧边栏只留导航。
-       * 版本号只以手写小字出现在底部「更新内容」入口上 (已读时)。 */}
-      {items.map((it) => {
-        const badge = typeof it.badge === "function" ? it.badge() : it.badge;
-        return (
-          <NavLink
-            key={it.to}
-            to={it.to}
-            className={({ isActive }) => cn("nav-item", isActive && "active")}
-          >
-            <span className="nav-icon">
-              <NavIcon name={it.icon} art={art} />
-            </span>
-            <span className="nav-label">{it.label}</span>
-            {badge && <span className="badge mono">{badge}</span>}
-            {!badge && it.dot && (
-              <NavDot
-                art={art}
-                tone={it.dotTone ?? "err"}
-                label={t(it.dotLabelKey ?? "sidebar.updateAvailable")}
-              />
-            )}
-          </NavLink>
-        );
-      })}
+       * 版本号只以手写小字出现在底部「更新内容」入口上 (已读时)。
+       * .nav-list / .nav-extra 默认 display: contents 不参与布局, Win2000 画风把它们画成凹陷的列表框。 */}
+      <div className="nav-list">
+        {items.map((it) => {
+          const badge = typeof it.badge === "function" ? it.badge() : it.badge;
+          return (
+            <NavLink
+              key={it.to}
+              to={it.to}
+              className={({ isActive }) => cn("nav-item", isActive && "active")}
+            >
+              <span className="nav-icon">
+                <NavIcon name={it.icon} art={art} />
+              </span>
+              <span className="nav-label">{it.label}</span>
+              {badge && <span className="badge mono">{badge}</span>}
+              {!badge && it.dot && (
+                <NavDot
+                  art={art}
+                  tone={it.dotTone ?? "err"}
+                  label={t(it.dotLabelKey ?? "sidebar.updateAvailable")}
+                />
+              )}
+            </NavLink>
+          );
+        })}
+      </div>
       <div className="nav-footer">
         {/* 与品牌区下方对称的手画波浪线 */}
         {art === "sketch" && <SketchRule className="foot-rule" />}
-        {notes.hasNotes && (
-          <>
-            <button
-              type="button"
-              className={cn("nav-item", notes.openMode === "manual" && "active")}
-              onClick={notes.openManual}
-            >
-              <span className="nav-icon">
-                <NavIcon name="whatsnew" art={art} />
-              </span>
-              <span className="nav-label">{t("releaseNotes.entry")}</span>
-              {notes.hasUnread ? (
-                <NavDot art={art} tone="err" label={t("releaseNotes.unread")} />
-              ) : (
-                notes.current && <span className="nav-ver">v{notes.current}</span>
-              )}
-            </button>
-          </>
-        )}
-        {showLogout && (
-          <button
-            type="button"
-            className="nav-item nav-logout"
-            onClick={() => {
-              void webLogout().then(() => window.location.reload());
-            }}
-          >
-            <span className="nav-icon">
-              <NavIcon name="logout" art={art} />
-            </span>
-            <span className="nav-label">{t("sidebar.logout")}</span>
-          </button>
+        {(notes.hasNotes || showLogout) && (
+          <div className="nav-extra">
+            {notes.hasNotes && (
+              <button
+                type="button"
+                className={cn("nav-item", notes.openMode === "manual" && "active")}
+                onClick={notes.openManual}
+              >
+                <span className="nav-icon">
+                  <NavIcon name="whatsnew" art={art} />
+                </span>
+                <span className="nav-label">{t("releaseNotes.entry")}</span>
+                {notes.hasUnread ? (
+                  <NavDot art={art} tone="err" label={t("releaseNotes.unread")} />
+                ) : (
+                  notes.current && <span className="nav-ver">v{notes.current}</span>
+                )}
+              </button>
+            )}
+            {showLogout && (
+              <button
+                type="button"
+                className="nav-item nav-logout"
+                onClick={() => {
+                  void webLogout().then(() => window.location.reload());
+                }}
+              >
+                <span className="nav-icon">
+                  <NavIcon name="logout" art={art} />
+                </span>
+                <span className="nav-label">{t("sidebar.logout")}</span>
+              </button>
+            )}
+          </div>
         )}
         {/* 明暗 / 主题: 只有图案的两枚按钮, 图案随当前状态变; 文字只在悬停提示与读屏里 */}
         <div className="nav-toggles">
@@ -241,9 +248,9 @@ function SketchRule({ className }: { className: string }) {
 }
 
 /** 侧栏状态点。手绘: ok = 绿色手画圆点带放射短线 (代理在跑), err = 陶土色星号 (有可用更新);
- *  经典: 一粒实心圆点 (绿 / 红) */
+ *  经典 / Win2000: 一粒实心圆点 (绿 / 红) */
 function NavDot({ art, tone, label }: { art: ThemeArt; tone: "ok" | "err"; label: string }) {
-  if (art === "plain") {
+  if (isPlainBased(art)) {
     return <span className={tone === "ok" ? "nav-dot ok" : "nav-dot"} role="img" aria-label={label} title={label} />;
   }
   if (tone === "ok") {

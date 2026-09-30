@@ -32,14 +32,16 @@ export const SelectTrigger = React.forwardRef<
       // 与全局 .select / .input 同视觉, 颜色走项目自有 token 以跟随 .dark 与主题; 外形按画风分两套
       "flex w-full items-center justify-between gap-2 whitespace-nowrap border-(--line-2) bg-(--surface) px-3 py-2 text-left text-[13px] text-(--ink) transition-[border-color,box-shadow] duration-150 focus:outline-hidden disabled:cursor-not-allowed disabled:bg-(--surface-2) disabled:text-(--ink-4) [&>span]:line-clamp-1 " +
         "plain:rounded-(--r-sm) plain:border plain:focus:border-(--ink-2) plain:focus:shadow-[0_0_0_3px_rgba(0,0,0,0.04)] plain:dark:focus:shadow-[0_0_0_3px_rgba(255,255,255,0.10)] " +
-        "sketch:rounded-(--r-sketch-alt) sketch:border-[1.5px] sketch:hover:border-(--ink-4) sketch:focus:border-(--stroke) sketch:focus:shadow-[3px_3px_0_var(--fill-butter)]",
+        "sketch:rounded-(--r-sketch-alt) sketch:border-[1.5px] sketch:hover:border-(--ink-4) sketch:focus:border-(--stroke) sketch:focus:shadow-[3px_3px_0_var(--fill-butter)] " +
+        "win2k:border-0 win2k:bg-(--w-win) win2k:py-[3px] win2k:pl-[6px] win2k:pr-[2px] win2k:shadow-(--bevel-sunken) win2k:focus:shadow-(--bevel-sunken) win2k:dark:focus:shadow-(--bevel-sunken)",
       className,
     )}
     {...props}
   >
     {children}
     <SelectPrimitive.Icon asChild>
-      <ChevronDown className="h-4 w-4 opacity-50" />
+      {/* Win2000: 下拉框右端一枚凸起的箭头按钮 */}
+      <ChevronDown className="h-4 w-4 opacity-50 win2k:h-[18px] win2k:w-4 win2k:shrink-0 win2k:p-[3px] win2k:opacity-100 win2k:stroke-3 win2k:bg-(--w-face) win2k:text-(--w-text) win2k:shadow-(--bevel-raised)" />
     </SelectPrimitive.Icon>
   </SelectPrimitive.Trigger>
 ));
@@ -58,7 +60,8 @@ export const SelectContent = React.forwardRef<
       className={cn(
         "relative z-50 max-h-96 min-w-32 overflow-hidden bg-(--surface) text-(--ink) data-[state=open]:animate-in data-[state=closed]:animate-out " +
           "plain:rounded-(--r-sm) plain:border plain:border-(--line-2) plain:shadow-md " +
-          "sketch:rounded-(--r-card-alt) sketch:border-2 sketch:border-(--stroke) sketch:shadow-[4px_4px_0_var(--fill-oat)]",
+          "sketch:rounded-(--r-card-alt) sketch:border-2 sketch:border-(--stroke) sketch:shadow-[4px_4px_0_var(--fill-oat)] " +
+          "win2k:border-(--w-text) win2k:bg-(--w-win) win2k:shadow-none",
         position === "popper" &&
           "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
         className,
@@ -94,7 +97,8 @@ export const SelectItem = React.forwardRef<
     ref={ref}
     className={cn(
       "relative flex w-full cursor-default select-none items-start py-1.5 pl-2 pr-8 text-[13px] outline-hidden data-disabled:pointer-events-none data-disabled:opacity-50 " +
-        "plain:rounded-sm plain:focus:bg-(--surface-3) sketch:rounded-(--r-sketch) sketch:focus:bg-(--fill-butter)",
+        "plain:rounded-sm plain:focus:bg-(--surface-3) sketch:rounded-(--r-sketch) sketch:focus:bg-(--fill-butter) " +
+        "win2k:focus:bg-(--w-sel) win2k:focus:text-(--w-selt)",
       className,
     )}
     {...props}
