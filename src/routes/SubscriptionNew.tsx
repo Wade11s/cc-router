@@ -8,6 +8,7 @@ import { ProviderLogo } from "@/components/ProviderLogo";
 import { Spinner } from "@/components/Spinner";
 import { ModelSlotPicker } from "@/components/ModelSlotPicker";
 import { ChatGptOAuthDialog } from "@/components/ChatGptOAuthDialog";
+import { ImportConfigDialog } from "@/routes/settings/ImportConfigDialog";
 import { KiroAuthDialog, type KiroAuthSuccessPayload } from "@/components/KiroAuthDialog";
 import {
   Select,
@@ -30,6 +31,7 @@ import type {
   CreateSubscriptionInput,
   ModelInfo,
   ModelSlots,
+  ImportReport,
   ProbeCustomModelsResult,
   RefreshModelListResult,
   SlotEfforts,
@@ -154,6 +156,7 @@ export function SubscriptionNewPage() {
   const createMut = useCreateSubscription();
   const vms = useVirtualModels();
 
+  const [importOpen, setImportOpen] = useState(false);
   const [step, setStep] = useState<Step>(1);
   const [providerId, setProviderId] = useState<string>("");
   const [endpointId, setEndpointId] = useState<string>("");
@@ -533,6 +536,19 @@ export function SubscriptionNewPage() {
     ]);
   }
 
+  // 引导期从备份导入: 导入已经还原了虚拟模型绑定, 所以只标记引导完成, 不走 bindToVirtualModelsIfOnboarding
+  async function onBackupImported(report: ImportReport) {
+    if (report.imported <= 0) return;
+    try {
+      await api.completeOnboarding();
+      await queryClient.invalidateQueries({ queryKey: ["onboarding-state"] });
+      navigate("/guide", { replace: true });
+    } catch (e) {
+      // 导入本身已成功, 引导标记失败时留在原页, 用户可手动继续
+      console.warn("complete onboarding after import failed", e);
+    }
+  }
+
   // 内置路径 step2: 保存 slot
   async function save() {
     if (!createdId || !provider || !endpoint) return;
@@ -676,6 +692,14 @@ export function SubscriptionNewPage() {
         <div className="subtitle">
           {isOnboarding ? t("subscriptionNew.welcomeSubtitle") : t("subscriptionNew.subtitle")}
         </div>
+        {isOnboarding && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+            <span className="field-hint">{t("subscriptionNew.importBackupHint")}</span>
+            <button className="btn sm" type="button" onClick={() => setImportOpen(true)}>
+              {t("subscriptionNew.importBackup")}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="wizard">
@@ -1202,6 +1226,14 @@ export function SubscriptionNewPage() {
           </div>
         </div>
       </div>
+
+      {isOnboarding && (
+        <ImportConfigDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          onImported={(r) => void onBackupImported(r)}
+        />
+      )}
 
       <ChatGptOAuthDialog
         open={oauthDialogOpen}

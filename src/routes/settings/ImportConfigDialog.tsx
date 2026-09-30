@@ -21,7 +21,15 @@ import type { ImportPreview, ImportReport } from "@/types";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
-export function ImportConfigDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+export function ImportConfigDialog({
+  open,
+  onOpenChange,
+  onImported,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onImported?: (report: ImportReport) => void;
+}) {
   const { t, locale } = useT();
   const qc = useQueryClient();
   const providers = useProviders();
@@ -78,6 +86,7 @@ export function ImportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
 
   const newCount = preview?.subscriptions.filter((s) => s.status === "new").length ?? 0;
   const needsPassword = !!preview?.has_secrets && !skipSecrets;
+  const tokenOnly = newCount === 0 && needsPassword && importToken;
   const canSubmit = !busy && !!text && newCount + (needsPassword && importToken ? 1 : 0) > 0 && (!needsPassword || password.length > 0);
 
   async function submit() {
@@ -101,6 +110,7 @@ export function ImportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
         qc.invalidateQueries({ queryKey: SETTINGS_KEY });
         qc.invalidateQueries({ queryKey: ENV_SNIPPET_KEY });
       }
+      onImported?.(r);
     } catch (e) {
       setError(`${t("backup.import.failed")}: ${errorText(e)}`);
     } finally {
@@ -131,7 +141,12 @@ export function ImportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
           type="file"
           accept=".json,application/json"
           style={{ display: "none" }}
-          onChange={(e) => void onFile(e.target.files?.[0])}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Clear so re-picking the same file (after a failed preview) fires change again.
+            e.target.value = "";
+            void onFile(file);
+          }}
         />
         {!report && (
           <button className="btn" type="button" disabled={busy} onClick={() => fileInput.current?.click()}>
@@ -234,7 +249,11 @@ export function ImportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
           {preview && (
             <button className="btn primary" type="button" onClick={submit} disabled={!canSubmit}>
               {busy && <Spinner />}
-              {newCount > 0 ? t("backup.import.confirm", { count: newCount }) : t("backup.import.nothing")}
+              {newCount > 0
+                ? t("backup.import.confirm", { count: newCount })
+                : tokenOnly
+                  ? t("backup.import.confirmTokenOnly")
+                  : t("backup.import.nothing")}
             </button>
           )}
         </DialogFooter>
