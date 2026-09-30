@@ -350,9 +350,22 @@ mod tests {
         let mut f = fixture(true);
         let plain = open(f.file.secrets.as_ref().unwrap(), PW).unwrap();
         let refs = f.file.subscriptions.iter().find(|s| s.display_name == "A").unwrap().secret_refs.clone();
+        f.file.subscriptions.iter_mut().find(|s| s.display_name == "A").unwrap().secret_refs = None;
         let b = f.file.subscriptions.iter_mut().find(|s| s.display_name == "B").unwrap();
         b.base_url = "https://a.example".into(); // same destination, different subscription id
         b.secret_refs = refs;
-        assert!(resolve_secrets(&f.file, plain).is_err());
+        assert!(resolve_secrets(&f.file, plain).unwrap_err().to_string().contains("被修改过"));
+    }
+
+    #[test]
+    fn shared_secret_ref_is_rejected() {
+        let mut f = fixture(true);
+        let plain = open(f.file.secrets.as_ref().unwrap(), PW).unwrap();
+        let refs = f.file.subscriptions.iter().find(|s| s.display_name == "A").unwrap().secret_refs.clone();
+        let b = f.file.subscriptions.iter_mut().find(|s| s.display_name == "B").unwrap();
+        b.base_url = "https://a.example".into(); // same destination, different subscription id
+        b.secret_refs = refs;
+        // A keeps its refs, B has a clone pointing to A's secret items; second to process will fail on consume
+        assert!(resolve_secrets(&f.file, plain).unwrap_err().to_string().contains("被修改过"));
     }
 }
