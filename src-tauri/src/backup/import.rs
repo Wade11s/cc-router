@@ -205,13 +205,33 @@ pub fn plan(
     ImportPlan { inserts, bindings, modes, report }
 }
 
+pub async fn apply(pool: &sqlx::SqlitePool, plan: &ImportPlan) -> AppResult<()> {
+    use crate::subscription::store as sub_store;
+    use crate::virtual_model::store as vm_store;
+
+    let mut tx = pool.begin().await?;
+    for row in &plan.inserts {
+        sub_store::insert_on(&mut tx, row).await?;
+    }
+    for (name, ids) in &plan.bindings {
+        vm_store::save_bindings_on(&mut tx, *name, ids).await?;
+    }
+    for (name, mode) in &plan.modes {
+        vm_store::save_mode_on(&mut tx, *name, *mode).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backup::crypto::{open, KdfCost};
     use crate::backup::export::{build_export, SecretOptions, VirtualModelSnapshot};
+    use crate::db::run_migrations;
     use crate::provider::model::AuthType;
     use crate::subscription::model::SubscriptionRow;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     const PW: &str = "0123456789";
 
@@ -367,5 +387,60 @@ mod tests {
         b.secret_refs = refs;
         // A keeps its refs, B has a clone pointing to A's secret items; second to process will fail on consume
         assert!(resolve_secrets(&f.file, plain).unwrap_err().to_string().contains("被修改过"));
+    }
+
+    async fn memory_pool() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn export_then_import_into_a_fresh_database_restores_rows() {
+        use crate::backup::format::parse_file;
+        use crate::subscription::store::{insert, load_runtime};
+        use crate::virtual_model::store as vm_store;
+
+        let src = memory_pool().await;
+        let f = fixture(true);
+        for r in &f.rows {
+            insert(&src, r).await.unwrap();
+        }
+        let text = serde_json::to_string_pretty(&f.file).unwrap();
+
+        let dst = memory_pool().await;
+        let file = parse_file(&text).unwrap();
+        let plain = open(file.secrets.as_ref().unwrap(), PW).unwrap();
+        let secrets = resolve_secrets(&file, plain).unwrap();
+        let plan = plan(&file, Some(&secrets), &empty_local(), Utc::now());
+        apply(&dst, &plan).await.unwrap();
+
+        let loaded = load_runtime(&dst).await.unwrap();
+        assert_eq!(loaded.len(), 2, "OAuth 那条不导入");
+        let a = loaded[&f.rows[0].id].read().await.row.clone();
+        let orig = &f.rows[0];
+        assert_eq!(a.api_key, orig.api_key);
+        assert_eq!(a.display_name, orig.display_name);
+        assert_eq!(a.base_url, orig.base_url);
+        assert_eq!(a.required_headers, orig.required_headers);
+        assert_eq!(a.enabled, orig.enabled);
+        assert_eq!(a.created_at.timestamp_millis(), orig.created_at.timestamp_millis());
+        assert_eq!(serde_json::to_value(&a.model_slots).unwrap(), serde_json::to_value(&orig.model_slots).unwrap());
+
+        let vms = vm_store::load_all(&dst).await.unwrap();
+        assert_eq!(vms[&VirtualModelName::Opus].subscription_ids, vec![f.rows[0].id, f.rows[1].id]);
+        assert_eq!(vms[&VirtualModelName::Opus].mode, RoutingMode::Sticky);
+    }
+
+    #[tokio::test]
+    async fn failure_midway_rolls_everything_back() {
+        use crate::subscription::store::load_runtime;
+        let dst = memory_pool().await;
+        let f = fixture(false);
+        let mut plan = plan(&f.file, None, &empty_local(), Utc::now());
+        let dup = plan.inserts[0].clone();
+        plan.inserts.push(dup); // second insert hits the primary key
+        assert!(apply(&dst, &plan).await.is_err());
+        assert!(load_runtime(&dst).await.unwrap().is_empty(), "整体回滚");
     }
 }
