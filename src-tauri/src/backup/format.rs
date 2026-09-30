@@ -299,6 +299,55 @@ pub fn export_to_row(
     }
 }
 
+pub const MAX_FILE_BYTES: usize = 5 * 1024 * 1024;
+pub const MAX_SUBSCRIPTIONS: usize = 1000;
+
+pub fn parse_file(text: &str) -> crate::error::AppResult<ExportFile> {
+    use crate::error::AppError;
+    use std::collections::HashSet;
+
+    if text.len() > MAX_FILE_BYTES {
+        return Err(AppError::BadRequest("文件过大 (上限 5 MB)".into()));
+    }
+    // Read format/version first so "file is from a newer version" is not reported as a field error.
+    #[derive(Deserialize)]
+    struct Head {
+        format: Option<String>,
+        version: Option<u32>,
+    }
+    let head: Head = serde_json::from_str(text)
+        .map_err(|e| AppError::BadRequest(format!("不是有效的 JSON 文件: {e}")))?;
+    if head.format.as_deref() != Some(FORMAT) {
+        return Err(AppError::BadRequest("不是 cc-router 导出的配置文件".into()));
+    }
+    match head.version {
+        Some(v) if v > VERSION => {
+            return Err(AppError::BadRequest(format!(
+                "文件来自更新版本的 cc-router (格式版本 {v}), 请先升级"
+            )))
+        }
+        Some(_) => {}
+        None => return Err(AppError::BadRequest("文件缺少格式版本号".into())),
+    }
+    let file: ExportFile = serde_json::from_str(text).map_err(|e| {
+        AppError::BadRequest(format!(
+            "文件内容无法解析: {e}。如果文件来自更新版本的 cc-router, 请先升级"
+        ))
+    })?;
+    if file.subscriptions.len() > MAX_SUBSCRIPTIONS {
+        return Err(AppError::BadRequest(format!("订阅数量超过上限 ({MAX_SUBSCRIPTIONS})")));
+    }
+    let mut ids = HashSet::new();
+    if !file.subscriptions.iter().all(|s| ids.insert(s.id)) {
+        return Err(AppError::BadRequest("文件里有重复的订阅 id".into()));
+    }
+    let mut names = HashSet::new();
+    if !file.virtual_models.iter().all(|v| names.insert(v.name)) {
+        return Err(AppError::BadRequest("文件里有重复的虚拟模型".into()));
+    }
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
