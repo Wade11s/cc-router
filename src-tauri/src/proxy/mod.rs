@@ -5,6 +5,7 @@ pub mod forward;
 pub mod gemini_dispatch;
 pub mod gemini_interactions_dispatch;
 pub mod handler;
+pub mod listeners;
 pub mod middleware;
 pub mod oauth_dispatch;
 pub mod openai_chat_completions_dispatch;
