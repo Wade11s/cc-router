@@ -88,7 +88,7 @@ function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   return (
     <div className="web-login-shell">
       <form className="web-login-card" onSubmit={submit}>
-        <LogoMark size={48} variant="compact" label="cc-router" className="web-login-logo" />
+        <LogoMark size={48} plainSize={40} variant="compact" label="cc-router" className="web-login-logo" />
         <h1>{t("webAuth.title")}</h1>
         <p className="desc">{t("webAuth.desc")}</p>
         <input

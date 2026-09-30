@@ -8,7 +8,9 @@ import type { CSSProperties, ReactNode } from "react";
  */
 export type SidebarIconName =
   | "guide" | "live" | "vm" | "subs" | "logs" | "stats"
-  | "receipts" | "updates" | "settings" | "about" | "logout" | "whatsnew";
+  | "receipts" | "updates" | "settings" | "about" | "logout" | "whatsnew"
+  // 侧栏底部的两枚图案按钮: 明暗模式三态 + 当前主题
+  | "mode-system" | "mode-light" | "mode-dark" | "theme";
 
 interface Props {
   name: SidebarIconName;
@@ -193,6 +195,54 @@ const ICONS: Record<SidebarIconName, IconDef> = {
         <circle style={DOT} cx="21.8" cy="12.2" r="1.2" />
         <circle style={{ ...ACCENT, stroke: "none" }} cx="25.8" cy="8.6" r="1.35" />
         <path style={thin} d="M24.4 13.6 L26.4 14.4 M27.6 4.4 L26.8 6.2 M19.8 3 L20.4 4.8" />
+      </>
+    ),
+  },
+  // 跟随系统: 一半涂黑的圆 (昼夜各半)
+  "mode-system": {
+    blob: BLOB.c,
+    fill: "var(--fill-sky)",
+    draw: () => (
+      <>
+        <path style={PAPER} d="M16 7.4 C 20.8 7.3, 24.6 11.2, 24.5 16 C 24.4 20.8, 20.6 24.6, 16 24.5 C 11.2 24.4, 7.4 20.8, 7.5 16 C 7.6 11.2, 11.4 7.5, 16.6 7.4" />
+        <path style={DOT} d="M16 7.6 C 11.4 7.8, 7.7 11.4, 7.7 16 C 7.8 20.6, 11.4 24.3, 16 24.3 Z" />
+        <path d="M16.1 7.4 C 15.9 13, 16.2 18.8, 16 24.5" />
+      </>
+    ),
+  },
+  // 浅色: 太阳, 八道短光芒
+  "mode-light": {
+    blob: BLOB.a,
+    fill: "var(--fill-butter)",
+    draw: () => (
+      <>
+        <path style={PAPER} d="M16 10.4 C 19.3 10.3, 21.7 12.8, 21.6 16 C 21.5 19.2, 19.1 21.7, 16 21.6 C 12.8 21.5, 10.4 19.1, 10.4 15.9 C 10.5 12.9, 12.8 10.5, 16.6 10.4" />
+        <path d="M16 4.4 L16.1 7.2 M16 24.8 L15.9 27.6 M4.4 16.1 L7.2 16 M24.8 15.9 L27.6 16 M7.8 7.9 L9.8 9.8 M22.2 22.1 L24.1 24.2 M7.9 24.1 L9.9 22.2 M22.1 9.8 L24.2 7.9" />
+      </>
+    ),
+  },
+  // 暗色: 弯月 + 一颗十字星
+  "mode-dark": {
+    blob: BLOB.e,
+    fill: "var(--fill-heather)",
+    draw: (thin) => (
+      <>
+        <path style={PAPER} d="M18.6 5.8 C 12.6 6.6, 8.2 11.4, 8.5 17.2 C 8.8 23.2, 13.8 27.2, 19.6 26.6 C 22.8 26.2, 25.4 24.5, 26.8 22 C 21.2 23.2, 15.4 18.8, 15.4 12.8 C 15.4 10, 16.6 7.6, 18.6 5.8 Z" />
+        <path style={thin} d="M23.4 7.4 L23.5 11.6 M21.4 9.5 L25.6 9.4" />
+      </>
+    ),
+  },
+  // 主题 (手绘): 斜放的铅笔, 笔尾一道陶土色箍, 笔下一小段划痕
+  theme: {
+    blob: BLOB.d,
+    fill: "var(--fill-coral)",
+    draw: (thin) => (
+      <>
+        <path style={PAPER} d="M6.8 25.2 L8.6 19.6 L21.4 6.8 C 22.6 5.6, 24.6 5.6, 25.8 6.8 C 27 8, 27 10, 25.8 11.2 L13 24 Z" />
+        <path style={{ ...ACCENT, strokeWidth: 0 }} d="M19.6 8.6 L23.9 12.9 L25.8 11.2 L21.4 6.8 Z" />
+        <path d="M19.6 8.6 L23.9 12.9 M8.6 19.6 L13 24" />
+        <path style={DOT} d="M6.8 25.2 L7.6 22.8 L9.2 24.4 Z" />
+        <path style={thin} d="M12 28.2 C 15.4 27, 18.2 29.2, 21.6 27.8 C 23 27.2, 24.4 27.4, 25.6 28" />
       </>
     ),
   },

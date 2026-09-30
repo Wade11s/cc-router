@@ -1,4 +1,7 @@
 import type { CSSProperties } from "react";
+import { useTheme } from "@/hooks/useTheme";
+import { isPlainBased } from "@/themes";
+import logoClassicUrl from "@/assets/logo-classic.png";
 
 /**
  * cc-router 的手绘 Logo: 照原像素版一格一格描下来 (310 画板, 一格 = 10 单位) ——
@@ -9,9 +12,13 @@ import type { CSSProperties } from "react";
  * - compact: 小尺寸 (侧栏、favicon), 去掉细节, 取景收紧, 线条按像素加粗
  * - mono: 只留墨线 (托盘 / 单色场景)
  * - tile: 画在 App 图标式的圆角底板上
+ *
+ * 经典 / Win2000 画风下不画手绘版, 直接显示原来的像素 Logo, 尺寸与 tile 照旧。
  */
 interface Props {
   size: number;
+  /** 经典画风下的尺寸, 缺省同 size (像素 Logo 在改版前各处的尺寸与手绘版不同) */
+  plainSize?: number;
   variant?: "full" | "compact";
   tile?: boolean;
   mono?: boolean;
@@ -28,7 +35,21 @@ const BULB =
 const LEGS_OUTER = "M91 258 L90 299 L110 300 L110 259 Z M221 258 L220 299 L240 300 L240 259 Z";
 const LEGS_INNER = "M131 258 L130 299 L150 300 L150 259 Z M191 258 L190 299 L210 300 L210 259 Z";
 
-export function LogoMark({ size, variant = "full", tile = false, mono = false, className, label }: Props) {
+export function LogoMark(props: Props) {
+  const { art } = useTheme();
+  return isPlainBased(art) ? <PixelLogo {...props} /> : <SketchLogo {...props} />;
+}
+
+function PixelLogo({ size, plainSize = size, tile = false, className, label }: Props) {
+  const cls = ["logo-plain", tile && "tile", className].filter(Boolean).join(" ");
+  return (
+    <span className={cls} style={{ width: plainSize, height: plainSize }}>
+      <img src={logoClassicUrl} alt={label ?? ""} aria-hidden={label ? undefined : true} />
+    </span>
+  );
+}
+
+function SketchLogo({ size, variant = "full", tile = false, mono = false, className, label }: Props) {
   const compact = variant === "compact";
   // 线宽按屏幕像素定, 再换算回画板单位: 大图约 0.9% 边长, 侧栏 1.3px, 16px 时 1px
   const screen = size >= 200 ? size * 0.0092 : size >= 96 ? 1.4 : size >= 40 ? 1.3 : 1;

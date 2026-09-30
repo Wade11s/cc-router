@@ -25,7 +25,7 @@ export function OnboardingDisclaimerPage() {
       {/* 无壳的全屏页: 同样铺拖窗带, 否则 Windows / Linux 上无法拖动与关闭 */}
       {runtime.kind === "desktop" && <WindowChrome />}
       <div className="card onboarding-disclaimer">
-        <LogoMark size={72} tile label="cc-router" className="onboarding-disclaimer-mark" />
+        <LogoMark size={72} plainSize={56} tile label="cc-router" className="onboarding-disclaimer-mark" />
         <h1 className="onboarding-disclaimer-title">
           <TriangleAlert size={18} />
           {t("onboarding.disclaimer.title")}

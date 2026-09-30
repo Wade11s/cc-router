@@ -1,6 +1,12 @@
 @import 'tailwindcss';
 
 @custom-variant dark (&:is(.dark *));
+/* 按画风分流的工具类 (ui/* 的 shadcn 组件用): plain:rounded-md / sketch:rounded-(--r-sketch)。
+ * win2k 继承 plain (data-art="plain win2k"), plain: 的类照样生效, win2k: 排在后面覆盖差异。
+ * 用 :where() 不加权重, 与不带前缀的工具类同级, 画风专属的写法互不相撞。见 src/themes/index.ts */
+@custom-variant plain (&:where([data-art~="plain"] *));
+@custom-variant sketch (&:where([data-art~="sketch"] *));
+@custom-variant win2k (&:where([data-art~="win2k"] *));
 
 @utility container {
   margin-inline: auto;
@@ -423,6 +429,7 @@ html[data-platform="web"] { --titlebar-inset: 0px; }
 /* Windows / Linux 自绘窗口三键 (macOS 不渲染)。按 Windows 11 标题栏惯例:
  * 每键 46px 宽、吃满拖窗带高度、无圆角; 关闭键 hover 用 Windows 的固定红 (#c42b1c),
  * 不走主题色 —— 用户肌肉记忆里它就是红的。 */
+.window-title { display: none; }
 .win-controls { display: flex; height: 100%; }
 .win-controls button {
   width: 46px;
@@ -2984,8 +2991,31 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 .rn-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 22px 16px 26px; border-top: 1.5px dashed var(--line-2); }
 .rn-hint { font-family: var(--font-hand); font-size: 18px; line-height: 1.1; color: var(--ink-3); transform: rotate(-1deg); }
 
-/* 侧栏底部: 「更新内容」入口 + 网页版的退出登录, 由容器统一贴底 */
+/* 侧栏底部: 「更新内容」入口 + 网页版的退出登录 + 明暗 / 主题两枚图标按钮, 由容器统一贴底 */
 .nav-footer { margin-top: auto; display: flex; flex-direction: column; gap: 3px; }
+/* 导航项 / 底部入口的分组容器: 默认不参与布局, 只有 Win2000 画风把它们画成凹陷列表框 (win2k.css) */
+.nav-list, .nav-extra { display: contents; }
+.nav-toggles { display: flex; align-items: center; gap: 4px; padding: 6px 4px 0; }
+/* 只有图案的按钮: 平时无框, 悬停时和导航项一样落成一张纸条 */
+.nav-toggle {
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  padding: 0;
+  border: 1.8px solid transparent;
+  border-radius: var(--r-sketch);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.nav-toggle:nth-child(even) { border-radius: var(--r-sketch-alt); }
+.nav-toggle:hover { background: var(--surface); border-color: var(--line-2); color: var(--ink); }
+.nav-toggle > svg { transition: transform 0.15s ease; }
+.nav-toggle:hover > svg { transform: rotate(-6deg); }
+.nav-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .nav-toggle:hover > svg { transform: none; }
+}
 .foot-rule { display: block; width: 100%; height: 10px; margin: 0 0 6px; flex-shrink: 0; }
 .foot-rule path { fill: none; stroke: var(--line-2); stroke-width: 1.6; stroke-linecap: round; }
 .nav-ver { margin-left: auto; font-family: var(--font-hand); font-size: 17px; font-weight: 700; line-height: 1; color: var(--ink-4); transform: rotate(-3deg); }
