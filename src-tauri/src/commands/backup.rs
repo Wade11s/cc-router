@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use tokio::sync::RwLock;
 use zeroize::Zeroizing;
 
@@ -131,14 +131,28 @@ pub async fn preview_config_import(state: State<'_, AppState>, text: String) -> 
     Ok(import::preview(&file, &local))
 }
 
+/// The whole import runs in a spawned task: on the web / TUI channel the caller's future is dropped
+/// when the HTTP client disconnects, and cancelling between the DB commit and the in-memory refresh
+/// would leave the two out of sync. The busy guard moves into the task so it covers the entire run.
 #[tauri::command]
 pub async fn apply_config_import(
     state: State<'_, AppState>,
     text: String,
     options: ImportOptions,
 ) -> AppResult<ImportReport> {
-    let _busy = BusyGuard::acquire()
+    let busy = BusyGuard::acquire()
         .ok_or_else(|| AppError::BadRequest("已有一个导入正在进行".into()))?;
+    let app = state.app_handle.clone();
+    tokio::spawn(async move {
+        let _busy = busy;
+        let state = app.state::<AppState>();
+        run_import(&state, text, options).await
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("导入任务异常退出: {e}")))?
+}
+
+async fn run_import(state: &AppState, text: String, options: ImportOptions) -> AppResult<ImportReport> {
     let file = parse_file(&text)?;
 
     let secrets = match (&file.secrets, options.skip_secrets) {
@@ -156,7 +170,7 @@ pub async fn apply_config_import(
         _ => None,
     };
 
-    let local = local_state(&state).await;
+    let local = local_state(state).await;
     let plan = import::plan(&file, secrets.as_ref(), &local, Utc::now());
     import::apply(&state.db, &plan).await?;
 
@@ -185,7 +199,7 @@ pub async fn apply_config_import(
     if options.import_token {
         match secrets.as_ref().and_then(|s| s.auth_token.clone()) {
             Some(token) if is_valid_token(&token) => {
-                match crate::commands::settings::replace_auth_token(&state, token).await {
+                match crate::commands::settings::replace_auth_token(state, token).await {
                     Ok(_) => report.token_imported = true,
                     Err(e) => report.token_error = Some(e.to_string()),
                 }
