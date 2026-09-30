@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Toggle } from "@/components/Toggle";
 import { Spinner } from "@/components/Spinner";
 import {
@@ -41,6 +41,10 @@ export function ExportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
     setGenerated(null);
     setCopyStatus(null);
   }
+
+  useEffect(() => {
+    if (!open) reset();
+  }, [open]);
 
   function fillGenerated() {
     const p = generateStrongPassword();
@@ -88,7 +92,6 @@ export function ExportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
       open={open}
       onOpenChange={(v) => {
         if (busy) return;
-        if (!v) reset();
         onOpenChange(v);
       }}
     >

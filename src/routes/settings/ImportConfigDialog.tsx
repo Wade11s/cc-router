@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Toggle } from "@/components/Toggle";
 import { Spinner } from "@/components/Spinner";
@@ -35,6 +35,10 @@ export function ImportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
+
+  useEffect(() => {
+    if (!open) reset();
+  }, [open]);
 
   function reset() {
     setText(null);
@@ -113,7 +117,6 @@ export function ImportConfigDialog({ open, onOpenChange }: { open: boolean; onOp
       open={open}
       onOpenChange={(v) => {
         if (busy) return;
-        if (!v) reset();
         onOpenChange(v);
       }}
     >
