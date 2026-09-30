@@ -228,10 +228,10 @@ export function ImportConfigDialog({
               <li>{t("backup.import.report.skippedExisting", { count: report.skipped_existing })}</li>
             )}
             {report.skipped_oauth.length > 0 && (
-              <li>{t("backup.import.report.skippedOauth", { names: report.skipped_oauth.join("、") })}</li>
+              <li>{t("backup.import.report.skippedOauth", { names: report.skipped_oauth.join(t("backup.import.nameSeparator")) })}</li>
             )}
             {report.disabled_missing_key.length > 0 && (
-              <li>{t("backup.import.report.missingKey", { names: report.disabled_missing_key.join("、") })}</li>
+              <li>{t("backup.import.report.missingKey", { names: report.disabled_missing_key.join(t("backup.import.nameSeparator")) })}</li>
             )}
             {report.token_imported && <li>{t("backup.import.report.tokenImported")}</li>}
             {report.token_error && (

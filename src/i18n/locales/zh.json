@@ -227,6 +227,7 @@
   "backup.import.report.missingKey": "以下订阅已停用，补填 API Key 后再启用：{names}",
   "backup.import.report.tokenImported": "已导入代理访问令牌",
   "backup.import.report.tokenFailed": "访问令牌未导入：{reason}",
+  "backup.import.nameSeparator": "、",
   "settings.section.danger": "危险区域 · 恢复出厂设置",
   "settings.danger.desc": "清空所有订阅、API Key、虚拟模型绑定、请求日志、设置文件。app 会自动重启并进入初始欢迎页。此操作不可撤销。",
   "settings.danger.button": "恢复出厂设置",
