@@ -149,7 +149,7 @@
   "settings.language.system": "システムに従う",
   "settings.section.appearance": "外観",
   "settings.appearance.theme.label": "テーマ",
-  "settings.appearance.theme.desc": "クラシックは標準のデザイン、手描きは公式サイトと同じスケッチブック風です",
+  "settings.appearance.theme.desc": "手描きは公式サイトと同じスケッチブック風（標準）、クラシックは以前のシンプルなデザインです",
   "settings.appearance.mode.label": "カラーモード",
   "theme.name.classic": "クラシック",
   "theme.name.sketch": "手描き",

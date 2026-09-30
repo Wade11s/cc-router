@@ -26,7 +26,7 @@ export const THEMES: readonly ThemeDef[] = [
   { id: "sketch", art: "sketch", labelKey: "theme.name.sketch" },
 ];
 
-export const DEFAULT_THEME_ID: ThemeId = "classic";
+export const DEFAULT_THEME_ID: ThemeId = "sketch";
 
 /** localStorage key; 与 index.html 内联脚本保持一致 */
 export const THEME_ID_KEY = "cc-router-ui-theme";

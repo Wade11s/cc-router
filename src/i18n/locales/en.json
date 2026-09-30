@@ -149,7 +149,7 @@
   "settings.language.system": "Follow system",
   "settings.section.appearance": "Appearance",
   "settings.appearance.theme.label": "Theme",
-  "settings.appearance.theme.desc": "Classic is the default look; Sketch is the hand-drawn notebook style of the website",
+  "settings.appearance.theme.desc": "Sketch is the hand-drawn notebook style of the website (default); Classic is the plain look from earlier versions",
   "settings.appearance.mode.label": "Color mode",
   "theme.name.classic": "Classic",
   "theme.name.sketch": "Sketch",
