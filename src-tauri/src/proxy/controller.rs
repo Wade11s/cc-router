@@ -24,9 +24,6 @@ use crate::proxy::listeners::{bind_all, BindOpts, Bound, BoundPorts, ListenSpec,
 /// HTTPS 路的排空上限, 与 http_client 的 600s 总超时对齐. HTTP 路 axum 不支持上限,
 /// 但在途请求同样受那个超时约束, 最终一定结束.
 const HTTPS_DRAIN: Duration = Duration::from_secs(600);
-/// axum-server 的关停通知可能丢失 (见 `launch` 里的注释), 在这个窗口内反复补发.
-const RENOTIFY_WINDOW: Duration = Duration::from_secs(2);
-const RENOTIFY_EVERY: Duration = Duration::from_millis(50);
 
 pub trait ProxyHooks: Clone + Send + Sync + 'static {
     /// 按当前设置算出的目标配置.
@@ -123,7 +120,19 @@ impl ProxyController {
     }
 
     /// 按当前设置 (重新) 启动代理. 首次启动也走这里 (此时没有旧实例可回滚).
+    ///
+    /// 整个切换跑在独立任务里: 调用方 (网页界面 / TUI 的请求) 中途断开会 drop 这个 future,
+    /// 若切换跑在调用方的 future 里, 在「旧实例已关、新实例未起」时被取消, 快照会停在
+    /// 「运行中」而实际没有任何 listener.
     pub async fn restart<H: ProxyHooks>(self: &Arc<Self>, hooks: H) -> RestartOutcome {
+        let ctl = Arc::clone(self);
+        match tokio::spawn(async move { ctl.restart_inner(hooks).await }).await {
+            Ok(outcome) => outcome,
+            Err(e) => RestartOutcome::Stopped(format!("重启任务异常结束: {e}")),
+        }
+    }
+
+    async fn restart_inner<H: ProxyHooks>(self: Arc<Self>, hooks: H) -> RestartOutcome {
         let mut running = self.running.lock().await;
         let desired = hooks.desired_config().await;
 
@@ -277,21 +286,11 @@ impl ProxyController {
                     r = &mut serve => return r.map_err(|e| format!("HTTPS listener: {e}")),
                     _ = rx => {}
                 }
-                // axum-server 的关停通知是 Notify::notify_waiters, 不存 permit: 发出时 accept
-                // 循环若恰好没在等 (任务还没被首次 poll / 正处于两次 accept 之间), 通知就丢了,
-                // listener 永远不释放. 在窗口内反复补发, 补发对已开始关停的服务是幂等的.
-                let deadline = tokio::time::Instant::now() + RENOTIFY_WINDOW;
-                let result = loop {
-                    handle.graceful_shutdown(Some(HTTPS_DRAIN));
-                    if tokio::time::Instant::now() >= deadline {
-                        break (&mut serve).await;
-                    }
-                    tokio::select! {
-                        r = &mut serve => break r,
-                        _ = tokio::time::sleep(RENOTIFY_EVERY) => {}
-                    }
-                };
-                result.map_err(|e| format!("HTTPS listener: {e}"))
+                // 关停信号是粘性的 (NotifyOnce), 即便 serve 还没被首次 poll 也不会丢.
+                handle.graceful_shutdown(Some(HTTPS_DRAIN));
+                (&mut serve)
+                    .await
+                    .map_err(|e| format!("HTTPS listener: {e}"))
             };
             self.watch(gen, "https", fut, hooks.clone());
         }
@@ -588,9 +587,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_restart_still_completes() {
+        let p = free_port();
+        let hooks = TestHooks::new(http(p));
+        let c = ctl(BindOpts::DEFAULT);
+        c.restart(hooks.clone()).await;
+        let mut next = http(p);
+        next.max_request_body_mb = 64;
+        hooks.set(next);
+        // 同端口重绑会先撞上还没释放的旧 listener, 停在等待释放的 sleep 里;
+        // 此时调用方的 future 被丢弃 (模拟网页界面 / TUI 请求中途断开).
+        let _ = tokio::time::timeout(Duration::ZERO, c.restart(hooks.clone())).await;
+        let mut applied = false;
+        for _ in 0..100 {
+            if c.snapshot().applied == Some(next) {
+                applied = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(applied, "调用方取消后切换应仍在后台完成, 快照: {:?}", c.snapshot());
+        assert_eq!(get_text(p, "/ping").await.unwrap(), "pong");
+    }
+
+    #[tokio::test]
     async fn https_to_http_on_same_port_right_after_start() {
-        // 单线程运行时下, HTTPS 服务任务在这里还没被首次 poll —— axum-server 的关停通知
-        // 若只发一次必然丢失, 端口不释放, 新的 HTTP 就会被顺延.
+        // 守护: 刚启动的 HTTPS 实例 (服务任务可能还没被 poll 过) 也要能释放端口,
+        // 否则同端口改回 HTTP 时新 listener 会被顺延.
         let p = free_port();
         let hooks = TestHooks::new(ProxyConfig {
             proxy_mode: ProxyMode::Https,
