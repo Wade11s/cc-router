@@ -41,7 +41,7 @@ pub struct ExportSummary {
     pub with_secrets: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Default, Deserialize)]
 pub struct ImportOptions {
     #[serde(default)]
     pub password: Option<String>,
@@ -49,6 +49,17 @@ pub struct ImportOptions {
     pub skip_secrets: bool,
     #[serde(default)]
     pub import_token: bool,
+}
+
+// Hand-written so the export password can never end up in a log line via `{:?}`.
+impl std::fmt::Debug for ImportOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImportOptions")
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("skip_secrets", &self.skip_secrets)
+            .field("import_token", &self.import_token)
+            .finish()
+    }
 }
 
 fn is_valid_token(t: &str) -> bool {
@@ -200,7 +211,11 @@ async fn run_import(state: &AppState, text: String, options: ImportOptions) -> A
         match secrets.as_ref().and_then(|s| s.auth_token.clone()) {
             Some(token) if is_valid_token(&token) => {
                 match crate::commands::settings::replace_auth_token(state, token).await {
-                    Ok(_) => report.token_imported = true,
+                    Ok(_) => {
+                        report.token_imported = true;
+                        // Let other open clients (web UI / TUI) refetch settings.
+                        let _ = state.app_handle.emit("settings_changed", ());
+                    }
                     Err(e) => report.token_error = Some(e.to_string()),
                 }
             }
@@ -227,6 +242,19 @@ mod tests {
         assert!(!is_valid_token("has space"));
         assert!(!is_valid_token("换行\n"));
         assert!(!is_valid_token(&"a".repeat(257)));
+    }
+
+    #[test]
+    fn import_options_debug_redacts_password() {
+        let opts = ImportOptions {
+            password: Some("hunter2-secret".into()),
+            skip_secrets: false,
+            import_token: true,
+        };
+        let shown = format!("{:?}", opts);
+        assert!(!shown.contains("hunter2-secret"), "{shown}");
+        assert!(shown.contains("<redacted>") && shown.contains("import_token: true"), "{shown}");
+        assert!(format!("{:?}", ImportOptions::default()).contains("password: None"));
     }
 
     #[test]

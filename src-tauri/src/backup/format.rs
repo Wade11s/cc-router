@@ -165,6 +165,11 @@ pub fn is_sensitive_header(name: &str) -> bool {
 }
 
 /// Every URL this subscription's credentials are sent to, sorted and deduplicated.
+///
+/// Wire-format note: this output is bound into every encrypted export (as the AAD of each
+/// secret). Any change to how the list is built (normalising a trailing `/`, adding joined
+/// paths, ...) makes existing encrypted files fail with "file was modified", so such a
+/// change requires bumping `VERSION`. `key_destinations_is_frozen_for_v1` pins the output.
 pub fn key_destinations(
     base_url: &str,
     md: &ModelDiscovery,
@@ -391,6 +396,30 @@ mod tests {
     }
 
     #[test]
+    fn key_destinations_is_frozen_for_v1() {
+        let md = ModelDiscovery {
+            url: Some("https://a.example/v1/models".into()),
+            ..ModelDiscovery::default()
+        };
+        let bd = BalanceDiscovery {
+            enabled: true,
+            url: "https://a.example/user/balance".into(),
+            method: BalanceHttpMethod::Get,
+            parser: BalanceParser::Deepseek,
+            cache_ttl_minutes: 10,
+        };
+        assert_eq!(
+            key_destinations("https://a.example/anthropic", &md, Some(&bd)),
+            vec![
+                "https://a.example/anthropic".to_string(),
+                "https://a.example/user/balance".to_string(),
+                "https://a.example/v1/models".to_string(),
+            ],
+            "changing this breaks every encrypted v1 export, bump VERSION instead"
+        );
+    }
+
+    #[test]
     fn export_splits_sensitive_headers_out() {
         let mut row = SubscriptionRow::test_fixture("zhipu", "cn");
         row.api_key = "sk-real".into();
@@ -431,6 +460,18 @@ mod tests {
         assert!(exp.is_oauth());
         assert!(!exp.has_api_key);
         assert!(secrets.api_key.is_none());
+    }
+
+    #[test]
+    fn oauth_row_with_leftover_api_key_is_not_reported_as_having_one() {
+        let mut row = SubscriptionRow::test_fixture("openai_codex", "default");
+        row.auth_type = AuthType::ChatgptOauth;
+        row.api_key = "sk-leftover-must-not-export".into();
+        let (exp, secrets) = subscription_to_export(&row);
+        assert!(!exp.has_api_key);
+        assert!(secrets.api_key.is_none());
+        let json = serde_json::to_string(&exp).unwrap();
+        assert!(!json.contains("sk-leftover-must-not-export"), "{json}");
     }
 
     #[test]
