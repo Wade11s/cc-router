@@ -3,6 +3,7 @@
 //! 这里的 `run()` 是 Tauri 生命周期起点；桌面壳和代理服务、SQLite、Provider 加载
 //! 全部在 `setup()` 中完成初始化。模块粒度见 plan §2。
 
+pub mod backup;
 pub mod commands;
 pub mod db;
 pub mod error;
