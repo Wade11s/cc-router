@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useCallback,
+  useEffect,
   useMemo,
   type ReactNode,
 } from "react";
@@ -18,6 +19,12 @@ const dictionaries: Record<Locale, Record<string, string>> = {
   en: en as Record<string, string>,
   ja: ja as Record<string, string>,
 };
+
+/**
+ * 写到 `<html lang>` 的 BCP 47 标签. 界面语言与它不一致时, 日文里的汉字会按中文字形渲染
+ * (字体按 lang 选字形), 浏览器还会提示「翻译此页」, 屏幕阅读器也会读错语言.
+ */
+const HTML_LANG: Record<Locale, string> = { zh: "zh-CN", en: "en", ja: "ja" };
 
 /** Read system locale via webview navigator. zh* → zh, ja* → ja, otherwise → en. */
 export function detectSystemLocale(): Locale {
@@ -62,6 +69,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     settings?.preferred_language as LanguagePref | undefined,
   );
   const dict = dictionaries[locale];
+
+  useEffect(() => {
+    document.documentElement.lang = HTML_LANG[locale];
+  }, [locale]);
 
   const t = useCallback<TFunction>(
     (key, params) => {
