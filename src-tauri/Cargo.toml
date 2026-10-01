@@ -7,9 +7,12 @@ name = "cc-router"
 version = "6.1.0"
 description = "多订阅聚合代理 · 让 Claude Code 无缝调用多家厂商订阅"
 authors = ["cc-router"]
+license = "MIT"
+# 不发布到 crates.io; 同时让 cargo-deny 的 [licenses.private] 认出这是自家 crate
+publish = false
 edition = "2021"
-# 依赖树的实际下限: time 0.3.47 / time-core 0.1.8 声明 MSRV 1.88, 低于此版本 cargo 直接拒绝构建.
-rust-version = "1.88.0"
+# 依赖树的实际下限: tauri 2.12 及其官方插件声明 MSRV 1.90, 低于此版本 cargo 直接拒绝构建.
+rust-version = "1.90.0"
 
 [lib]
 name = "cc_router_lib"
@@ -34,7 +37,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-autostart = "2"
 # Rust 侧用 tauri_plugin_os::locale() 做托盘菜单的系统语言探测 (tray::TrayLocale::from_pref);
 # 该函数是 sys_locale 的纯封装, 不依赖 plugin 注册, 但 plugin 保留着以便前端随时取 OS 信息.
-# 注: 该 plugin 的 MSRV (1.77.2) 曾是本 crate rust-version 的来源, 现已被 time 的 1.88 超过.
+# 注: 该 plugin 的 MSRV 曾是本 crate rust-version 的来源 (1.77.2), 2.4 起随 tauri 一起升到 1.90.
 tauri-plugin-os = "2"
 tauri-plugin-single-instance = "2"
 
