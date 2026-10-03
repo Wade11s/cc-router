@@ -44,6 +44,9 @@ interface Props {
   onExport: (kind: "png" | "pdf" | "html") => void;
   exportDisabled: boolean;
   exporting: boolean;
+  /** 导出时是否播放出票动画 (存 settings.receipt_print_animation) */
+  printAnimation: boolean;
+  onPrintAnimationChange: (v: boolean) => void;
 }
 
 export function ReceiptControls({
@@ -60,6 +63,8 @@ export function ReceiptControls({
   onExport,
   exportDisabled,
   exporting,
+  printAnimation,
+  onPrintAnimationChange,
 }: Props) {
   const { t } = useT();
   const subs = useSubscriptions();
@@ -126,6 +131,14 @@ export function ReceiptControls({
               {t("receipts.controls.export.exporting")}
             </span>
           )}
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <CheckboxRow
+            checked={printAnimation}
+            label={t("receipts.controls.export.printAnimation")}
+            desc={t("receipts.controls.export.printAnimationDesc")}
+            onChange={onPrintAnimationChange}
+          />
         </div>
       </Section>
 

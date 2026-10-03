@@ -536,6 +536,8 @@ export interface Settings {
   web_ui_auth_enabled: boolean;
   /** 终端界面 (cc-router-tui) 是否允许接入. 默认关, 与 web_ui_enabled 互相独立 */
   tui_enabled: boolean;
+  /** 导出用量小票时是否播放「小票机吐纸」动画, 默认 true */
+  receipt_print_animation: boolean;
   /** 上次关闭「更新内容」弹窗时的 app 版本; null = 从没有此功能的老版本升上来。只读, 由 mark_release_notes_seen 写 */
   last_seen_release_notes: string | null;
 }
@@ -562,6 +564,7 @@ export interface SettingsPatch {
   web_ui_enabled?: boolean;
   web_ui_auth_enabled?: boolean;
   tui_enabled?: boolean;
+  receipt_print_animation?: boolean;
   // 注意: auth_token 不在 patch 里,必须通过 generateNewToken() 改
 }
 

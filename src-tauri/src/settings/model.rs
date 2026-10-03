@@ -105,6 +105,9 @@ pub struct Settings {
     /// 中间件每请求读取, 开关不需要重启. 与 web_ui_enabled 互相独立.
     #[serde(default)]
     pub tui_enabled: bool,
+    /// 导出用量小票时是否播放「小票机吐纸」动画. 默认开. 纯前端偏好, 后端不读.
+    #[serde(default = "default_receipt_print_animation")]
+    pub receipt_print_animation: bool,
     /// 上次关闭「更新内容」弹窗时的 app 版本 (见 release_notes)。None = 从没有此功能的老版本升级上来,
     /// 或 settings.json 解析失败被重置; 全新安装由 settings::load_or_default 初始化为当前版本, 新用户不会被弹。
     /// 刻意不进 SettingsPatch: 只由 mark_release_notes_seen 写入当前版本。
@@ -147,6 +150,9 @@ fn default_max_request_body_mb() -> u32 {
 fn default_web_ui_auth_enabled() -> bool {
     true
 }
+fn default_receipt_print_animation() -> bool {
+    true
+}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -171,6 +177,7 @@ impl Default for Settings {
             web_ui_enabled: false,
             web_ui_auth_enabled: default_web_ui_auth_enabled(),
             tui_enabled: false,
+            receipt_print_animation: default_receipt_print_animation(),
             last_seen_release_notes: None,
         }
     }
@@ -197,6 +204,7 @@ pub struct SettingsPatch {
     pub web_ui_enabled: Option<bool>,
     pub web_ui_auth_enabled: Option<bool>,
     pub tui_enabled: Option<bool>,
+    pub receipt_print_animation: Option<bool>,
 }
 
 impl Settings {
@@ -257,6 +265,9 @@ impl Settings {
         }
         if let Some(p) = patch.tui_enabled {
             self.tui_enabled = p;
+        }
+        if let Some(p) = patch.receipt_print_animation {
+            self.receipt_print_animation = p;
         }
     }
 }
@@ -529,5 +540,25 @@ mod tests {
         // 不带该字段的 patch 不应把它改回去
         s.apply_patch(SettingsPatch::default());
         assert!(s.tui_enabled);
+    }
+
+    #[test]
+    fn legacy_settings_json_without_receipt_print_animation_loads_as_true() {
+        // 老版本 settings.json 没有这个字段, 升级后动画默认开
+        let s: Settings = serde_json::from_str(r#"{"proxy_port": 23456}"#).unwrap();
+        assert!(s.receipt_print_animation);
+        assert!(Settings::default().receipt_print_animation);
+    }
+
+    #[test]
+    fn apply_patch_sets_receipt_print_animation() {
+        let mut s = Settings::default();
+        s.apply_patch(SettingsPatch {
+            receipt_print_animation: Some(false),
+            ..SettingsPatch::default()
+        });
+        assert!(!s.receipt_print_animation);
+        s.apply_patch(SettingsPatch::default());
+        assert!(!s.receipt_print_animation);
     }
 }

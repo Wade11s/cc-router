@@ -4,7 +4,12 @@ import { runtime } from "@/runtime";
 import { useT } from "@/i18n";
 import { ReceiptSlip, type ReceiptDisplayOptions } from "@/components/receipts/ReceiptSlip";
 import { ReceiptControls, RECEIPT_RANGES } from "@/components/receipts/ReceiptControls";
+import {
+  ReceiptPrintOverlay,
+  type PrintExportStatus,
+} from "@/components/receipts/ReceiptPrintOverlay";
 import { useReceipt } from "@/hooks/useReceipts";
+import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { exportPng, exportPdf, exportHtml } from "@/utils/exportReceipt";
 import { ZERO_TOTALS, addTotals } from "@/lib/receipt-aggregations";
 import { customProviderLabel } from "@/lib/providerLabels";
@@ -88,6 +93,18 @@ export function ReceiptsPage() {
   const [exporting, setExporting] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const flashTimerRef = useRef<number | null>(null);
+  // 出票动画: 导出时叠在页面上; 关掉动画不影响导出, 届时改回右上角提示
+  const [printJob, setPrintJob] = useState<{
+    kind: "png" | "pdf" | "html";
+    status: PrintExportStatus;
+  } | null>(null);
+  const printOpenRef = useRef(false);
+  const settings = useSettings();
+  const updateSettings = useUpdateSettings();
+  // 保存在途时先显示用户刚点的值, 不等设置重新拉取
+  const printAnimation = updateSettings.isPending
+    ? (updateSettings.variables?.receipt_print_animation ?? true)
+    : (settings.data?.receipt_print_animation ?? true);
 
   const slipRef = useRef<HTMLDivElement>(null);
   const receipt = useReceipt(range);
@@ -113,6 +130,11 @@ export function ReceiptsPage() {
     }
   };
 
+  const closePrint = () => {
+    printOpenRef.current = false;
+    setPrintJob(null);
+  };
+
   const filteredDto = useMemo(() => {
     if (!receipt.data) return null;
     return localizeCustomProviders(
@@ -128,6 +150,10 @@ export function ReceiptsPage() {
     if (!el || !filteredDto) return;
     const { slip_no: slip, range: r } = filteredDto;
     setExporting(true);
+    if (printAnimation) {
+      printOpenRef.current = true;
+      setPrintJob({ kind, status: "pending" });
+    }
     try {
       if (kind === "png") {
         await exportPng(el, slip, r);
@@ -136,9 +162,14 @@ export function ReceiptsPage() {
       } else {
         await exportHtml(el, slip, r, options.theme);
       }
-      showFlash(t("receipts.savedToDownloads"));
+      if (printOpenRef.current) {
+        setPrintJob((job) => job && { ...job, status: "ok" });
+      } else {
+        showFlash(t("receipts.savedToDownloads"));
+      }
     } catch (err) {
       console.error("export failed", err);
+      closePrint();
       alert(t("receipts.exportFailed"));
     } finally {
       setExporting(false);
@@ -200,8 +231,21 @@ export function ReceiptsPage() {
           onExport={runExport}
           exportDisabled={exportDisabled}
           exporting={exporting}
+          printAnimation={printAnimation}
+          onPrintAnimationChange={(v) => updateSettings.mutate({ receipt_print_animation: v })}
         />
       </div>
+
+      {filteredDto && (
+        <ReceiptPrintOverlay
+          open={printJob !== null}
+          dto={filteredDto}
+          options={options}
+          kind={printJob?.kind ?? "png"}
+          exportStatus={printJob?.status ?? "pending"}
+          onClose={closePrint}
+        />
+      )}
 
       {flash && (
         <div
