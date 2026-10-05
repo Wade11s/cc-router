@@ -1001,7 +1001,6 @@
   "liveRouting.clientAccess.title": "Client access",
   "liveRouting.clientAccess.subtitle": "Passive traffic check: clients that really sent a request within the retention window",
   "liveRouting.clientAccess.col.client": "Client",
-  "liveRouting.clientAccess.col.status": "Status",
   "liveRouting.clientAccess.col.lastSeen": "Last request",
   "liveRouting.clientAccess.col.count": "Requests",
   "liveRouting.clientAccess.connected": "Connected",

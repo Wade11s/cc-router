@@ -8,7 +8,7 @@ import { useProviders } from "@/hooks/useProviders";
 import { useAnyRouteFlashState } from "@/hooks/useRouteFlash";
 import { useClientActivity } from "@/hooks/useClientActivity";
 import { fmtCooldownLeft } from "@/lib/format";
-import { summarizeActivity, type ClientGroupKey } from "@/lib/clientActivity";
+import { summarizeActivity, CLIENT_GROUP_LABEL, type ClientGroupKey } from "@/lib/clientActivity";
 import { isCustomProviderId } from "@/lib/providerLabels";
 import { VM_ORDER } from "@/lib/virtualModels";
 import { useT, type TFunction } from "@/i18n";
@@ -80,10 +80,10 @@ const upstreamArc = (hubCy: number, cy: number) =>
 const arrowHead = (x: number, y: number) => `M${x - 10} ${y - 5} L${x} ${y} L${x - 10} ${y + 5}`;
 
 /**
- * 本地 AI Agent 工具便签。名字与命令写死 —— 这里表达的是「谁可以调进来」,
- * 便签亮/灰由「客户端接入」的被动流量检测决定 (useClientActivity): 保留期内
- * 发过请求的便签保持原色, 从未出现的整张灰掉。检测未出结果前 (加载/失败)
- * 一律不灰, 免得每次进页面都闪一下。
+ * 本地 AI Agent 工具便签。名字取自 CLIENT_GROUP_LABEL (与「客户端接入」卡的分组名同源),
+ * 命令写死 —— 这里表达的是「谁可以调进来」, 便签亮/灰由「客户端接入」的被动流量检测
+ * 决定 (useClientActivity): 保留期内发过请求的便签保持原色, 从未出现的整张灰掉。
+ * 检测未出结果前 (加载/失败) 一律不灰, 免得每次进页面都闪一下。
  * 便签的颜色 / 角度 / 胶带位置逐张错开, 同一个值会显得像盖章。
  */
 const CLIENTS: {
@@ -98,10 +98,10 @@ const CLIENTS: {
   tapeLeft: number;
   tapeRotate: number;
 }[] = [
-  { group: "claude", name: "Claude Code", cmd: "$ claude", icon: "terminal", fill: "var(--fill-cactus)", rotate: -2.2, tapeLeft: 60, tapeRotate: 4 },
-  { group: "codex", name: "Codex", cmd: "$ codex", icon: "braces", fill: "var(--fill-butter)", rotate: 1.6, tapeLeft: 24, tapeRotate: -5 },
-  { group: "opencode", name: "OpenCode", cmd: "$ opencode", icon: "laptop", fill: "var(--fill-sky)", rotate: -1, tapeLeft: 94, tapeRotate: 3 },
-  { group: "others", name: "Others", cmd: null, icon: "bubble", fill: "var(--fill-coral)", rotate: 2.2, tapeLeft: 56, tapeRotate: -3 },
+  { group: "claude", name: CLIENT_GROUP_LABEL.claude, cmd: "$ claude", icon: "terminal", fill: "var(--fill-cactus)", rotate: -2.2, tapeLeft: 60, tapeRotate: 4 },
+  { group: "codex", name: CLIENT_GROUP_LABEL.codex, cmd: "$ codex", icon: "braces", fill: "var(--fill-butter)", rotate: 1.6, tapeLeft: 24, tapeRotate: -5 },
+  { group: "opencode", name: CLIENT_GROUP_LABEL.opencode, cmd: "$ opencode", icon: "laptop", fill: "var(--fill-sky)", rotate: -1, tapeLeft: 94, tapeRotate: 3 },
+  { group: "others", name: CLIENT_GROUP_LABEL.others, cmd: null, icon: "bubble", fill: "var(--fill-coral)", rotate: 2.2, tapeLeft: 56, tapeRotate: -3 },
 ];
 
 /**

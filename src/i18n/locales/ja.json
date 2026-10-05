@@ -1001,7 +1001,6 @@
   "liveRouting.clientAccess.title": "クライアント接続",
   "liveRouting.clientAccess.subtitle": "パッシブ検知: 保持期間内に実際にリクエストを送ったクライアント",
   "liveRouting.clientAccess.col.client": "クライアント",
-  "liveRouting.clientAccess.col.status": "接続状態",
   "liveRouting.clientAccess.col.lastSeen": "最終リクエスト",
   "liveRouting.clientAccess.col.count": "リクエスト数",
   "liveRouting.clientAccess.connected": "接続済み",

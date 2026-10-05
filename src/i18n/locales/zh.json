@@ -1001,7 +1001,6 @@
   "liveRouting.clientAccess.title": "客户端接入",
   "liveRouting.clientAccess.subtitle": "被动流量检测: 保留期内真的发过请求的客户端",
   "liveRouting.clientAccess.col.client": "客户端",
-  "liveRouting.clientAccess.col.status": "接入状态",
   "liveRouting.clientAccess.col.lastSeen": "最近请求",
   "liveRouting.clientAccess.col.count": "请求数",
   "liveRouting.clientAccess.connected": "已接入",

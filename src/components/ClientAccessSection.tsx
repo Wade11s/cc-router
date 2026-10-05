@@ -3,14 +3,26 @@
  *
  * 判定来自请求日志按 client_tool 的聚合 (get_client_activity) —— 零配置, 不需要
  * 客户端配合; 代价是只能看到「保留期内发过请求」, 看不到此刻是否在线。日志受
- * log_retention_days 清理, 保留期即天然检测窗口 (卡脚注说明)。上面的路由图便签
- * 与这里共用同一份数据 (useClientActivity), 亮/灰口径一致。
+ * log_retention_days 清理, 保留期即天然检测窗口 (卡脚注说明)。
+ *
+ * 表格按 CLIENT_GROUPS 分 4 组, 组名与路由图左侧 CLIENT 便签同源 (CLIENT_GROUP_LABEL)。
+ * 组行是可折叠的手风琴, 展示组级聚合 (任一成员接入即算接入 / 最近请求取组内最新 /
+ * 请求数求和); 展开后是逐客户端行。默认展开保留期内有过请求的组, 从未接入的组收起 ——
+ * 与便签灰显同一口径。上面的路由图便签与这里共用同一份数据 (useClientActivity)。
+ *
+ * 接入状态不占独立列: 「未接入」恒等于「— + 0」, 单开一列全是文字却零信息量。改为
+ * 名字前一枚状态点 (实心 = 接入), 状态文案退到 title / aria-label。
  */
+import { useState } from "react";
 import { ClientToolBadge } from "@/components/ClientToolBadge";
 import { useClientActivity } from "@/hooks/useClientActivity";
 import { useSettings } from "@/hooks/useSettings";
 import { fmtNum, fmtRelativeTime } from "@/lib/format";
-import { summarizeActivity } from "@/lib/clientActivity";
+import {
+  CLIENT_GROUP_LABEL,
+  summarizeActivity,
+  type ClientGroupKey,
+} from "@/lib/clientActivity";
 import { useT } from "@/i18n";
 
 /**
@@ -22,6 +34,8 @@ export function ClientAccessSection({ variant }: { variant: "sketch" | "classic"
   const activity = useClientActivity();
   const settings = useSettings();
   const summary = summarizeActivity(activity.data);
+  // 用户手动折叠/展开的覆盖; 没动过的组按「保留期内有没有请求」取默认 (活跃展开, 未接入收起)
+  const [toggled, setToggled] = useState<Partial<Record<ClientGroupKey, boolean>>>({});
 
   const sketch = variant === "sketch";
   const p = sketch ? "ca" : "lrc-ca";
@@ -48,28 +62,56 @@ export function ClientAccessSection({ variant }: { variant: "sketch" | "classic"
           <div className={`${p}-list`}>
             <div className={`${p}-row head`}>
               <span>{t("liveRouting.clientAccess.col.client")}</span>
-              <span>{t("liveRouting.clientAccess.col.status")}</span>
-              <span>{t("liveRouting.clientAccess.col.lastSeen")}</span>
+              <span className={`${p}-time`}>{t("liveRouting.clientAccess.col.lastSeen")}</span>
               <span className={`${p}-count-head`}>{t("liveRouting.clientAccess.col.count")}</span>
             </div>
-            {summary?.rows.map((r) => (
-              <div className={r.connected ? `${p}-row` : `${p}-row off`} key={r.toolId ?? "unknown"}>
-                <span className={`${p}-client`}>
-                  <ClientToolBadge toolId={r.toolId} />
-                </span>
-                <span className={r.connected ? `${p}-dot on` : `${p}-dot`}>
-                  {t(
-                    r.connected
-                      ? "liveRouting.clientAccess.connected"
-                      : "liveRouting.clientAccess.notConnected",
-                  )}
-                </span>
-                <span className={`${p}-time`}>
-                  {r.lastSeen === null ? "—" : fmtRelativeTime(r.lastSeen, t)}
-                </span>
-                <span className={`${p}-count`}>{fmtNum(r.count)}</span>
-              </div>
-            ))}
+            {summary?.table.map((g) => {
+              const open = toggled[g.key] ?? g.active;
+              return (
+                <div className={`${p}-group`} key={g.key}>
+                  <button
+                    type="button"
+                    className={g.active ? `${p}-row group` : `${p}-row group off`}
+                    aria-expanded={open}
+                    onClick={() => setToggled((s) => ({ ...s, [g.key]: !open }))}
+                  >
+                    <span className={`${p}-client`}>
+                      <svg
+                        className={open ? `${p}-chev open` : `${p}-chev`}
+                        viewBox="0 0 16 16"
+                        width="13"
+                        height="13"
+                        aria-hidden="true"
+                      >
+                        <path d="M5.6 3.2 C 7.6 5, 9.2 6.6, 10.6 8 C 9.2 9.4, 7.6 11, 5.4 12.8" />
+                      </svg>
+                      <StatusDot p={p} on={g.active} />
+                      <span className={`${p}-gname`}>{CLIENT_GROUP_LABEL[g.key]}</span>
+                    </span>
+                    <span className={`${p}-time`}>
+                      {g.lastSeen === null ? "—" : fmtRelativeTime(g.lastSeen, t)}
+                    </span>
+                    <span className={`${p}-count`}>{fmtNum(g.count)}</span>
+                  </button>
+                  {open &&
+                    g.rows.map((r) => (
+                      <div
+                        className={r.connected ? `${p}-row member` : `${p}-row member off`}
+                        key={r.toolId ?? "unknown"}
+                      >
+                        <span className={`${p}-client`}>
+                          <StatusDot p={p} on={r.connected} />
+                          <ClientToolBadge toolId={r.toolId} />
+                        </span>
+                        <span className={`${p}-time`}>
+                          {r.lastSeen === null ? "—" : fmtRelativeTime(r.lastSeen, t)}
+                        </span>
+                        <span className={`${p}-count`}>{fmtNum(r.count)}</span>
+                      </div>
+                    ))}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -84,4 +126,17 @@ export function ClientAccessSection({ variant }: { variant: "sketch" | "classic"
       </div>
     </section>
   );
+}
+
+/**
+ * 一枚状态点代替整列状态文字: 实心 = 保留期内接过流量, 空心环 = 没有。
+ * 信息本身由「最近请求 / 请求数」两列交叉印证 (未接入恒为 — 和 0), 这里只做一眼可辨的
+ * 视觉锚点; 原来的 "已接入 / 未接入" 文案退到 title 与 aria-label, 鼠标悬停和读屏都还在。
+ */
+function StatusDot({ p, on }: { p: string; on: boolean }) {
+  const { t } = useT();
+  const label = t(
+    on ? "liveRouting.clientAccess.connected" : "liveRouting.clientAccess.notConnected",
+  );
+  return <span className={on ? `${p}-dot on` : `${p}-dot`} role="img" aria-label={label} title={label} />;
 }

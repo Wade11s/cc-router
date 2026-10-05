@@ -7,7 +7,7 @@ import { useProviders } from "@/hooks/useProviders";
 import { useAnyRouteFlashState } from "@/hooks/useRouteFlash";
 import { useClientActivity } from "@/hooks/useClientActivity";
 import { fmtCooldownLeft } from "@/lib/format";
-import { summarizeActivity } from "@/lib/clientActivity";
+import { summarizeActivity, CLIENT_GROUP_LABEL } from "@/lib/clientActivity";
 import { isCustomProviderId } from "@/lib/providerLabels";
 import { VM_ORDER } from "@/lib/virtualModels";
 import { useT, type TFunction } from "@/i18n";
@@ -115,16 +115,17 @@ function upstreamArc(hubCy: number, cy: number, inner: boolean): string {
 }
 
 /**
- * 本地 AI Agent 工具的客户端方块。名字写死 —— 这里表达的是「谁可以调进来」;
- * 亮/灰由「客户端接入」的被动流量检测决定 (useClientActivity): 保留期内发过
- * 请求的原样, 从未出现的整块淡出。检测未出结果前 (加载/失败) 不灰。
- * 顺序与 lib/clientActivity.ts 的 NOTE_GROUPS 一一对应 (others 收拢剩下的)。
+ * 本地 AI Agent 工具的客户端方块。名字取自 CLIENT_GROUP_LABEL (与「客户端接入」卡的
+ * 分组名同源) —— 这里表达的是「谁可以调进来」; 亮/灰由「客户端接入」的被动流量检测
+ * 决定 (useClientActivity): 保留期内发过请求的原样, 从未出现的整块淡出。检测未出
+ * 结果前 (加载/失败) 不灰。
+ * 顺序与 lib/clientActivity.ts 的 CLIENT_GROUPS 一一对应 (others 收拢剩下的)。
  */
 const CLIENT_NAMES = [
-  { name: "Claude Code", group: "claude" },
-  { name: "Codex", group: "codex" },
-  { name: "OpenCode", group: "opencode" },
-  { name: "Others", group: "others" },
+  { name: CLIENT_GROUP_LABEL.claude, group: "claude" },
+  { name: CLIENT_GROUP_LABEL.codex, group: "codex" },
+  { name: CLIENT_GROUP_LABEL.opencode, group: "opencode" },
+  { name: CLIENT_GROUP_LABEL.others, group: "others" },
 ] as const;
 
 interface UpstreamNode {

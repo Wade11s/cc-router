@@ -2455,9 +2455,12 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 
 /* === 客户端接入 (被动流量检测, 与上方路由图便签同源数据) === */
 .ca-list { display: flex; flex-direction: column; }
+/* 三列 5:3:2 比例铺开: 客户端列独占 1fr 时, 名字 (≤160px) 和两个数值列之间会空出
+   几百像素的死区, 时间/请求数挤在右角; 按比例分配后三个锚点均匀占满整行。
+   数值列仍右对齐, minmax 下限护住最长时间串 ("59 minutes ago") 和表头文字 */
 .ca-row {
   display: grid;
-  grid-template-columns: 1.3fr 96px 1fr 80px;
+  grid-template-columns: minmax(0, 5fr) minmax(110px, 3fr) minmax(84px, 2fr);
   align-items: center;
   gap: 10px;
   padding: 7px 2px;
@@ -2473,27 +2476,43 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   color: var(--ink-4);
   text-transform: uppercase;
 }
-.ca-row.off { color: var(--ink-4); }
-.ca-count, .ca-count-head { text-align: right; font-variant-numeric: tabular-nums; }
-.ca-time { color: var(--ink-3); }
-.ca-row.off .ca-time { color: var(--ink-4); }
-.ca-dot {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--ink-4);
-  white-space: nowrap;
+/* 组行 = 手风琴按钮: 整行可点, button 默认样式全部复位 (网格/padding/顶部虚线沿用 .ca-row)。
+   放在 .ca-row.off 之前 —— 同优先级下让 off 的灰色盖过这里的 color: inherit */
+.ca-row.group {
+  width: 100%;
+  border: none;
+  border-top: 1px dashed var(--line-2);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.ca-dot::before {
-  content: "";
+.ca-row.group:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ca-row.group:hover .ca-gname { text-decoration: underline; text-underline-offset: 3px; }
+.ca-client { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ca-gname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ca-chev { flex: none; transition: transform 0.15s ease; }
+.ca-chev path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ca-chev.open { transform: rotate(90deg); }
+/* 成员行缩进 = 组行箭头宽 + 间距, 与组行状态点同一条竖线, 名字也对齐 */
+.ca-row.member .ca-client { padding-left: 19px; }
+.ca-row.off { color: var(--ink-4); }
+.ca-time, .ca-count, .ca-count-head { text-align: right; font-variant-numeric: tabular-nums; }
+.ca-time { color: var(--ink-3); }
+/* 表头沿用行上的墨灰, 不被 .ca-time 自身颜色盖掉 */
+.ca-row.head .ca-time { color: inherit; }
+.ca-row.off .ca-time { color: var(--ink-4); }
+/* 状态点: 实心 = 保留期内接过流量, 空心环 = 没有。文案走 title / aria-label, 不占列 */
+.ca-dot {
+  flex: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   border: 1.2px solid var(--ink-4);
   background: transparent;
 }
-.ca-dot.on { color: var(--ink-2); font-weight: 600; }
-.ca-dot.on::before { background: var(--fill-cactus); border-color: var(--stroke); }
+.ca-dot.on { background: var(--fill-cactus); border-color: var(--stroke); }
 .ca-empty { padding: 10px 2px; font-size: 12.5px; color: var(--ink-4); }
 .ca-foot {
   margin-top: 10px;
@@ -2506,6 +2525,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 @media (prefers-reduced-motion: reduce) {
   .rf-flow { animation: none; }
   .rf-status-dot { animation: none; }
+  .ca-chev, .lrc-ca-chev { transition: none; }
 }
 
 /* === 接入信息 (只读值框 + 复制) === */
