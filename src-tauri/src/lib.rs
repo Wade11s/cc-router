@@ -142,6 +142,7 @@ pub fn run() {
             commands::requests::export_requests_csv,
             commands::requests::export_requests_csv_text,
             commands::requests::list_supported_client_tools,
+            commands::requests::get_client_activity,
             commands::statistics::get_overall_stats,
             commands::statistics::get_daily_series,
             commands::statistics::get_breakdown,

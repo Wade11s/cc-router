@@ -8,6 +8,7 @@ import type {
   ClaudeCodeInspectResult,
   ClaudeCodeReadResult,
   ClaudeCodeWriteOutcome,
+  ClientActivityDto,
   CodexAuthInspectResult,
   CodexConfigInspectResult,
   CodexReadResult,
@@ -131,6 +132,8 @@ export const api = {
   /** 网页端导出: 返回 CSV 文本 (含 BOM), 由浏览器下载 */
   exportRequestsCsvText: (filters?: RequestLogFilters) =>
     invoke<string>("export_requests_csv_text", { filters }),
+  /** Live Routing「客户端接入」: 按 client_tool 聚合的最近活动 (被动流量检测) */
+  getClientActivity: () => invoke<ClientActivityDto[]>("get_client_activity"),
 
   // config backup / import
   exportConfig: (path: string, password?: string) =>

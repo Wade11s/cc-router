@@ -352,9 +352,100 @@ pub async fn list_supported_client_tools() -> AppResult<Vec<&'static str>> {
     Ok(crate::proxy::client_fingerprint::SUPPORTED_TOOLS.to_vec())
 }
 
+/// Live Routing「客户端接入」的聚合行: 某个客户端最近有没有真的把请求发进来。
+/// `client_tool = None` 是未识别桶 (UA 认不出, 或迁移 009 之前的老日志)。
+#[derive(Debug, Clone, Serialize)]
+pub struct ClientActivityDto {
+    pub client_tool: Option<String>,
+    pub request_count: i64,
+    /// 最近一次请求时间 (ms epoch)
+    pub last_seen: i64,
+}
+
+/// 按 client_tool 聚合 requests: 条数 + 最近时间, 按最近时间倒序。
+/// 与 command 分离, 单测直接打 (类比 statistics.rs::query_tool_breakdown)。
+/// 不做时间窗过滤: 日志本身受 `log_retention_days` 清理, 保留期即天然窗口。
+pub(crate) async fn query_client_activity(
+    pool: &sqlx::SqlitePool,
+) -> Result<Vec<ClientActivityDto>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT client_tool, COUNT(*) AS request_count, MAX(timestamp) AS last_seen
+         FROM requests
+         GROUP BY client_tool
+         ORDER BY last_seen DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|r| {
+            Ok(ClientActivityDto {
+                client_tool: r.try_get("client_tool")?,
+                request_count: r.try_get("request_count")?,
+                last_seen: r.try_get("last_seen")?,
+            })
+        })
+        .collect()
+}
+
+/// 哪些客户端最近确实走了 cc-router (被动流量检测, 零配置)。
+/// 从未发过请求的客户端不会出现在结果里, 前端按「未接入」灰显。
+#[tauri::command]
+pub async fn get_client_activity(state: State<'_, AppState>) -> AppResult<Vec<ClientActivityDto>> {
+    query_client_activity(&state.db).await.map_err(Into::into)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{csv_field, CSV_HEADER};
+
+    /// 插入一行最小可用的 requests 记录 (只关心 client_tool / timestamp 聚合)。
+    async fn insert_request(pool: &sqlx::SqlitePool, id: &str, ts: i64, tool: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO requests (id, timestamp, virtual_model_name, subscription_id, provider_id,
+             endpoint_id, real_model_name, is_streaming, status, client_tool)
+             VALUES (?, ?, 'vm', 's', 'p', 'e', 'm', 0, 'success', ?)",
+        )
+        .bind(id)
+        .bind(ts)
+        .bind(tool)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// 聚合按 client_tool 分组: 未识别 (NULL) 是独立一桶, 整体按 last_seen 倒序。
+    #[tokio::test]
+    async fn client_activity_groups_unknown_and_orders_by_last_seen() {
+        use crate::db::run_migrations;
+        use sqlx::sqlite::SqlitePoolOptions;
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        run_migrations(&pool).await.unwrap();
+        insert_request(&pool, "r1", 1000, Some("claude-code")).await;
+        insert_request(&pool, "r2", 3000, Some("claude-code")).await;
+        insert_request(&pool, "r3", 2000, Some("codex-cli")).await;
+        insert_request(&pool, "r4", 4000, None).await;
+
+        let rows = super::query_client_activity(&pool).await.unwrap();
+        assert_eq!(rows.len(), 3, "NULL 独立成组, 不与任何已知工具合并");
+        assert_eq!(
+            (
+                rows[0].client_tool.as_deref(),
+                rows[0].request_count,
+                rows[0].last_seen
+            ),
+            (None, 1, 4000)
+        );
+        assert_eq!(
+            (rows[1].client_tool.as_deref(), rows[1].request_count, rows[1].last_seen),
+            (Some("claude-code"), 2, 3000)
+        );
+        assert_eq!(rows[2].client_tool.as_deref(), Some("codex-cli"));
+    }
 
     /// CSV 列数锁 —— 加字段时必须同步改 header / SELECT / 行写入三处, 漏一处就会串列。
     #[test]

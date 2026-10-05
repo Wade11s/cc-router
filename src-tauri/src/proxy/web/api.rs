@@ -154,6 +154,7 @@ web_commands! {
     export_requests_csv(path: String, filters: Option<RequestLogFilters>) => commands::requests::export_requests_csv(st, args.path, args.filters).await,
     export_requests_csv_text(filters: Option<RequestLogFilters>) => commands::requests::export_requests_csv_text(st, args.filters).await,
     list_supported_client_tools() => commands::requests::list_supported_client_tools().await,
+    get_client_activity() => commands::requests::get_client_activity(st).await,
     // statistics / receipts / events
     get_overall_stats(range: StatsRange) => commands::statistics::get_overall_stats(st, args.range).await,
     get_daily_series(range: StatsRange) => commands::statistics::get_daily_series(st, args.range).await,

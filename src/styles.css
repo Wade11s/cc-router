@@ -2355,6 +2355,11 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 休眠便签 (保留期内没见过该客户端的请求): 纸面换石灰色, 字与涂鸦一起退后。
+   纸面 fill 是组件里的内联样式, 这里只管文字与 svg */
+.rf-note.dormant .rf-note-name,
+.rf-note.dormant .rf-note-cmd { color: var(--ink-4); }
+.rf-note.dormant .rf-note-body > svg { filter: grayscale(1); opacity: 0.62; }
 
 /* 中枢: 手绘 Logo 贴片 + 上方一句手写批注。left 由画布宽度推出 (960 - 88) / 2 */
 .rf-hub { position: absolute; left: 436px; width: 88px; height: 88px; }
@@ -2445,7 +2450,58 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
   background: var(--fill-butter);
   border: 1.2px solid var(--stroke);
 }
+.rf-legend-swatch.dormant { background: var(--fill-stone); }
 .rf-legend-hint { margin-left: auto; font-size: 16px; color: var(--ink-4); transform: rotate(-1.5deg); }
+
+/* === 客户端接入 (被动流量检测, 与上方路由图便签同源数据) === */
+.ca-list { display: flex; flex-direction: column; }
+.ca-row {
+  display: grid;
+  grid-template-columns: 1.3fr 96px 1fr 80px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+  font-size: 12.5px;
+  border-top: 1px dashed var(--line-2);
+}
+.ca-row.head {
+  border-top: none;
+  padding-bottom: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-4);
+  text-transform: uppercase;
+}
+.ca-row.off { color: var(--ink-4); }
+.ca-count, .ca-count-head { text-align: right; font-variant-numeric: tabular-nums; }
+.ca-time { color: var(--ink-3); }
+.ca-row.off .ca-time { color: var(--ink-4); }
+.ca-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+.ca-dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.2px solid var(--ink-4);
+  background: transparent;
+}
+.ca-dot.on { color: var(--ink-2); font-weight: 600; }
+.ca-dot.on::before { background: var(--fill-cactus); border-color: var(--stroke); }
+.ca-empty { padding: 10px 2px; font-size: 12.5px; color: var(--ink-4); }
+.ca-foot {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-2);
+  font-size: 11px;
+  color: var(--ink-4);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .rf-flow { animation: none; }
