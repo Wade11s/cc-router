@@ -12,7 +12,7 @@ use crate::commands::subscriptions::{
     validate_required_headers, validate_slot_efforts, validate_token_quotas,
 };
 use crate::error::{AppError, AppResult};
-use crate::provider::model::AuthType;
+use crate::provider::model::{AuthType, EndpointProtocol};
 use crate::subscription::model::SubscriptionRow;
 use crate::virtual_model::model::{RoutingMode, VirtualModelName};
 
@@ -78,6 +78,10 @@ fn validate_entry(sub: &ExportSubscription) -> Result<(), String> {
         validate_required_headers(&headers, &sub.auth_header_name)?;
         validate_slot_efforts(&sub.slot_efforts)?;
         validate_token_quotas(&sub.token_quotas)?;
+        // 与 provider 加载期的约束一致: System One 只走透传, 其它鉴权类型没有对应 dispatch。
+        if sub.endpoint_protocol == EndpointProtocol::Systemone && sub.auth_type != AuthType::ApiKey {
+            return Err(AppError::BadRequest("System One 端点只支持 api_key 鉴权".into()));
+        }
         Ok(())
     }
     check(sub).map_err(|e| match e {
@@ -640,6 +644,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// System One 端点只支持 api_key 鉴权: 手改过的文件里 systemone + 其它鉴权类型整条跳过。
+    #[test]
+    fn systemone_with_non_api_key_auth_is_skipped_invalid() {
+        let mut f = fixture(false);
+        {
+            let a = find_mut(&mut f, "A");
+            a.endpoint_protocol = EndpointProtocol::Systemone;
+            a.auth_type = AuthType::OpenaiResponsesApiKey;
+        }
+        let p = preview(&f.file, &empty_local());
+        let a = p.subscriptions.iter().find(|s| s.display_name == "A").unwrap();
+        assert_eq!(a.status, PreviewStatus::SkipInvalid);
+        assert!(a.invalid_reason.as_deref().unwrap().contains("api_key"), "{:?}", a.invalid_reason);
+        let plan = plan(&f.file, None, &empty_local(), Utc::now());
+        assert!(plan.inserts.iter().all(|r| r.display_name != "A"));
+        assert_eq!(plan.report.skipped_invalid[0].name, "A");
     }
 
     /// 文件里的跨类绑定 (对话订阅绑到 model-jev / systemone 订阅绑到 model-opus) 跳过并说明,
