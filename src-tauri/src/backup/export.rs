@@ -138,7 +138,7 @@ mod tests {
         assert!(file.subscriptions.iter().all(|s| s.secret_refs.is_none()));
         let text = serde_json::to_string(&file).unwrap();
         assert!(!text.contains("sk-a") && !text.contains("\"hk\""), "{text}");
-        assert_eq!(file.virtual_models.len(), 5, "五个虚拟模型全部输出");
+        assert_eq!(file.virtual_models.len(), 6, "六个虚拟模型全部输出");
         let opus = file.virtual_models.iter().find(|v| v.name == VirtualModelName::Opus).unwrap();
         assert_eq!(opus.mode, RoutingMode::Sticky);
         assert_eq!(opus.subscription_ids, vec![r[1].id, r[0].id], "绑定顺序保持");

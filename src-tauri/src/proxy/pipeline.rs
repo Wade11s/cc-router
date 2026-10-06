@@ -76,11 +76,11 @@ pub(crate) fn provider_reasoning_defaults(
 
 /// 取该虚拟模型对应槽位的 forced effort (订阅槽位级强制档位)。
 ///
-/// `fallback` 虚拟模型透传原始 model、不走 slot 映射 ([`VirtualModelName::slot`] 对 Fallback
-/// 返回 Sonnet 只是为了满足签名), 因此**没有**对应槽位 → 恒 None, 让 fallback 请求的 effort
+/// `fallback` / `jev` 虚拟模型透传原始 model、不走 slot 映射 ([`VirtualModelName::slot`] 对 Fallback
+/// 返回 Sonnet 只是为了满足签名), 因此**没有**对应槽位 → 恒 None, 让 fallback/jev 请求的 effort
 /// 完全不被干预。抽成独立函数是为了让这条不变式可单测。
 fn slot_forced_effort(slot_efforts: &SlotEfforts, vm_name: VirtualModelName) -> Option<String> {
-    if vm_name.is_fallback() {
+    if vm_name.is_fallback() || vm_name.is_jev() {
         return None;
     }
     slot_efforts.get(vm_name.slot()).map(str::to_string)
@@ -132,6 +132,18 @@ fn emit_attempt_finished(state: &AppState, sub_id: Uuid, vm_name: VirtualModelNa
     );
 }
 
+/// `model-jev` 只能经 `POST /v1/systemone` 调用。三个对话入口都汇到 [`dispatch`], 在这里拒一次即可;
+/// chat / responses 入口会把这个 Anthropic 错误体翻译成各自的错误形状。
+pub(crate) fn jev_only_via_systemone(vm_name: VirtualModelName) -> Option<Response> {
+    vm_name.is_jev().then(|| {
+        crate::proxy::handler::error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "model-jev 只能通过 POST /v1/systemone 调用",
+        )
+    })
+}
+
 pub async fn dispatch(
     state: &AppState,
     model: &str,
@@ -143,6 +155,10 @@ pub async fn dispatch(
     // 1. 解析虚拟模型; 非三个虚拟名走 fallback（透传原始 model）
     let vm_name = VirtualModelName::parse(model).unwrap_or(VirtualModelName::Fallback);
     let is_fallback = vm_name.is_fallback();
+
+    if let Some(resp) = jev_only_via_systemone(vm_name) {
+        return Ok(resp);
+    }
 
     // 2. 获取候选订阅顺序
     let vm_config = {
@@ -1780,5 +1796,18 @@ mod tests {
         ] {
             assert_eq!(slot_forced_effort(&se, vm), Some("max".to_string()));
         }
+    }
+
+    #[test]
+    fn slot_forced_effort_is_none_for_jev() {
+        assert_eq!(slot_forced_effort(&efforts_all_max(), VirtualModelName::Jev), None);
+    }
+
+    #[test]
+    fn chat_entries_reject_model_jev() {
+        let resp = jev_only_via_systemone(VirtualModelName::Jev).expect("model-jev 必须被拒");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(jev_only_via_systemone(VirtualModelName::Sonnet).is_none());
+        assert!(jev_only_via_systemone(VirtualModelName::Fallback).is_none());
     }
 }

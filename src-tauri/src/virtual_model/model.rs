@@ -15,6 +15,10 @@ pub enum VirtualModelName {
     /// 兜底：请求的 model 不是前三个虚拟名时走这里，透传原始 model 给订阅。
     #[serde(rename = "model-fallback")]
     Fallback,
+    /// Jev 决策模型 (System One 协议): 只服务 `POST /v1/systemone`, 只绑端点协议为 systemone 的订阅。
+    /// 与另外五个互相隔离 (见 [`VirtualModelName::accepts`])。
+    #[serde(rename = "model-jev")]
+    Jev,
 }
 
 impl VirtualModelName {
@@ -25,6 +29,7 @@ impl VirtualModelName {
             VirtualModelName::Sonnet => "model-sonnet",
             VirtualModelName::Haiku => "model-haiku",
             VirtualModelName::Fallback => "model-fallback",
+            VirtualModelName::Jev => "model-jev",
         }
     }
 
@@ -43,6 +48,7 @@ impl VirtualModelName {
             "model-sonnet" | "gpt-5.4" => return Some(Self::Sonnet),
             "model-haiku" => return Some(Self::Haiku),
             "model-fallback" => return Some(Self::Fallback),
+            "model-jev" => return Some(Self::Jev),
             _ => {}
         }
 
@@ -78,13 +84,15 @@ impl VirtualModelName {
         }
     }
 
-    /// fallback 不对应任何 slot（透传模式）。如果调用者不检查就用，这里默认返回 sonnet
-    /// 以保持类型签名不变，但正确的调用路径应该先判断 `is_fallback()`。
+    /// fallback / jev 不对应任何四槽 slot。为保持签名这里返回 sonnet, 正确的调用路径
+    /// 应该先判断 `is_fallback()` / `is_jev()`。
     pub fn slot(self) -> SubscriptionSlot {
         match self {
             VirtualModelName::Fable => SubscriptionSlot::Fable,
             VirtualModelName::Opus => SubscriptionSlot::Opus,
-            VirtualModelName::Sonnet | VirtualModelName::Fallback => SubscriptionSlot::Sonnet,
+            VirtualModelName::Sonnet | VirtualModelName::Fallback | VirtualModelName::Jev => {
+                SubscriptionSlot::Sonnet
+            }
             VirtualModelName::Haiku => SubscriptionSlot::Haiku,
         }
     }
@@ -93,13 +101,44 @@ impl VirtualModelName {
         matches!(self, VirtualModelName::Fallback)
     }
 
-    pub fn all() -> [VirtualModelName; 5] {
+    pub fn is_jev(self) -> bool {
+        matches!(self, VirtualModelName::Jev)
+    }
+
+    /// 绑定隔离: model-jev 只收 systemone 订阅, 其余五个只收对话类 (messages) 订阅。
+    /// 写入 (绑定命令)、导入、运行时三处都用它判断。
+    pub fn accepts(self, protocol: crate::provider::model::EndpointProtocol) -> bool {
+        use crate::provider::model::EndpointProtocol;
+        match protocol {
+            EndpointProtocol::Systemone => self.is_jev(),
+            EndpointProtocol::Messages => !self.is_jev(),
+        }
+    }
+
+    /// 不能绑定时给出原因 (中文, 直接上屏)。能绑定返回 None。
+    pub fn binding_rejection(
+        self,
+        protocol: crate::provider::model::EndpointProtocol,
+        sub_name: &str,
+    ) -> Option<String> {
+        if self.accepts(protocol) {
+            return None;
+        }
+        Some(if self.is_jev() {
+            format!("订阅「{sub_name}」不是 System One 端点, 不能绑定到 model-jev")
+        } else {
+            format!("订阅「{sub_name}」是 System One 端点, 只能绑定到 model-jev")
+        })
+    }
+
+    pub fn all() -> [VirtualModelName; 6] {
         [
             Self::Fable,
             Self::Opus,
             Self::Sonnet,
             Self::Haiku,
             Self::Fallback,
+            Self::Jev,
         ]
     }
 }
@@ -242,5 +281,30 @@ mod tests {
         // 边界: 非 claude 家族 → fallback(None)
         assert_eq!(VirtualModelName::parse("deepseek-chat"), None);
         assert_eq!(VirtualModelName::parse("gpt-4o"), None);
+    }
+
+    #[test]
+    fn jev_round_trips_and_is_the_sixth_model() {
+        assert_eq!(VirtualModelName::parse("model-jev"), Some(VirtualModelName::Jev));
+        assert_eq!(VirtualModelName::Jev.as_str(), "model-jev");
+        assert_eq!(serde_json::to_string(&VirtualModelName::Jev).unwrap(), "\"model-jev\"");
+        assert_eq!(VirtualModelName::all().len(), 6);
+        assert!(VirtualModelName::Jev.is_jev() && !VirtualModelName::Jev.is_fallback());
+        // jev-latest 这类客户端模型名不能被识别成 jev (路由由路径决定, 不由 body 决定)
+        assert_eq!(VirtualModelName::parse("jev-latest"), None);
+    }
+
+    #[test]
+    fn jev_only_accepts_systemone_and_others_only_accept_messages() {
+        use crate::provider::model::EndpointProtocol::{Messages, Systemone};
+        assert!(VirtualModelName::Jev.accepts(Systemone));
+        assert!(!VirtualModelName::Jev.accepts(Messages));
+        for vm in VirtualModelName::all().into_iter().filter(|v| !v.is_jev()) {
+            assert!(vm.accepts(Messages), "{vm:?}");
+            assert!(!vm.accepts(Systemone), "{vm:?}");
+        }
+        assert!(VirtualModelName::Jev.binding_rejection(Systemone, "a").is_none());
+        assert!(VirtualModelName::Jev.binding_rejection(Messages, "智谱").unwrap().contains("智谱"));
+        assert!(VirtualModelName::Opus.binding_rejection(Systemone, "x").unwrap().contains("model-jev"));
     }
 }
