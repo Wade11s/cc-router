@@ -162,6 +162,23 @@ pub fn state_event(r: &AttemptResult) -> state_machine::Event {
     }
 }
 
+/// FastAPI 风格的 422 会在 `detail[].input` 里回显整份请求 (含 state / questions), 落库前去掉。
+/// 只处理「JSON 且 `detail` 是数组」这一种形状, 其余原样返回。
+fn redact_echoed_input(text: &str) -> String {
+    let Ok(mut v) = serde_json::from_str::<Value>(text) else {
+        return text.to_string();
+    };
+    let Some(items) = v.get_mut("detail").and_then(|d| d.as_array_mut()) else {
+        return text.to_string();
+    };
+    for item in items.iter_mut() {
+        if let Some(obj) = item.as_object_mut() {
+            obj.remove("input");
+        }
+    }
+    serde_json::to_string(&v).unwrap_or_else(|_| text.to_string())
+}
+
 fn usage(body: &Value, key: &str) -> Option<u32> {
     body.get("usage").and_then(|u| u.get(key)).and_then(|v| v.as_u64()).map(|v| v as u32)
 }
@@ -184,7 +201,7 @@ pub fn log_entry(
                 usage(body, "input_tokens"),
                 usage(body, "output_tokens"),
                 (!ok).then(|| format!("HTTP {}", status.as_u16())),
-                if ok { None } else { body_text.as_deref().map(|s| truncate_body(s, ERROR_BODY_LIMIT)) },
+                if ok { None } else { body_text.as_deref().map(|s| truncate_body(&redact_echoed_input(s), ERROR_BODY_LIMIT)) },
             )
         }
         AttemptResult::Network(msg) => (
@@ -449,6 +466,33 @@ mod tests {
         assert!(matches!(state_event(&http(200, ok_body())), Event::RequestSucceeded));
         assert!(matches!(state_event(&http(429, serde_json::json!({}))), Event::HttpStatus(429)));
         assert!(matches!(state_event(&AttemptResult::Network("x".into())), Event::NetworkError));
+    }
+
+    #[test]
+    fn redact_drops_echoed_request_input_from_422() {
+        let body = r#"{"detail":[{"type":"missing","loc":["body","questions"],"msg":"Field required","input":{"model":"jev-latest","state":"x"}}]}"#;
+        let out = redact_echoed_input(body);
+        assert!(!out.contains("\"state\"") && !out.contains("\"input\""), "{out}");
+        assert!(out.contains("Field required"), "{out}");
+    }
+
+    #[test]
+    fn redact_leaves_other_error_shapes_untouched() {
+        let ollama = r#"{"error":"model \"nope\" not found"}"#;
+        assert_eq!(redact_echoed_input(ollama), ollama);
+        assert_eq!(redact_echoed_input("upstream exploded"), "upstream exploded");
+        let not_array = r#"{"detail":{"error_type":"api_usage_error","input":"keep"}}"#;
+        assert_eq!(redact_echoed_input(not_array), not_array);
+    }
+
+    #[test]
+    fn log_entry_error_body_is_redacted() {
+        let c = cand("A");
+        let ctx = ClientContext::default();
+        let body = serde_json::json!({"detail":[{"msg":"Field required","input":{"state":"secret"}}]});
+        let bad = log_entry(&c, &http(422, body), 0, &ctx, 5);
+        let stored = bad.upstream_response_body.unwrap();
+        assert!(!stored.contains("secret") && stored.contains("Field required"), "{stored}");
     }
 
     #[test]
