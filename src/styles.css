@@ -2230,7 +2230,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
     repeating-linear-gradient(135deg, transparent 0 14px, color-mix(in srgb, var(--fill-cactus) 18%, transparent) 14px 15px),
     var(--surface);
 }
-.slot-card.jev .slot-head.compact { padding-right: 168px; }
+.slot-card.jev .slot-head.compact { padding-right: 196px; }
 .jev-hangtag {
   position: absolute;
   top: -22px;
@@ -2306,7 +2306,7 @@ html:not([data-platform="macos"]) .main.flush { padding-top: 0; }
 }
 @media (max-width: 900px) {
   /* 窄屏: 模式切换换到标题下方, 吊牌位置不变 */
-  .slot-card.jev .slot-head.compact { flex-wrap: wrap; padding-right: 0; padding-top: 14px; }
+  .slot-card.jev .slot-head.compact { flex-wrap: wrap; padding-right: 0; padding-top: 24px; }
 }
 
 /* ============================================================
