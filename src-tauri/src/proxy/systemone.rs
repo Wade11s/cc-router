@@ -31,6 +31,18 @@ use crate::proxy::tool_log::ToolLogFields;
 use crate::subscription::model::{SubscriptionRow, SubscriptionRuntime};
 use crate::subscription::state_machine;
 use crate::virtual_model::VirtualModelName;
+use std::time::Instant;
+
+use chrono::Utc;
+use tracing::{info, warn};
+
+use crate::observability::events;
+use crate::provider::model::EndpointProtocol;
+use crate::proxy::pipeline::{emit_attempt_finished, emit_attempt_started};
+use crate::proxy::upstream;
+use crate::state::AppState;
+use crate::virtual_model::scheduler::build_candidate_order;
+use crate::virtual_model::RoutingMode;
 
 /// 一次出站请求的全部内容, 由订阅快照 + 客户端 body 纯函数算出 (探测复用同一个函数)。
 #[derive(Debug, Clone)]
@@ -246,6 +258,162 @@ pub fn log_entry(
         effort_source: None,
         upstream_effort: None,
         tool_calls: ToolLogFields::empty(),
+    }
+}
+
+struct LiveSink<'s> {
+    state: &'s AppState,
+    ctx: &'s ClientContext,
+    mode: RoutingMode,
+    start: Instant,
+}
+
+impl AttemptSink for LiveSink<'_> {
+    fn send<'a>(&'a mut self, c: &'a Candidate) -> BoxFuture<'a, AttemptResult> {
+        Box::pin(async move {
+            // sticky: 候选真正被交付请求时才钉 (含切下家; 不弹回), 与对话路径一致。
+            if self.mode == RoutingMode::Sticky {
+                if let Some(key) = self.ctx.session_key.as_deref() {
+                    let mut t = self.state.session_affinity.lock().unwrap_or_else(|e| e.into_inner());
+                    t.pin(VirtualModelName::Jev, key, c.sub_id, Instant::now());
+                }
+            }
+            info!(sub_id = %c.sub_id, display_name = %c.display_name, real_model = %c.outbound.real_model, url = %c.outbound.url, "forwarding systemone request");
+            emit_attempt_started(self.state, c.sub_id, VirtualModelName::Jev);
+            let result = upstream::send(
+                &self.state.http_client,
+                &c.outbound.url,
+                c.outbound.body.to_vec(),
+                c.outbound.headers.clone(),
+                false,
+            )
+            .await;
+            let r = match result {
+                Ok(upstream::UpstreamResponse::NonStreaming { status, body, body_text, .. }) => {
+                    AttemptResult::Http { status, body, body_text }
+                }
+                // is_streaming=false 时 upstream::send 不会返回 Streaming; 保守地当网络错误处理。
+                Ok(upstream::UpstreamResponse::Streaming { .. }) => {
+                    AttemptResult::Network("unexpected streaming response".into())
+                }
+                Err(e) => AttemptResult::Network(e.to_string()),
+            };
+            let ok = matches!(&r, AttemptResult::Http { status, .. } if status.is_success());
+            emit_attempt_finished(self.state, c.sub_id, VirtualModelName::Jev, ok);
+            r
+        })
+    }
+
+    fn record<'a>(&'a mut self, c: &'a Candidate, r: &'a AttemptResult, retry_count: u32) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let _ = state_machine::apply(
+                &self.state.db,
+                &self.state.app_handle,
+                &self.state.event_log_tx,
+                c.rt.clone(),
+                state_event(r),
+            )
+            .await;
+            let latency = self.start.elapsed().as_millis() as u64;
+            let _ = self.state.request_log_tx.try_send(log_entry(c, r, retry_count, self.ctx, latency));
+        })
+    }
+}
+
+fn json_response(status: StatusCode, body: &Value) -> Response {
+    (status, Json(body.clone())).into_response()
+}
+
+pub async fn dispatch(state: &AppState, raw_body: Bytes, client_model: String, ctx: &ClientContext) -> Response {
+    let vm = VirtualModelName::Jev;
+    let vm_config = state.virtual_models.read().await.get(&vm).cloned();
+    let Some(vm_config) = vm_config.filter(|c| !c.subscription_ids.is_empty()) else {
+        return error_response(StatusCode::SERVICE_UNAVAILABLE, "overloaded_error", "model-jev 未绑定任何订阅");
+    };
+
+    let pinned = match (vm_config.mode, ctx.session_key.as_deref()) {
+        (RoutingMode::Sticky, Some(key)) => {
+            let mut t = state.session_affinity.lock().unwrap_or_else(|e| e.into_inner());
+            t.get(vm, key, Instant::now())
+        }
+        _ => None,
+    };
+    let subs_map = state.subscriptions.read().await.clone();
+    let order = build_candidate_order(&vm_config, &subs_map, Utc::now(), pinned).await;
+    drop(subs_map);
+    if let Some(idx) = order.chosen_index {
+        if let Some(cfg) = state.virtual_models.write().await.get_mut(&vm) {
+            cfg.last_used_index = idx;
+        }
+    }
+
+    let mut cands = Vec::new();
+    let mut skipped_wrong_protocol = Vec::new();
+    for sub_id in &order.candidate_ids {
+        let Some(rt) = state.get_subscription(sub_id).await else { continue };
+        let g = rt.read().await;
+        // 运行时守卫: 写入 / 导入已拦跨类绑定, 这里兜历史数据。
+        if g.row.endpoint_protocol != EndpointProtocol::Systemone {
+            warn!(%sub_id, display_name = %g.row.display_name, "non-systemone subscription skipped under model-jev");
+            skipped_wrong_protocol.push(g.row.display_name.clone());
+            continue;
+        }
+        let outbound = match build_outbound(&g.row, &raw_body, &client_model) {
+            Ok(o) => o,
+            Err(e) => {
+                return error_response(StatusCode::BAD_REQUEST, "invalid_request_error", &format!("请求体解析失败: {e}"));
+            }
+        };
+        cands.push(Candidate {
+            sub_id: *sub_id,
+            display_name: g.row.display_name.clone(),
+            provider_id: g.row.provider_id.clone(),
+            endpoint_id: g.row.endpoint_id.clone(),
+            rt: rt.clone(),
+            outbound,
+        });
+    }
+
+    let mut sink = LiveSink { state, ctx, mode: vm_config.mode, start: Instant::now() };
+    match run_candidates(&cands, &mut sink).await {
+        LoopEnd::Done { index, status, body } => {
+            let body = if status.is_success() {
+                restore_model(body, &client_model, cands[index].outbound.rewritten)
+            } else {
+                body
+            };
+            json_response(status, &body)
+        }
+        LoopEnd::RequestRejected { status, body, body_text } => match body_text {
+            // 原样返回上游的错误字节, 客户端看到的就是上游的原话。
+            Some(text) => (status, [(axum::http::header::CONTENT_TYPE, "application/json")], text).into_response(),
+            None => json_response(status, &body),
+        },
+        LoopEnd::Exhausted => {
+            let subs_map = state.subscriptions.read().await;
+            let mut summary = Vec::new();
+            for sub_id in &vm_config.subscription_ids {
+                if let Some(rt) = subs_map.get(sub_id) {
+                    let g = rt.read().await;
+                    if skipped_wrong_protocol.contains(&g.row.display_name) {
+                        summary.push(format!("- {}: 不是 System One 订阅, 已跳过", g.row.display_name));
+                    } else {
+                        summary.push(format!("- {}: {:?}", g.row.display_name, g.state));
+                    }
+                }
+            }
+            drop(subs_map);
+            events::record_system_error(
+                &state.event_log_tx,
+                "虚拟模型 model-jev 全部候选不可用".to_string(),
+                Some(json!({ "virtual_model": vm.as_str(), "candidates": summary })),
+            );
+            error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "overloaded_error",
+                &format!("All subscriptions for model-jev are unavailable.\nDetails:\n{}", summary.join("\n")),
+            )
+        }
     }
 }
 

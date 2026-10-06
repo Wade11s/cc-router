@@ -733,6 +733,39 @@ mod tests {
     }
 }
 
+/// POST /v1/systemone
+/// Jev (System One) 决策协议入口: 只校验 body 是 JSON 对象且 model 为字符串, 其余交给上游校验
+/// (各家上游的校验规则本就不同, 本地抄一份 schema 只会过时)。路由由路径决定, 恒为 model-jev。
+pub async fn systemone(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    HttpVersion(version): HttpVersion,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    use crate::proxy::systemone;
+    let parsed: Value = match serde_json::from_slice(&body) {
+        Ok(v @ Value::Object(_)) => v,
+        Ok(_) => return systemone::error_response(StatusCode::BAD_REQUEST, "invalid_request_error", "请求体必须是 JSON 对象"),
+        Err(e) => {
+            return systemone::error_response(StatusCode::BAD_REQUEST, "invalid_request_error", &format!("JSON 解析失败: {e}"));
+        }
+    };
+    let Some(model) = parsed.get("model").and_then(|v| v.as_str()).map(str::to_string) else {
+        return systemone::error_response(StatusCode::BAD_REQUEST, "invalid_request_error", "缺少 model 字段");
+    };
+    let ctx = ClientContext {
+        info: client_fingerprint::identify(&headers),
+        ip: Some(peer.ip().to_string()),
+        entry_kind: RequestEntryKind::SystemOne,
+        http_version: Some(format_http_version(version)),
+        session_key: session_key::extract(&headers, &parsed, RequestEntryKind::SystemOne),
+        tools: Default::default(),
+    };
+    info!(%model, client_tool = ?ctx.info.tool, client_ip = ?ctx.ip, "proxy received /v1/systemone request");
+    systemone::dispatch(&state, body, model, &ctx).await
+}
+
 /// GET /v1/models
 /// 返回 cc-router 对外暴露的固定模型清单, 无鉴权 (与 /health 同级在 auth_layer 直通).
 ///

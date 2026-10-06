@@ -50,6 +50,7 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/v1/messages", post(handler::messages))
         .route("/v1/responses", post(handler::responses))
         .route("/v1/chat/completions", post(handler::chat_completions))
+        .route("/v1/systemone", post(handler::systemone))
         .route("/v1/models", axum::routing::get(handler::models))
         .route("/health", axum::routing::get(handler::health))
         // 显式兜底 404: 不加这行, 下面 merge 网页路由时 axum 会用网页子路由的
