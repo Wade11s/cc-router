@@ -54,7 +54,7 @@ use crate::subscription::state_machine;
 use crate::virtual_model::scheduler::build_candidate_order;
 use crate::virtual_model::{RoutingMode, VirtualModelName};
 
-const ERROR_BODY_LIMIT: usize = 4096;
+pub(crate) const ERROR_BODY_LIMIT: usize = 4096;
 
 /// 翻译类 provider 在 yaml 未声明 reasoning 字段时的兜底 effort.
 /// 与 openai-codex.yaml / google-ai-studio.yaml / openai.yaml 默认值保持一致。
@@ -87,7 +87,7 @@ fn slot_forced_effort(slot_efforts: &SlotEfforts, vm_name: VirtualModelName) -> 
 }
 
 /// 按 char_indices 找 UTF-8 边界, 避免切坏多字节字符
-fn truncate_body(text: &str, limit: usize) -> String {
+pub(crate) fn truncate_body(text: &str, limit: usize) -> String {
     if text.len() <= limit {
         return text.to_string();
     }
@@ -119,13 +119,13 @@ pub(crate) fn route_attempt_payload(
     payload
 }
 
-fn emit_attempt_started(state: &AppState, sub_id: Uuid, vm_name: VirtualModelName) {
+pub(crate) fn emit_attempt_started(state: &AppState, sub_id: Uuid, vm_name: VirtualModelName) {
     let _ = state
         .app_handle
         .emit("route_attempt_started", route_attempt_payload(sub_id, vm_name, None));
 }
 
-fn emit_attempt_finished(state: &AppState, sub_id: Uuid, vm_name: VirtualModelName, success: bool) {
+pub(crate) fn emit_attempt_finished(state: &AppState, sub_id: Uuid, vm_name: VirtualModelName, success: bool) {
     let _ = state.app_handle.emit(
         "route_attempt_finished",
         route_attempt_payload(sub_id, vm_name, Some(success)),

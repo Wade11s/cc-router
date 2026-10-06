@@ -1,0 +1,460 @@
+//! `POST /v1/systemone`: Jev (System One 决策协议) 的多上游网关。
+//!
+//! 协议原样透传、不翻译; 只服务 `model-jev` 虚拟模型, 只调度端点协议为 systemone 的订阅。
+//! 候选循环 [`run_candidates`] 不碰 `AppState`: 发请求 / 状态机 / 日志都经 [`AttemptSink`]
+//! 注入, 生产实现在 Task 8 的 `LiveSink`, 测试用假实现。
+//!
+//! 错误分类直接复用对话路径的 [`classify_response`] (4xx 切下家不冷却): 实测三家上游对同一份
+//! 请求的接受范围不同 (未知模型 400 / 400 / 404, `stream:true` 一家 400 两家 200), 「换一家可能
+//! 成功」对 Jev 同样成立。
+
+use std::sync::Arc;
+
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use bytes::Bytes;
+use futures::future::BoxFuture;
+use reqwest::header::{
+    HeaderMap as ReqHeaderMap, HeaderName as ReqHeaderName, HeaderValue as ReqHeaderValue,
+    CONTENT_TYPE,
+};
+use serde_json::{json, Value};
+use tokio::sync::RwLock;
+use uuid::Uuid;
+
+use crate::observability::request_log::{RequestLogEntry, RequestStatus};
+use crate::proxy::client_fingerprint::ClientContext;
+use crate::proxy::pipeline::{truncate_body, ERROR_BODY_LIMIT};
+use crate::proxy::retry::{classify_response, ShouldRetry};
+use crate::proxy::tool_log::ToolLogFields;
+use crate::subscription::model::{SubscriptionRow, SubscriptionRuntime};
+use crate::subscription::state_machine;
+use crate::virtual_model::VirtualModelName;
+
+/// 一次出站请求的全部内容, 由订阅快照 + 客户端 body 纯函数算出 (探测复用同一个函数)。
+#[derive(Debug, Clone)]
+pub struct Outbound {
+    pub url: String,
+    pub headers: ReqHeaderMap,
+    pub body: Bytes,
+    /// 实际发往上游的 model (日志 `real_model_name`)。
+    pub real_model: String,
+    /// 是否改写过 `body.model`; 决定成功响应的 model 是否恢复成客户端原值。
+    pub rewritten: bool,
+}
+
+/// Jev 槽非空且不同于客户端 model 时改写 `body.model` (重序列化, 语义相等);
+/// 否则请求体逐字节原样转发。出站头只有 auth + content-type:
+/// provider 级 `required_headers` / `forward_headers` 是对话协议的 (如 `anthropic-version`), 不消费。
+pub fn build_outbound(row: &SubscriptionRow, raw_body: &Bytes, client_model: &str) -> Result<Outbound, String> {
+    let (body, real_model, rewritten) = match row.model_slots.jev_model() {
+        Some(slot) if slot != client_model => {
+            let mut v: Value = serde_json::from_slice(raw_body).map_err(|e| e.to_string())?;
+            v["model"] = Value::String(slot.to_string());
+            let bytes = serde_json::to_vec(&v).map_err(|e| e.to_string())?;
+            (Bytes::from(bytes), slot.to_string(), true)
+        }
+        _ => (raw_body.clone(), client_model.to_string(), false),
+    };
+    let mut headers = ReqHeaderMap::new();
+    if let (Ok(name), Ok(value)) = (
+        ReqHeaderName::try_from(row.auth_header_name.as_str()),
+        ReqHeaderValue::from_str(&row.auth_header_value()),
+    ) {
+        headers.insert(name, value);
+    }
+    headers.insert(CONTENT_TYPE, ReqHeaderValue::from_static("application/json"));
+    Ok(Outbound { url: row.messages_url(), headers, body, real_model, rewritten })
+}
+
+/// 改写过 model 时把响应 model 恢复成客户端写的名字 (与 fallback 兜底槽的回显规则一致);
+/// 否则透传上游解析出的具体版本名 (如 `jev-latest` → `jev-1.13.0`)。
+pub fn restore_model(mut body: Value, client_model: &str, rewritten: bool) -> Value {
+    if rewritten && body.get("model").is_some() {
+        body["model"] = Value::String(client_model.to_string());
+    }
+    body
+}
+
+/// cc-router 自己生成的错误体, 采用 TypeSafe 官方形状 (协议所有者, SDK 大概率按它解析)。
+pub fn error_body(error_type: &str, message: &str) -> Value {
+    json!({ "detail": { "error_type": error_type, "message": message } })
+}
+
+pub fn error_response(status: StatusCode, error_type: &str, message: &str) -> Response {
+    (status, Json(error_body(error_type, message))).into_response()
+}
+
+/// 探测用的最小请求: 一道 noul 题。只看 HTTP 状态, 不看答案。
+pub fn probe_body(model: &str) -> Value {
+    json!({
+        "model": model,
+        "state": "ping",
+        "questions": { "ok": { "type": "noul", "instructions": "Is this a connectivity test?" } }
+    })
+}
+
+#[derive(Debug, Clone)]
+pub enum AttemptResult {
+    Http { status: StatusCode, body: Value, body_text: Option<String> },
+    Network(String),
+}
+
+pub struct Candidate {
+    pub sub_id: Uuid,
+    pub display_name: String,
+    pub provider_id: String,
+    pub endpoint_id: String,
+    pub rt: Arc<RwLock<SubscriptionRuntime>>,
+    pub outbound: Outbound,
+}
+
+/// 候选循环的副作用出口。`send` 发请求, `record` 在每次 attempt 之后被调用一次
+/// (状态机 + 请求日志)。生产实现见 `LiveSink`。
+pub trait AttemptSink {
+    fn send<'a>(&'a mut self, c: &'a Candidate) -> BoxFuture<'a, AttemptResult>;
+    fn record<'a>(&'a mut self, c: &'a Candidate, r: &'a AttemptResult, retry_count: u32) -> BoxFuture<'a, ()>;
+}
+
+#[derive(Debug)]
+pub enum LoopEnd {
+    /// 某个候选给出了不需要重试的响应 (2xx, 或 classify 判为不重试的其他状态)。
+    Done { index: usize, status: StatusCode, body: Value },
+    /// 全部失败, 且最后一次失败是「请求本身的错误」(4xx, 不含 401/403/429): 原样返回给客户端。
+    RequestRejected { status: StatusCode, body: Value, body_text: Option<String> },
+    /// 全部失败 (网络 / 5xx / 鉴权 / 限流) 或没有候选: 503。
+    Exhausted,
+}
+
+/// 4xx 里属于「请求本身写错了」的那些; 401/403/429 是订阅状态问题。
+fn is_request_error(status: StatusCode) -> bool {
+    status.is_client_error() && !matches!(status.as_u16(), 401 | 403 | 429)
+}
+
+pub async fn run_candidates<S: AttemptSink + Send>(cands: &[Candidate], sink: &mut S) -> LoopEnd {
+    let mut last_rejection: Option<(StatusCode, Value, Option<String>)> = None;
+    for (index, c) in cands.iter().enumerate() {
+        let retry_count = index as u32;
+        let r = sink.send(c).await;
+        sink.record(c, &r, retry_count).await;
+        match r {
+            AttemptResult::Http { status, body, body_text } => {
+                if let ShouldRetry::No = classify_response(status.as_u16(), None) {
+                    return LoopEnd::Done { index, status, body };
+                }
+                last_rejection = is_request_error(status).then_some((status, body, body_text));
+            }
+            AttemptResult::Network(_) => last_rejection = None,
+        }
+    }
+    match last_rejection {
+        Some((status, body, body_text)) => LoopEnd::RequestRejected { status, body, body_text },
+        None => LoopEnd::Exhausted,
+    }
+}
+
+pub fn state_event(r: &AttemptResult) -> state_machine::Event {
+    match r {
+        AttemptResult::Http { status, .. } if status.is_success() => state_machine::Event::RequestSucceeded,
+        AttemptResult::Http { status, .. } => state_machine::Event::HttpStatus(status.as_u16()),
+        AttemptResult::Network(_) => state_machine::Event::NetworkError,
+    }
+}
+
+fn usage(body: &Value, key: &str) -> Option<u32> {
+    body.get("usage").and_then(|u| u.get(key)).and_then(|v| v.as_u64()).map(|v| v as u32)
+}
+
+/// 每次 attempt 一行。不记 state / questions / answers / 置信度 / cost (隐私纪律同工具调用只存名字)。
+pub fn log_entry(
+    c: &Candidate,
+    r: &AttemptResult,
+    retry_count: u32,
+    ctx: &ClientContext,
+    latency_ms: u64,
+) -> RequestLogEntry {
+    let (status, http_status, response_model_name, input, output, error_message, upstream_body) = match r {
+        AttemptResult::Http { status, body, body_text } => {
+            let ok = status.is_success();
+            (
+                if ok { RequestStatus::Success } else { RequestStatus::Error },
+                Some(status.as_u16()),
+                body.get("model").and_then(|v| v.as_str()).map(str::to_string),
+                usage(body, "input_tokens"),
+                usage(body, "output_tokens"),
+                (!ok).then(|| format!("HTTP {}", status.as_u16())),
+                if ok { None } else { body_text.as_deref().map(|s| truncate_body(s, ERROR_BODY_LIMIT)) },
+            )
+        }
+        AttemptResult::Network(msg) => (
+            RequestStatus::Error,
+            None,
+            None,
+            None,
+            None,
+            Some(format!("网络错误: {msg}")),
+            None,
+        ),
+    };
+    RequestLogEntry {
+        id: Uuid::new_v4(),
+        timestamp_ms: chrono::Utc::now().timestamp_millis(),
+        virtual_model_name: VirtualModelName::Jev,
+        subscription_id: c.sub_id,
+        provider_id: c.provider_id.clone(),
+        endpoint_id: c.endpoint_id.clone(),
+        real_model_name: c.outbound.real_model.clone(),
+        response_model_name,
+        is_streaming: false,
+        status,
+        http_status,
+        ttft_ms: None,
+        total_latency_ms: Some(latency_ms),
+        upstream_input_tokens: input,
+        upstream_output_tokens: output,
+        upstream_cache_creation: None,
+        upstream_cache_read: None,
+        retry_count,
+        error_message,
+        upstream_response_body: upstream_body,
+        client_tool: ctx.info.tool,
+        client_user_agent: ctx.info.user_agent.clone(),
+        client_version: ctx.info.version.clone(),
+        client_ip: ctx.ip.clone(),
+        entry_kind: Some(ctx.entry_kind.as_str()),
+        downstream_http_version: ctx.http_version.clone(),
+        client_effort: None,
+        effective_effort: None,
+        effort_source: None,
+        upstream_effort: None,
+        tool_calls: ToolLogFields::empty(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::subscription::model::{SubscriptionRow, SubscriptionRuntime};
+    use std::collections::VecDeque;
+
+    fn systemone_row(slot: &str) -> SubscriptionRow {
+        let mut row = SubscriptionRow::test_fixture("typesafe", "default");
+        row.endpoint_protocol = crate::provider::model::EndpointProtocol::Systemone;
+        row.base_url = "https://api.typesafe.ai".into();
+        row.messages_path = "/v1/systemone".into();
+        row.auth_header_name = "Authorization".into();
+        row.api_key = "k".into();
+        row.model_slots.jev = slot.into();
+        row.required_headers.insert("anthropic-version".into(), "2023-06-01".into());
+        row
+    }
+
+    const RAW: &str = r#"{"model":"jev-latest","state":"hi","questions":{"a":{"type":"noul","instructions":"y?"}}}"#;
+
+    #[test]
+    fn empty_slot_forwards_bytes_untouched() {
+        let raw = Bytes::from_static(RAW.as_bytes());
+        let out = build_outbound(&systemone_row(""), &raw, "jev-latest").unwrap();
+        assert_eq!(out.body, raw, "槽为空时请求体逐字节不变");
+        assert!(!out.rewritten);
+        assert_eq!(out.real_model, "jev-latest");
+        assert_eq!(out.url, "https://api.typesafe.ai/v1/systemone");
+    }
+
+    #[test]
+    fn slot_rewrites_model_and_keeps_everything_else() {
+        let raw = Bytes::from_static(RAW.as_bytes());
+        let out = build_outbound(&systemone_row("clef-flash"), &raw, "jev-latest").unwrap();
+        assert!(out.rewritten);
+        assert_eq!(out.real_model, "clef-flash");
+        let mut sent: Value = serde_json::from_slice(&out.body).unwrap();
+        let mut orig: Value = serde_json::from_str(RAW).unwrap();
+        assert_eq!(sent["model"], "clef-flash");
+        sent["model"] = Value::Null;
+        orig["model"] = Value::Null;
+        assert_eq!(sent, orig, "除 model 外语义相等");
+    }
+
+    #[test]
+    fn slot_equal_to_client_model_is_not_a_rewrite() {
+        let raw = Bytes::from_static(RAW.as_bytes());
+        let out = build_outbound(&systemone_row("jev-latest"), &raw, "jev-latest").unwrap();
+        assert!(!out.rewritten);
+        assert_eq!(out.body, raw);
+    }
+
+    #[test]
+    fn outbound_headers_are_only_auth_and_content_type() {
+        let raw = Bytes::from_static(RAW.as_bytes());
+        let out = build_outbound(&systemone_row(""), &raw, "jev-latest").unwrap();
+        assert_eq!(out.headers.len(), 2, "{:?}", out.headers);
+        assert_eq!(out.headers["authorization"], "Bearer k");
+        assert_eq!(out.headers["content-type"], "application/json");
+        assert!(out.headers.get("anthropic-version").is_none(), "不消费 required_headers");
+    }
+
+    #[test]
+    fn response_model_restored_only_when_rewritten() {
+        let up = serde_json::json!({"model": "clef-flash", "answers": {}});
+        assert_eq!(restore_model(up.clone(), "jev-latest", true)["model"], "jev-latest");
+        let up = serde_json::json!({"model": "jev-1.13.0", "answers": {}});
+        assert_eq!(restore_model(up, "jev-latest", false)["model"], "jev-1.13.0", "未改写时透传上游解析后的版本名");
+    }
+
+    #[test]
+    fn error_body_uses_typesafe_shape() {
+        let b = error_body("overloaded_error", "boom");
+        assert_eq!(b["detail"]["error_type"], "overloaded_error");
+        assert_eq!(b["detail"]["message"], "boom");
+    }
+
+    // ---------- 候选循环 ----------
+
+    struct MockSink {
+        replies: VecDeque<AttemptResult>,
+        sent: Vec<Uuid>,
+        recorded: Vec<(Uuid, u32)>,
+    }
+
+    impl MockSink {
+        fn new(replies: Vec<AttemptResult>) -> Self {
+            Self { replies: replies.into(), sent: Vec::new(), recorded: Vec::new() }
+        }
+    }
+
+    impl AttemptSink for MockSink {
+        fn send<'a>(&'a mut self, c: &'a Candidate) -> BoxFuture<'a, AttemptResult> {
+            self.sent.push(c.sub_id);
+            let r = self.replies.pop_front().expect("测试没给足回复");
+            Box::pin(async move { r })
+        }
+        fn record<'a>(&'a mut self, c: &'a Candidate, _r: &'a AttemptResult, retry_count: u32) -> BoxFuture<'a, ()> {
+            self.recorded.push((c.sub_id, retry_count));
+            Box::pin(async {})
+        }
+    }
+
+    fn cand(name: &str) -> Candidate {
+        let row = systemone_row("");
+        let raw = Bytes::from_static(RAW.as_bytes());
+        Candidate {
+            sub_id: Uuid::new_v4(),
+            display_name: name.into(),
+            provider_id: row.provider_id.clone(),
+            endpoint_id: row.endpoint_id.clone(),
+            outbound: build_outbound(&row, &raw, "jev-latest").unwrap(),
+            rt: Arc::new(RwLock::new(SubscriptionRuntime::from_row(row))),
+        }
+    }
+
+    fn http(status: u16, body: Value) -> AttemptResult {
+        let status = StatusCode::from_u16(status).unwrap();
+        let body_text = (!status.is_success()).then(|| body.to_string());
+        AttemptResult::Http { status, body, body_text }
+    }
+
+    fn ok_body() -> Value {
+        serde_json::json!({"model": "jev-1.13.0", "answers": {"a": {"type": "noul", "noul": 0.9}}, "usage": {"input_tokens": 300, "output_tokens": 20}})
+    }
+
+    #[tokio::test]
+    async fn not_found_on_first_then_success_on_second() {
+        let cands = vec![cand("A"), cand("B")];
+        let mut sink = MockSink::new(vec![http(404, serde_json::json!({"error": "model not found"})), http(200, ok_body())]);
+        match run_candidates(&cands, &mut sink).await {
+            LoopEnd::Done { index, status, .. } => assert_eq!((index, status.as_u16()), (1, 200)),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sink.recorded, vec![(cands[0].sub_id, 0), (cands[1].sub_id, 1)], "每次 attempt 一条记录, retry_count 递增");
+    }
+
+    /// 实测推翻了「400 短路」: 换一家可能成功, 所以 400 也要切下家。
+    #[tokio::test]
+    async fn bad_request_does_not_short_circuit() {
+        let cands = vec![cand("A"), cand("B")];
+        let mut sink = MockSink::new(vec![http(400, serde_json::json!({"detail": {"error_type": "api_usage_error", "message": "Invalid request."}})), http(200, ok_body())]);
+        assert!(matches!(run_candidates(&cands, &mut sink).await, LoopEnd::Done { index: 1, .. }));
+        assert_eq!(sink.sent.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn all_request_errors_return_the_last_upstream_error() {
+        let cands = vec![cand("A"), cand("B")];
+        let last = serde_json::json!({"error": {"message": "Model nope does not exist", "code": 400}});
+        let mut sink = MockSink::new(vec![http(422, serde_json::json!({"detail": []})), http(400, last.clone())]);
+        match run_candidates(&cands, &mut sink).await {
+            LoopEnd::RequestRejected { status, body, .. } => {
+                assert_eq!(status.as_u16(), 400);
+                assert_eq!(body, last);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// 401 / 403 / 429 是订阅状态问题, 不当作「请求本身的错误」原样返回。
+    #[tokio::test]
+    async fn auth_and_rate_limit_failures_are_exhausted_not_passthrough() {
+        let cands = vec![cand("A"), cand("B")];
+        let mut sink = MockSink::new(vec![http(400, serde_json::json!({})), http(429, serde_json::json!({}))]);
+        assert!(matches!(run_candidates(&cands, &mut sink).await, LoopEnd::Exhausted), "最后一次是 429 → 503");
+        let mut sink = MockSink::new(vec![http(401, serde_json::json!({})), http(403, serde_json::json!({}))]);
+        assert!(matches!(run_candidates(&cands, &mut sink).await, LoopEnd::Exhausted));
+    }
+
+    #[tokio::test]
+    async fn server_and_network_errors_are_exhausted() {
+        let cands = vec![cand("A"), cand("B")];
+        let mut sink = MockSink::new(vec![http(529, serde_json::json!({})), AttemptResult::Network("connection refused".into())]);
+        assert!(matches!(run_candidates(&cands, &mut sink).await, LoopEnd::Exhausted));
+        assert_eq!(sink.sent.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn no_candidates_is_exhausted() {
+        let mut sink = MockSink::new(vec![]);
+        assert!(matches!(run_candidates(&[], &mut sink).await, LoopEnd::Exhausted));
+    }
+
+    #[test]
+    fn log_entry_fields() {
+        let c = cand("A");
+        let ctx = ClientContext { entry_kind: crate::proxy::client_fingerprint::RequestEntryKind::SystemOne, ..Default::default() };
+        let ok = log_entry(&c, &http(200, ok_body()), 1, &ctx, 812);
+        assert_eq!(ok.virtual_model_name, crate::virtual_model::VirtualModelName::Jev);
+        assert_eq!(ok.entry_kind, Some("systemone"));
+        assert!(!ok.is_streaming && ok.ttft_ms.is_none());
+        assert_eq!((ok.upstream_input_tokens, ok.upstream_output_tokens), (Some(300), Some(20)));
+        assert_eq!((ok.upstream_cache_creation, ok.upstream_cache_read), (None, None));
+        assert_eq!(ok.response_model_name.as_deref(), Some("jev-1.13.0"), "记上游原值");
+        assert_eq!(ok.real_model_name, "jev-latest");
+        assert_eq!((ok.retry_count, ok.total_latency_ms), (1, Some(812)));
+        assert!(ok.client_effort.is_none() && ok.effective_effort.is_none() && ok.effort_source.is_none());
+        assert_eq!(ok.tool_calls, ToolLogFields::empty());
+        assert!(ok.error_message.is_none() && ok.upstream_response_body.is_none());
+
+        let bad = log_entry(&c, &http(400, serde_json::json!({"error": "x"})), 0, &ctx, 5);
+        assert_eq!(bad.http_status, Some(400));
+        assert_eq!(bad.error_message.as_deref(), Some("HTTP 400"));
+        assert!(bad.upstream_response_body.unwrap().contains("\"error\""));
+
+        let net = log_entry(&c, &AttemptResult::Network("refused".into()), 0, &ctx, 5);
+        assert_eq!(net.http_status, None);
+        assert!(net.error_message.unwrap().contains("refused"));
+    }
+
+    #[test]
+    fn state_events() {
+        use crate::subscription::state_machine::Event;
+        assert!(matches!(state_event(&http(200, ok_body())), Event::RequestSucceeded));
+        assert!(matches!(state_event(&http(429, serde_json::json!({}))), Event::HttpStatus(429)));
+        assert!(matches!(state_event(&AttemptResult::Network("x".into())), Event::NetworkError));
+    }
+
+    #[test]
+    fn probe_body_is_a_minimal_noul_question() {
+        let b = probe_body("clef-flash");
+        assert_eq!(b["model"], "clef-flash");
+        assert_eq!(b["questions"]["ok"]["type"], "noul");
+    }
+}
