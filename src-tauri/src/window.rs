@@ -16,8 +16,9 @@
 use tauri::{LogicalSize, Manager};
 use tracing::{info, warn};
 
-/// 理想尺寸下限 (CSS px): 笔记本与小屏上的目标尺寸。
-const PREFERRED_W: f64 = 1200.0;
+/// 理想尺寸下限 (CSS px): 笔记本与小屏上的目标尺寸。宽度按请求日志表格 (十列) 在
+/// 侧边栏之外完整放下所需反推 (2026-10 由 1200 提到 1360; 原先 1200 下右侧几列会被裁掉)。
+const PREFERRED_W: f64 = 1360.0;
 const PREFERRED_H: f64 = 800.0;
 /// 理想尺寸上限 (CSS px): 外接大屏放大的封顶, 防止超宽屏出现巨型窗口。
 const MAX_W: f64 = 1600.0;
@@ -69,7 +70,7 @@ fn resolve_ui_zoom(scale_factor: f64) -> f64 {
 /// `avail_*` 是显示器可用区的逻辑像素尺寸; `ui_zoom` 是 webview 页面缩放倍数 ——
 /// 视口被 zoom 压缩, 所以窗口像素要按 zoom 放大才能维持同样的 CSS px 布局宽度。
 fn compute_geometry(avail_w: f64, avail_h: f64, ui_zoom: f64) -> Geometry {
-    // 理想尺寸: 笔记本上恒为 1200x800; 外接大屏按可用区比例增长, 封顶 1600x1000
+    // 理想尺寸: 笔记本上恒为 1360x800; 外接大屏按可用区比例增长, 封顶 1600x1000
     let pref_w = (avail_w * GROW_W).clamp(PREFERRED_W, MAX_W);
     let pref_h = (avail_h * GROW_H).clamp(PREFERRED_H, MAX_H);
 
@@ -204,7 +205,7 @@ mod tests {
     #[test]
     fn caps_at_preferred_on_laptops() {
         // MacBook Pro 14": 可用区够大但未达大屏阈值, 恒定理想尺寸
-        check("MBP14", (1512.0, 887.0), 1.0, (1200.0, 800.0));
+        check("MBP14", (1512.0, 887.0), 1.0, (1360.0, 800.0));
     }
 
     #[test]
@@ -217,10 +218,10 @@ mod tests {
 
     #[test]
     fn accounts_for_windows_zoom() {
-        // zoom 把窗口像素放大, 使 CSS 视口回到 1200x800
-        check("1080p@100% Win", (1920.0, 1040.0), 1.08, (1296.0, 864.0));
+        // zoom 把窗口像素放大, 使 CSS 视口回到 1360x800
+        check("1080p@100% Win", (1920.0, 1040.0), 1.08, (1468.8, 864.0));
         let geo = compute_geometry(1920.0, 1040.0, 1.08);
-        assert_close(geo.width / 1.08, 1200.0, "CSS 视口宽");
+        assert_close(geo.width / 1.08, 1360.0, "CSS 视口宽");
         assert_close(geo.height / 1.08, 800.0, "CSS 视口高");
 
         // zoom 与可用区收缩并存
