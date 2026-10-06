@@ -23,7 +23,7 @@ pub struct UpdateVirtualModelInput {
 #[tauri::command]
 pub async fn list_virtual_models(state: State<'_, AppState>) -> AppResult<Vec<VirtualModelDto>> {
     let guard = state.virtual_models.read().await;
-    let mut out = Vec::with_capacity(3);
+    let mut out = Vec::with_capacity(VirtualModelName::all().len());
     for name in VirtualModelName::all() {
         if let Some(cfg) = guard.get(&name) {
             out.push(VirtualModelDto {

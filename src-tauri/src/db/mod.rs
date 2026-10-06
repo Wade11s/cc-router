@@ -407,6 +407,17 @@ mod tests {
         assert!(has_column(&pool, "requests", "effective_effort").await);
         assert!(has_column(&pool, "requests", "effort_source").await);
         assert!(has_column(&pool, "requests", "upstream_effort").await);
+        // 六个虚拟模型都有种子行 (含 model-jev)
+        let seeded: (i64,) = sqlx::query_as("SELECT count(*) FROM virtual_model_config")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(seeded.0, 6);
+        let jev: (i64,) = sqlx::query_as("SELECT count(*) FROM virtual_model_config WHERE virtual_model_name = 'model-jev'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(jev.0, 1);
         // v23: 端点协议快照 + Jev 槽
         assert!(has_column(&pool, "subscriptions", "endpoint_protocol").await);
         assert!(has_column(&pool, "subscriptions", "model_slot_jev").await);
@@ -921,7 +932,7 @@ mod tests {
 }
 
 async fn seed_virtual_model_config(pool: &SqlitePool) -> AppResult<()> {
-    for name in ["model-fable", "model-opus", "model-sonnet", "model-haiku", "model-fallback"] {
+    for name in ["model-fable", "model-opus", "model-sonnet", "model-haiku", "model-fallback", "model-jev"] {
         sqlx::query(
             "INSERT OR IGNORE INTO virtual_model_config (virtual_model_name, mode) VALUES (?, 'sequential')",
         )
