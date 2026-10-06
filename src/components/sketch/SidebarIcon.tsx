@@ -8,7 +8,7 @@ import type { CSSProperties, ReactNode } from "react";
  */
 export type SidebarIconName =
   | "guide" | "live" | "vm" | "subs" | "logs" | "stats"
-  | "receipts" | "updates" | "settings" | "about" | "logout" | "whatsnew"
+  | "receipts" | "updates" | "backup" | "settings" | "about" | "logout" | "whatsnew"
   // 侧栏底部的两枚图案按钮: 明暗模式三态 + 当前主题
   | "mode-system" | "mode-light" | "mode-dark" | "theme";
 
@@ -141,6 +141,20 @@ const ICONS: Record<SidebarIconName, IconDef> = {
         <path d="M25.4 8.2 L24.8 12.4 L20.8 11.6" />
         <path d="M7.4 19.8 C 9.4 24.4, 15.2 26.4, 19.8 24.1 C 23.2 22.4, 25 19, 24.7 15.8" />
         <path d="M6.6 23.8 L7.2 19.6 L11.2 20.4" />
+      </>
+    ),
+  },
+  // 软盘: 顶上一块金属挡板 (陶土色读写窗), 底下一张写了字的标签
+  backup: {
+    blob: BLOB.f,
+    fill: "var(--fill-cactus)",
+    draw: (thin) => (
+      <>
+        <path style={PAPER} d="M6.4 6 L22.6 5.8 L26.2 9.4 L26 26.2 L6.2 26.4 Z" />
+        <path d="M10.4 6 L10.6 12.4 L20.8 12.2 L20.6 5.9" />
+        <path style={{ ...ACCENT, strokeWidth: 0 }} d="M16.8 7.6 L18.8 7.5 L18.9 10.7 L16.9 10.8 Z" />
+        <path d="M9.6 26.3 L9.8 17.4 L22.6 17.2 L22.8 26.2" />
+        <path style={thin} d="M12.2 20.4 L20.2 20.2 M12.2 23.2 L18 23.3" />
       </>
     ),
   },

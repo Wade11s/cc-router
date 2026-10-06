@@ -18,6 +18,7 @@
   "sidebar.nav.subscriptions": "Subscriptions",
   "sidebar.nav.requestLogs": "Request logs",
   "sidebar.nav.statistics": "Statistics",
+  "sidebar.nav.backup": "Backup",
   "sidebar.nav.settings": "Settings",
   "sidebar.nav.about": "About",
   "sidebar.updateAvailable": "Update available",

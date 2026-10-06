@@ -1,9 +1,10 @@
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Activity,
   BarChart3,
   BookOpen,
+  DatabaseBackup,
   Info,
   Key,
   Layers,
@@ -43,6 +44,7 @@ const PLAIN_ICONS: Record<SidebarIconName, LucideIcon> = {
   stats: BarChart3,
   receipts: Receipt,
   updates: RefreshCw,
+  backup: DatabaseBackup,
   settings: SettingsIcon,
   about: Info,
   logout: LogOut,
@@ -74,6 +76,8 @@ interface NavItem {
   dotTone?: "err" | "ok";
   /** 无障碍与 hover 提示文案的 i18n key */
   dotLabelKey?: string;
+  /** 自定义激活判定; 缺省走 NavLink 的 pathname 匹配 (它不看 query) */
+  active?: boolean;
 }
 
 export function Sidebar() {
@@ -84,10 +88,14 @@ export function Sidebar() {
   const vms = useVirtualModels();
   const notes = useReleaseNotesDialog();
   const { art, mode, setMode, themeId, setThemeId } = useTheme();
+  const location = useLocation();
 
   const subsCount = subs.data?.length ?? 0;
   const running = proxy.data?.running ?? false;
   const hasUpdate = detected !== null;
+  // 「备份与迁移」是设置页的一个 tab (?tab=backup) 的快捷入口; 两项同路径, 按 query 区分谁亮
+  const onSettings = location.pathname === "/settings";
+  const onBackupTab = onSettings && new URLSearchParams(location.search).get("tab") === "backup";
 
   const items: NavItem[] = [
     { to: "/guide", label: t("sidebar.nav.guide"), icon: "guide" },
@@ -116,7 +124,8 @@ export function Sidebar() {
       dot: hasUpdate,
       dotLabelKey: "sidebar.updateAvailable",
     },
-    { to: "/settings", label: t("sidebar.nav.settings"), icon: "settings" },
+    { to: "/settings?tab=backup", label: t("sidebar.nav.backup"), icon: "backup", active: onBackupTab },
+    { to: "/settings", label: t("sidebar.nav.settings"), icon: "settings", active: onSettings && !onBackupTab },
     { to: "/about", label: t("sidebar.nav.about"), icon: "about" },
   ];
 
@@ -147,7 +156,8 @@ export function Sidebar() {
             <NavLink
               key={it.to}
               to={it.to}
-              className={({ isActive }) => cn("nav-item", isActive && "active")}
+              className={({ isActive }) => cn("nav-item", (it.active ?? isActive) && "active")}
+              aria-current={it.active === false ? false : undefined}
             >
               <span className="nav-icon">
                 <NavIcon name={it.icon} art={art} />

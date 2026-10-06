@@ -18,6 +18,7 @@
   "sidebar.nav.subscriptions": "订阅管理",
   "sidebar.nav.requestLogs": "请求日志",
   "sidebar.nav.statistics": "数据统计",
+  "sidebar.nav.backup": "备份与迁移",
   "sidebar.nav.settings": "设置",
   "sidebar.nav.about": "关于",
   "sidebar.updateAvailable": "有可用更新",
