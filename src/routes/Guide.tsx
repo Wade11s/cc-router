@@ -92,7 +92,7 @@ export function GuidePage() {
 }
 
 /* ============================================================
- * 通用接入方式: 三个入口协议各一张卡, 内容对应 README「入口」章节.
+ * 通用接入方式: 三个对话入口各一张卡 + 模型列表 + Jev (System One), 内容对应 README「入口」章节.
  * Base URL 用真实端口拼, 不写死 23456.
  * ============================================================ */
 
@@ -174,6 +174,38 @@ function VirtualModelNames() {
   );
 }
 
+/** 目录项 → 卡片锚点 id。顺序即页面上卡片的顺序。 */
+const GENERIC_TOC: { id: string; titleKey: string; path: string }[] = [
+  ...GENERIC_ENTRIES.map((e) => ({ id: `generic-${e.id}`, titleKey: `guide.generic.${e.id}.title`, path: e.path })),
+  { id: "generic-models", titleKey: "guide.generic.models.title", path: "GET /v1/models" },
+  { id: "generic-systemone", titleKey: "guide.generic.systemone.title", path: "POST /v1/systemone" },
+];
+
+/** 平滑滚到卡片; 系统开了「减少动态效果」时直接跳。用按钮而非 #锚点: 网页界面是 HashRouter, # 被路由占用。 */
+function scrollToCard(id: string) {
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  document.getElementById(id)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+}
+
+function GenericToc() {
+  const { t } = useT();
+  return (
+    <nav className="guide-toc" aria-label={t("guide.generic.toc")}>
+      <div className="guide-toc-title">{t("guide.generic.toc")}</div>
+      <ol>
+        {GENERIC_TOC.map((item) => (
+          <li key={item.id}>
+            <button type="button" onClick={() => scrollToCard(item.id)}>
+              <span>{t(item.titleKey)}</span>
+              <span className="mono guide-toc-path">{item.path}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+    </nav>
+  );
+}
+
 function GenericTab() {
   const { t } = useT();
   const { baseUrl, port, token } = useProxyEndpoint();
@@ -190,8 +222,9 @@ function GenericTab() {
       <div className="field-hint" style={{ marginBottom: 16 }}>
         {t("guide.generic.intro")}
       </div>
+      <GenericToc />
       {GENERIC_ENTRIES.map((e) => (
-        <div className="card section" key={e.id}>
+        <div className="card section" key={e.id} id={`generic-${e.id}`}>
           <div className="card-head">
             <div className="card-title" style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
               {t(`guide.generic.${e.id}.title`)}
@@ -261,7 +294,7 @@ function GenericTab() {
       ))}
 
       {/* GET /v1/models: 免鉴权, 同时兼容 OpenAI / Anthropic 两种列表格式 (handler.rs::models) */}
-      <div className="card section">
+      <div className="card section" id="generic-models">
         <div className="card-head">
           <div className="card-title" style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
             {t("guide.generic.models.title")}
@@ -299,7 +332,83 @@ function GenericTab() {
           </ul>
         </div>
       </div>
+
+      <SystemOneCard origin={origin} token={token} authEnabled={authEnabled} />
     </>
+  );
+}
+
+/**
+ * POST /v1/systemone: Jev 决策协议原样透传, 只走 model-jev (proxy/systemone.rs)。
+ * 调用方是用户自己的代码, 所以给一段用真实端口 / 令牌拼好的 curl, 复制即可验证。
+ */
+function SystemOneCard({ origin, token, authEnabled }: { origin: string; token: string; authEnabled: boolean }) {
+  const { t } = useT();
+  const body = {
+    model: "model-jev",
+    state: "Hello World",
+    questions: {
+      says_hello: { type: "noul", instructions: "Does the state text contain a greeting?" },
+    },
+  };
+  const curl = [
+    `curl ${origin}/v1/systemone \\`,
+    `  -H "Content-Type: application/json" \\`,
+    ...(authEnabled ? [`  -H "Authorization: Bearer ${token}" \\`] : []),
+    // 多行缩进的 JSON 放在单引号里, 粘到 shell 照样能跑, 也不用横向滚动才能读全
+    `  -d '${JSON.stringify(body, null, 2)}'`,
+  ].join("\n");
+  return (
+    <div className="card section" id="generic-systemone">
+      <div className="card-head">
+        <div className="card-title" style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          {t("guide.generic.systemone.title")}
+          <span className="mono" style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 400 }}>
+            POST /v1/systemone
+          </span>
+        </div>
+        <span className="card-sub">{t("guide.generic.systemone.clients")}</span>
+      </div>
+      <div className="card-body">
+        <table className="table" style={{ fontSize: 12, tableLayout: "fixed", marginBottom: 14 }}>
+          <tbody>
+            <tr>
+              <td style={{ width: 104, color: "var(--ink-3)" }}>{t("guide.generic.systemone.row.url")}</td>
+              <td>
+                <CopyableBlock text={`${origin}/v1/systemone`} variant="inline" />
+                <div className="field-hint" style={{ marginTop: 6 }}>{t("guide.generic.systemone.urlHint")}</div>
+              </td>
+            </tr>
+            <tr>
+              <td style={{ color: "var(--ink-3)" }}>{t("guide.generic.row.token")}</td>
+              <td>
+                {authEnabled ? (
+                  <CopyableBlock text={token} variant="inline" />
+                ) : (
+                  <span style={{ color: "var(--ink-3)" }}>{t("guide.generic.tokenOff")}</span>
+                )}
+                <div className="field-hint" style={{ marginTop: 6 }}>{t("guide.generic.systemone.auth")}</div>
+              </td>
+            </tr>
+            <tr>
+              <td style={{ color: "var(--ink-3)" }}>{t("guide.generic.row.model")}</td>
+              <td>
+                <span className="mono strong">model-jev</span>
+                <div className="field-hint" style={{ marginTop: 6 }}>{t("guide.generic.systemone.modelHint")}</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div className="field-hint" style={{ marginBottom: 8 }}>{t("guide.generic.systemone.curlHint")}</div>
+        <CopyableBlock text={curl} className="mb-3" />
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t("guide.generic.notesTitle")}</div>
+        <ul className="guide-notes">
+          {Array.from({ length: 5 }, (_, i) => (
+            <li key={i}>{t(`guide.generic.systemone.note${i + 1}`)}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }
 
