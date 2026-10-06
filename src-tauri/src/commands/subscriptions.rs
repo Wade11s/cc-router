@@ -9,7 +9,9 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::provider::model::{AuthHeaderFormat, AuthType, ModelDiscovery};
+use crate::provider::model::{
+    AuthHeaderFormat, AuthType, EndpointProtocol, ModelDiscovery, Provider, ProviderEndpoint,
+};
 use crate::state::AppState;
 use crate::subscription::{
     balance_discovery,
@@ -108,6 +110,27 @@ pub struct CreateSubscriptionInput {
 /// `tui_effort_choices_equal_the_backend_allowlist` 能核对 TUI 侧的 `EFFORT_CHOICES` 常量仍然
 /// 逐字相同——这是本 Task 唯一允许的后端改动, 不改变任何行为。
 pub(crate) const ALLOWED_SLOT_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// 内置订阅换端点时协议不许变: 对话 ↔ System One 互换会绕过虚拟模型的绑定隔离。
+pub(crate) fn protocol_switch_rejection(
+    from: EndpointProtocol,
+    to: EndpointProtocol,
+) -> Option<&'static str> {
+    (from != to).then_some("切换端点不能改变协议类型 (对话 ↔ System One), 请新建订阅")
+}
+
+/// 订阅创建 / 换端点时的 model_discovery 快照: 端点自带 example_models 时覆盖 provider 级的
+/// (System One 端点的提示与对话端点不同), 探测 (ping::pick_test_model) 与向导占位都读这份快照。
+fn snapshot_discovery(provider: &Provider, endpoint: &ProviderEndpoint) -> ModelDiscovery {
+    if endpoint.example_models.is_empty() {
+        provider.model_discovery.clone()
+    } else {
+        ModelDiscovery {
+            example_models: endpoint.example_models.clone(),
+            ..provider.model_discovery.clone()
+        }
+    }
+}
 
 /// 校验 patch 里的槽位 effort 都在白名单内 (空/缺失 = auto, 合法)。
 /// 显式列四个槽位而不是遍历: 将来给 ModelSlots 加槽位时这里会因缺字段而被注意到。
@@ -275,7 +298,8 @@ pub async fn create_subscription(
                 required_headers: provider.required_headers.clone(),
                 forward_headers: provider.forward_headers.clone(),
                 forward_client_headers: false,
-                model_discovery: provider.model_discovery.clone(),
+                endpoint_protocol: endpoint.protocol,
+                model_discovery: snapshot_discovery(provider, endpoint),
                 balance_discovery: provider.balance_discovery.clone(),
                 provider_display_name: provider.display_name.zh.clone(),
                 provider_icon: provider.icon.clone().unwrap_or_default(),
@@ -405,6 +429,8 @@ pub async fn create_subscription(
                 required_headers: BTreeMap::new(),
                 forward_headers: Vec::new(),
                 forward_client_headers: false,
+                // 自定义入口暂不支持 systemone
+                endpoint_protocol: EndpointProtocol::Messages,
                 model_discovery: discovery,
                 balance_discovery: None,
                 provider_display_name,
@@ -461,13 +487,17 @@ pub async fn update_subscription(
         let endpoint = provider
             .endpoint(new_endpoint_id)
             .ok_or_else(|| AppError::EndpointNotFound(new_endpoint_id.clone()))?;
+        let current = rt.read().await.row.endpoint_protocol;
+        if let Some(msg) = protocol_switch_rejection(current, endpoint.protocol) {
+            return Err(AppError::BadRequest(msg.into()));
+        }
         // model_discovery 也跟着 yaml 重拍: 内置订阅的这份只来自 yaml (不像自定义订阅会写回探测结果),
         // 老快照可能带着写死的旧域名 url, 切到别的区域后会拿新区域的 Key 去查旧域名。
         Some((
             new_endpoint_id.clone(),
             endpoint.base_url.clone(),
             endpoint.messages_path.clone(),
-            provider.model_discovery.clone(),
+            snapshot_discovery(provider, endpoint),
         ))
     } else {
         None
@@ -1155,5 +1185,19 @@ mod tests {
         assert!(
             validate_required_headers(&hdrs(&[("X-DST", " eastus2 ")]), "Authorization").is_ok()
         );
+    }
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+
+    #[test]
+    fn switching_endpoint_cannot_change_protocol() {
+        use crate::provider::model::EndpointProtocol::{Messages, Systemone};
+        assert!(protocol_switch_rejection(Messages, Messages).is_none());
+        assert!(protocol_switch_rejection(Systemone, Systemone).is_none());
+        assert!(protocol_switch_rejection(Messages, Systemone).is_some());
+        assert!(protocol_switch_rejection(Systemone, Messages).is_some());
     }
 }

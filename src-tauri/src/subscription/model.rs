@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::provider::model::{
-    join_base_path, AuthHeaderFormat, AuthType, BalanceDiscovery, LocalizedText, ModelDiscovery,
+    join_base_path, AuthHeaderFormat, AuthType, BalanceDiscovery, EndpointProtocol, LocalizedText,
+    ModelDiscovery,
 };
 use crate::provider::Provider;
 use crate::subscription::quota::{QuotaPeriod, QuotaUsage, TokenQuotas};
@@ -149,6 +150,10 @@ pub struct ModelSlots {
     /// 空串 = 未配置 = 透传原始 model. `#[serde(default)]` 兼容不带该字段的旧输入.
     #[serde(default)]
     pub fallback: String,
+    /// Jev 槽 (可选): model-jev 命中该订阅时, 非空则把请求 model 改写为此值,
+    /// 空串 = 透传客户端 model。只对 systemone 订阅有意义。
+    #[serde(default)]
+    pub jev: String,
 }
 
 impl ModelSlots {
@@ -165,6 +170,12 @@ impl ModelSlots {
     /// 不参与 slot_efforts / ping 探测, 所以单独开 getter 而不是塞进 `get`。
     pub fn fallback_model(&self) -> Option<&str> {
         let t = self.fallback.trim();
+        (!t.is_empty()).then_some(t)
+    }
+
+    /// Jev 槽取值: 空白 = 未配置 (透传)。与兜底槽同理不进 [`SubscriptionSlot`]。
+    pub fn jev_model(&self) -> Option<&str> {
+        let t = self.jev.trim();
         (!t.is_empty()).then_some(t)
     }
 }
@@ -255,6 +266,8 @@ pub struct SubscriptionRow {
     /// 打开后 Anthropic 透传路径按 proxy/forward.rs 的内置白名单转发客户端头;
     /// 翻译类 auth_type 不消费此字段。
     pub forward_client_headers: bool,
+    /// 创建时快照的端点协议, 之后不可变 (migration 023)。决定订阅只能绑哪类虚拟模型。
+    pub endpoint_protocol: EndpointProtocol,
     pub model_discovery: ModelDiscovery,
     /// 余额查询配置 snapshot. provider yaml 不声明则为 None, UI 不显示余额卡片.
     pub balance_discovery: Option<BalanceDiscovery>,
@@ -491,6 +504,9 @@ pub struct SubscriptionDto {
     /// 「透传客户端请求头」开关. 默认 false 兼容老 DTO 消费者.
     #[serde(default)]
     pub forward_client_headers: bool,
+    /// 端点协议 (`messages` / `systemone`)。客户端据此决定显示四槽还是 Jev 槽、能绑哪些虚拟模型。
+    #[serde(default)]
+    pub endpoint_protocol: EndpointProtocol,
     pub model_discovery: ModelDiscovery,
     /// Whether this subscription's provider exposes a balance/quota endpoint.
     /// Derived from `balance_discovery.is_some_and(|b| b.enabled)` server-side;
@@ -566,6 +582,7 @@ impl SubscriptionRow {
                 sonnet: "b".into(),
                 haiku: "c".into(),
                 fallback: String::new(),
+                jev: String::new(),
             },
             slot_efforts: SlotEfforts::default(),
             token_quotas: TokenQuotas::default(),
@@ -581,6 +598,7 @@ impl SubscriptionRow {
             required_headers: BTreeMap::new(),
             forward_headers: Vec::new(),
             forward_client_headers: false,
+            endpoint_protocol: EndpointProtocol::Messages,
             model_discovery: ModelDiscovery::default(),
             balance_discovery: None,
             provider_display_name: String::new(),
@@ -650,6 +668,7 @@ impl SubscriptionDto {
             required_headers: rt.row.required_headers.clone(),
             forward_headers: rt.row.forward_headers.clone(),
             forward_client_headers: rt.row.forward_client_headers,
+            endpoint_protocol: rt.row.endpoint_protocol,
             model_discovery: rt.row.model_discovery.clone(),
             balance_supported: rt
                 .row
@@ -753,6 +772,7 @@ mod tests {
             sonnet: "b".into(),
             haiku: "c".into(),
             fallback: String::new(),
+            jev: String::new(),
         };
         assert_eq!(slots.fallback_model(), None);
         slots.fallback = "   ".into();
@@ -833,5 +853,25 @@ mod tests {
         assert!(total.period_end_ms.is_none());
         assert!(!total.exceeded);
         assert_eq!(dto.token_quotas.weekly, Some(10));
+    }
+
+    #[test]
+    fn jev_slot_is_optional_in_json_and_blank_means_passthrough() {
+        let slots: ModelSlots =
+            serde_json::from_str(r#"{"fable":"","opus":"","sonnet":"","haiku":""}"#).unwrap();
+        assert_eq!(slots.jev_model(), None);
+        let slots = ModelSlots { jev: "  jev-latest ".into(), ..slots };
+        assert_eq!(slots.jev_model(), Some("jev-latest"));
+    }
+
+    #[test]
+    fn dto_exposes_endpoint_protocol() {
+        let mut row = SubscriptionRow::test_fixture("typesafe", "default");
+        row.endpoint_protocol = crate::provider::model::EndpointProtocol::Systemone;
+        let rt = SubscriptionRuntime::from_row(row);
+        let dto = SubscriptionDto::from_runtime(&rt, vec![], &HashMap::new());
+        let json = serde_json::to_value(&dto).unwrap();
+        assert_eq!(json["endpoint_protocol"], "systemone");
+        assert_eq!(json["model_slots"]["jev"], "");
     }
 }

@@ -22,7 +22,7 @@ use crate::oauth::chatgpt::{
     CODEX_ORIGINATOR,
 };
 use crate::oauth::kiro::{KiroAccount, KiroDeviceFlowStart, KiroImportPreview};
-use crate::provider::model::AuthType;
+use crate::provider::model::{AuthType, EndpointProtocol};
 use crate::state::AppState;
 use crate::subscription::{
     model::{
@@ -155,6 +155,7 @@ pub async fn create_chatgpt_oauth_subscription(
         required_headers,
         forward_headers: provider.forward_headers.clone(),
         forward_client_headers: false,
+        endpoint_protocol: EndpointProtocol::Messages,
         model_discovery: provider.model_discovery.clone(),
         balance_discovery: provider.balance_discovery.clone(),
         provider_display_name: provider.display_name.zh.clone(),
@@ -426,6 +427,7 @@ pub async fn create_kiro_subscription(
         required_headers,
         forward_headers: provider.forward_headers.clone(),
         forward_client_headers: false,
+        endpoint_protocol: EndpointProtocol::Messages,
         model_discovery: provider.model_discovery.clone(),
         balance_discovery: provider.balance_discovery.clone(),
         provider_display_name: provider.display_name.zh.clone(),

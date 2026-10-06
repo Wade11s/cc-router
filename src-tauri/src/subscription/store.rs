@@ -10,7 +10,9 @@ use uuid::Uuid;
 use std::str::FromStr;
 
 use crate::error::{AppError, AppResult};
-use crate::provider::model::{AuthHeaderFormat, AuthType, BalanceDiscovery, ModelDiscovery};
+use crate::provider::model::{
+    AuthHeaderFormat, AuthType, BalanceDiscovery, EndpointProtocol, ModelDiscovery,
+};
 use crate::subscription::model::{
     BalanceSnapshot, ModelCache, ModelInfo, ModelSlots, OAuthMetadata, SlotEfforts,
     SubscriptionRow, SubscriptionRuntime,
@@ -28,14 +30,14 @@ pub async fn load_runtime(
     let rows = sqlx::query(
         "SELECT id, provider_id, endpoint_id, display_name, api_key,
                 model_slot_fable, model_slot_opus, model_slot_sonnet, model_slot_haiku,
-                model_slot_fallback,
+                model_slot_fallback, model_slot_jev,
                 enabled, is_auth_failed, last_error_message,
                 created_at, updated_at,
                 base_url, messages_path, auth_header_name, auth_header_format,
                 required_headers, forward_headers, forward_client_headers,
                 model_discovery, balance_discovery,
                 provider_display_name, provider_icon, is_user_defined,
-                auth_type, oauth_metadata, slot_efforts, token_quotas
+                auth_type, oauth_metadata, slot_efforts, token_quotas, endpoint_protocol
          FROM subscriptions",
     )
     .fetch_all(pool)
@@ -104,6 +106,9 @@ fn row_to_row(row: &sqlx::sqlite::SqliteRow) -> AppResult<SubscriptionRow> {
     };
     let auth_type_str: String = row.try_get("auth_type")?;
     let auth_type = AuthType::from_str(&auth_type_str).map_err(AppError::internal)?;
+    let protocol_str: String = row.try_get("endpoint_protocol")?;
+    let endpoint_protocol =
+        EndpointProtocol::from_str(&protocol_str).map_err(AppError::internal)?;
     let oauth_metadata_json: String = row.try_get("oauth_metadata")?;
     let oauth_metadata: OAuthMetadata = serde_json::from_str(&oauth_metadata_json)
         .map_err(|e| AppError::internal(format!("oauth_metadata JSON 解析失败: {e}")))?;
@@ -148,6 +153,7 @@ fn row_to_row(row: &sqlx::sqlite::SqliteRow) -> AppResult<SubscriptionRow> {
             sonnet: row.try_get("model_slot_sonnet")?,
             haiku: row.try_get("model_slot_haiku")?,
             fallback: row.try_get("model_slot_fallback")?,
+            jev: row.try_get("model_slot_jev")?,
         },
         slot_efforts,
         token_quotas,
@@ -173,6 +179,7 @@ fn row_to_row(row: &sqlx::sqlite::SqliteRow) -> AppResult<SubscriptionRow> {
             let v: i64 = row.try_get("forward_client_headers")?;
             v != 0
         },
+        endpoint_protocol,
         model_discovery,
         balance_discovery,
         provider_display_name: row.try_get("provider_display_name")?,
@@ -210,18 +217,18 @@ pub async fn insert_on(conn: &mut SqliteConnection, sub: &SubscriptionRow) -> Ap
     sqlx::query(
         "INSERT INTO subscriptions (id, provider_id, endpoint_id, display_name, api_key,
             model_slot_fable, model_slot_opus, model_slot_sonnet, model_slot_haiku,
-            model_slot_fallback,
+            model_slot_fallback, model_slot_jev,
             enabled, is_auth_failed, last_error_message, created_at, updated_at,
             base_url, messages_path, auth_header_name, auth_header_format,
             required_headers, forward_headers, forward_client_headers,
             model_discovery, balance_discovery,
             provider_display_name, provider_icon, is_user_defined,
-            auth_type, oauth_metadata, slot_efforts, token_quotas)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            auth_type, oauth_metadata, slot_efforts, token_quotas, endpoint_protocol)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                  ?, ?, ?, ?,
                  ?, ?, ?, ?, ?,
                  ?, ?, ?,
-                 ?, ?, ?, ?)",
+                 ?, ?, ?, ?, ?)",
     )
     .bind(sub.id.to_string())
     .bind(&sub.provider_id)
@@ -233,6 +240,7 @@ pub async fn insert_on(conn: &mut SqliteConnection, sub: &SubscriptionRow) -> Ap
     .bind(&sub.model_slots.sonnet)
     .bind(&sub.model_slots.haiku)
     .bind(&sub.model_slots.fallback)
+    .bind(&sub.model_slots.jev)
     .bind(sub.enabled as i64)
     .bind(sub.is_auth_failed as i64)
     .bind(&sub.last_error_message)
@@ -254,6 +262,7 @@ pub async fn insert_on(conn: &mut SqliteConnection, sub: &SubscriptionRow) -> Ap
     .bind(oauth_json)
     .bind(slot_efforts_json)
     .bind(token_quotas_json)
+    .bind(sub.endpoint_protocol.as_str())
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -301,7 +310,7 @@ pub async fn update_row(pool: &SqlitePool, sub: &SubscriptionRow) -> AppResult<(
         "UPDATE subscriptions SET
             endpoint_id = ?, display_name = ?,
             model_slot_fable = ?, model_slot_opus = ?, model_slot_sonnet = ?, model_slot_haiku = ?,
-            model_slot_fallback = ?,
+            model_slot_fallback = ?, model_slot_jev = ?,
             slot_efforts = ?,
             token_quotas = ?,
             enabled = ?, is_auth_failed = ?, last_error_message = ?, updated_at = ?,
@@ -318,6 +327,7 @@ pub async fn update_row(pool: &SqlitePool, sub: &SubscriptionRow) -> AppResult<(
     .bind(&sub.model_slots.sonnet)
     .bind(&sub.model_slots.haiku)
     .bind(&sub.model_slots.fallback)
+    .bind(&sub.model_slots.jev)
     .bind(slot_efforts_json)
     .bind(token_quotas_json)
     .bind(sub.enabled as i64)
@@ -806,5 +816,44 @@ mod quota_tests {
         let got = loaded.get(&id).unwrap();
         assert_eq!(got.bucket(QuotaPeriod::Daily).total(), 0, "过期 daily 桶装填时清零");
         assert_eq!(got.bucket(QuotaPeriod::Total).total(), 999, "total 永不滚动");
+    }
+}
+
+#[cfg(test)]
+mod jev_tests {
+    use super::*;
+    use crate::db::run_migrations;
+    use crate::provider::model::EndpointProtocol;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn endpoint_protocol_and_jev_slot_round_trip() {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let mut row = SubscriptionRow::test_fixture("ollama", "localhost_systemone");
+        row.endpoint_protocol = EndpointProtocol::Systemone;
+        row.model_slots.jev = "clef-flash".into();
+        insert(&pool, &row).await.unwrap();
+
+        // update_row 不改协议 (协议创建后不可变), 但 jev 槽可改
+        row.model_slots.jev = "clef-pro".into();
+        update_row(&pool, &row).await.unwrap();
+
+        let loaded = load_runtime(&pool).await.unwrap();
+        let rt = loaded.get(&row.id).unwrap().read().await;
+        assert_eq!(rt.row.endpoint_protocol, EndpointProtocol::Systemone);
+        assert_eq!(rt.row.model_slots.jev, "clef-pro");
+    }
+
+    #[tokio::test]
+    async fn legacy_rows_default_to_messages_with_empty_jev_slot() {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let row = SubscriptionRow::test_fixture("zhipu", "default");
+        insert(&pool, &row).await.unwrap();
+        let loaded = load_runtime(&pool).await.unwrap();
+        let rt = loaded.get(&row.id).unwrap().read().await;
+        assert_eq!(rt.row.endpoint_protocol, EndpointProtocol::Messages);
+        assert_eq!(rt.row.model_slots.jev_model(), None);
     }
 }

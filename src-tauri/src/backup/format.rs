@@ -6,7 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::provider::model::{AuthHeaderFormat, AuthType, BalanceDiscovery, ModelDiscovery};
+use crate::provider::model::{
+    AuthHeaderFormat, AuthType, BalanceDiscovery, EndpointProtocol, ModelDiscovery,
+};
 use crate::subscription::model::{ModelSlots, OAuthMetadata, SlotEfforts, SubscriptionRow};
 use crate::subscription::quota::TokenQuotas;
 use crate::virtual_model::model::{RoutingMode, VirtualModelName};
@@ -58,6 +60,9 @@ pub struct ExportSubscription {
     pub forward_headers: Vec<String>,
     #[serde(default)]
     pub forward_client_headers: bool,
+    /// 端点协议快照; 旧导出文件没有该字段, 按对话协议 (messages) 处理。
+    #[serde(default)]
+    pub endpoint_protocol: EndpointProtocol,
     #[serde(default)]
     pub model_discovery: ModelDiscovery,
     #[serde(default)]
@@ -213,6 +218,7 @@ pub fn subscription_to_export(row: &SubscriptionRow) -> (ExportSubscription, Ext
         required_headers,
         forward_headers,
         forward_client_headers,
+        endpoint_protocol,
         model_discovery,
         balance_discovery,
         provider_display_name,
@@ -249,6 +255,7 @@ pub fn subscription_to_export(row: &SubscriptionRow) -> (ExportSubscription, Ext
         required_headers: plain_headers,
         forward_headers: forward_headers.clone(),
         forward_client_headers: *forward_client_headers,
+        endpoint_protocol: *endpoint_protocol,
         model_discovery: model_discovery.clone(),
         balance_discovery: balance_discovery.clone(),
         provider_display_name: provider_display_name.clone(),
@@ -296,6 +303,7 @@ pub fn export_to_row(
         required_headers,
         forward_headers: sub.forward_headers.clone(),
         forward_client_headers: sub.forward_client_headers,
+        endpoint_protocol: sub.endpoint_protocol,
         model_discovery: sub.model_discovery.clone(),
         balance_discovery: sub.balance_discovery.clone(),
         provider_display_name: sub.provider_display_name.clone(),
