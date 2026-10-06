@@ -176,6 +176,31 @@ async fn probe(
     }
 }
 
+/// System One 订阅的探测: 与真实 dispatch 共用 [`crate::proxy::systemone::build_outbound`]
+/// (同一套出站头与 model 改写规则), 发一道最小 noul 题。
+async fn probe_systemone(client: &reqwest::Client, row: &SubscriptionRow, model: &str) -> ProbeResult {
+    use crate::proxy::systemone::{build_outbound, probe_body};
+    let raw = bytes::Bytes::from(serde_json::to_vec(&probe_body(model)).unwrap_or_default());
+    let out = match build_outbound(row, &raw, model) {
+        Ok(o) => o,
+        Err(e) => return ProbeResult::noted(false, None, ProbeNote::Network { detail: e }),
+    };
+    match crate::proxy::upstream::send(client, &out.url, out.body.to_vec(), out.headers, false).await {
+        Ok(crate::proxy::upstream::UpstreamResponse::NonStreaming { status, body_text, .. }) => {
+            let s = status.as_u16();
+            if status.is_success() {
+                ProbeResult::noted(true, Some(s), ProbeNote::Ok)
+            } else {
+                let snippet: String = body_text.unwrap_or_default().chars().take(300).collect();
+                let message = if snippet.is_empty() { format!("HTTP {s}") } else { format!("HTTP {s}: {snippet}") };
+                ProbeResult { ok: false, http_status: Some(s), message, note: None }
+            }
+        }
+        Ok(_) => ProbeResult::noted(true, None, ProbeNote::Ok),
+        Err(e) => ProbeResult::noted(false, None, ProbeNote::Network { detail: e.to_string() }),
+    }
+}
+
 /// 按 `auth_type` 探测一条订阅的真实可达性。
 ///
 /// 与真实请求管线 [`crate::proxy::pipeline::dispatch`] 共用同一批 `dispatch_*_attempt`:
@@ -199,6 +224,11 @@ pub async fn probe_subscription(
     let forced_effort: Option<String> = slot
         .and_then(|s| row.slot_efforts.get(s))
         .map(str::to_string);
+
+    // System One 订阅的 auth_type 也是 ApiKey, 必须先于 match 分流, 否则会被当成 Anthropic 发 ping_body。
+    if row.endpoint_protocol == crate::provider::model::EndpointProtocol::Systemone {
+        return probe_systemone(&state.probe_client, row, model).await;
+    }
 
     match row.auth_type {
         // Anthropic 透传家族: body + auth 与上游兼容, 直接打 messages 端点。
@@ -368,6 +398,16 @@ pub async fn probe_subscription(
 /// 注: 刻意不遍历 fable (保持既有行为不变) —— 探测只验证连通性, 用最弱可用的槽位即可。
 /// 代价是只给 fable 槽设了 effort 的订阅, 探测不会带上那个 effort。
 pub fn pick_test_model(row: &SubscriptionRow) -> Option<(String, Option<SubscriptionSlot>)> {
+    // System One 订阅不用四槽: Jev 槽优先, 否则端点 example_models (创建时已快照进 model_discovery)。
+    if row.endpoint_protocol == crate::provider::model::EndpointProtocol::Systemone {
+        return row
+            .model_slots
+            .jev_model()
+            .map(str::to_string)
+            .or_else(|| row.model_discovery.example_models.first().cloned())
+            .map(|m| (m, None));
+    }
+
     for (s, slot) in [
         (&row.model_slots.sonnet, SubscriptionSlot::Sonnet),
         (&row.model_slots.haiku, SubscriptionSlot::Haiku),
@@ -493,5 +533,16 @@ mod tests {
         }));
         assert!(!r2.ok);
         assert_eq!(r2.http_status, None);
+    }
+
+    #[test]
+    fn pick_test_model_for_systemone_prefers_jev_slot_then_examples() {
+        let mut row = SubscriptionRow::test_fixture("ollama", "localhost_systemone");
+        row.endpoint_protocol = crate::provider::model::EndpointProtocol::Systemone;
+        row.model_slots.sonnet = "should-not-be-used".into();
+        row.model_discovery.example_models = vec!["clef-flash".into()];
+        assert_eq!(pick_test_model(&row), Some(("clef-flash".to_string(), None)));
+        row.model_slots.jev = "clef-pro".into();
+        assert_eq!(pick_test_model(&row), Some(("clef-pro".to_string(), None)));
     }
 }
