@@ -53,6 +53,8 @@
   .toolfill h4 { margin:0 0 6px 0; font-size:13px; }
   .toolfill .item { margin-bottom:8px; }
   .toolfill code { background:#e0f2fe; padding:1px 4px; border-radius:3px; font-size:11px; }
+  .tplbar { display:flex; gap:6px; margin-top:6px; }
+  .tplbar button { width:auto; padding:4px 10px; font-size:12px; background:#fff; color:var(--fg); border:1px solid var(--b); font-weight:500; }
 </style>
 </head>
 <body>
@@ -62,6 +64,7 @@
 <div class="apitabs">
   <button data-api="anthropic" class="active">Anthropic Messages <span class="badge">/v1/messages</span></button>
   <button data-api="responses">OpenAI Responses <span class="badge">/v1/responses</span></button>
+  <button data-api="jev">Jev System One <span class="badge">/v1/systemone</span></button>
 </div>
 
 <div class="hint">本地调试用 · 直接打 <code id="hintUrl">http://127.0.0.1:23456/v1/messages</code></div>
@@ -111,7 +114,7 @@
           <!-- Anthropic 模式下用 model-* 别名; 切到 Responses 模式 JS 自动替换为 gpt-* 别名 -->
         </select>
       </div>
-      <div>
+      <div id="maxTokensWrap">
         <label id="maxTokensLabel">max_tokens</label>
         <input id="maxTokens" type="number" value="1024">
       </div>
@@ -122,10 +125,12 @@
       <input id="customModel" placeholder="claude-sonnet-4-5">
     </div>
 
-    <label><input type="checkbox" id="stream" style="width:auto"> 流式响应 (stream: true)</label>
+    <label id="streamWrap"><input type="checkbox" id="stream" style="width:auto"> 流式响应 (stream: true)</label>
 
-    <label id="systemLabel">System (可选)</label>
-    <input id="system" placeholder="You are a helpful assistant.">
+    <div id="systemWrap">
+      <label id="systemLabel">System (可选)</label>
+      <input id="system" placeholder="You are a helpful assistant.">
+    </div>
 
     <div id="paneSingle">
       <label>用户消息</label>
@@ -154,6 +159,32 @@
         <button id="sendMultiBtn">发送</button>
         <button id="clearConvoBtn" class="danger">清空对话</button>
         <button id="copyMessagesBtn" class="secondary">复制 messages</button>
+      </div>
+    </div>
+
+    <div id="paneJev" style="display:none">
+      <div class="small" style="margin-top:6px">
+        路由由路径决定, 固定走 <code>model-jev</code>; model 字段原样发给上游 (订阅配了 Jev 槽则改写成槽值, 响应 model 回显你写的名字)。
+      </div>
+
+      <label>x-session-id (可选, 会话亲和模式下钉住同一订阅)</label>
+      <input id="jevSessionId" placeholder="留空 = 不参与 sticky">
+
+      <label>模板</label>
+      <div class="tplbar">
+        <button data-tpl="official">官方示例 (noul)</button>
+        <button data-tpl="three">三种题型</button>
+        <button data-tpl="invalid">非法题型 (测 4xx 转发)</button>
+      </div>
+
+      <label>state (字符串, 或以 { / [ 开头的 JSON)</label>
+      <textarea id="jevState" style="min-height:60px"></textarea>
+
+      <label>questions (JSON 对象: 题名 → {type: choice | score | noul, instructions, criteria?})</label>
+      <textarea id="jevQuestions" style="min-height:160px"></textarea>
+
+      <div class="row" style="margin-top:12px">
+        <button id="sendJevBtn">发送</button>
       </div>
     </div>
 
@@ -235,6 +266,43 @@ const API_PROFILES = {
   }
 ]`,
   },
+  // Jev (System One) 决策协议: 非流式, 不生成文本, 没有 system / max_tokens / tools / 多轮。
+  // model 是发给上游的真实模型名 (路由固定走 model-jev), 预设对应三家上游的常用模型。
+  jev: {
+    path: '/v1/systemone',
+    models: ['clef-flash', 'jev-latest', 'jev-preview', 'typesafe/jev-1.13', 'cloudflare/clef-flash'],
+    customLabel: '自定义 model 字符串',
+    customPlaceholder: 'clef-flash',
+    systemLabel: '',
+    maxTokensLabel: '',
+    toolsJsonLabel: '',
+    toolsJsonTemplate: null,
+  },
+};
+
+// Jev 请求模板: [state, questions]
+const JEV_TEMPLATES = {
+  official: ['Hello World', {
+    says_hello: {
+      type: 'noul',
+      instructions: 'Does the state text contain a greeting?',
+      criteria: {
+        true: 'The state text contains a greeting.',
+        false: 'The state text does not contain a greeting.',
+      },
+    },
+  }],
+  three: ['My card was charged twice for one order and I need this fixed today.', {
+    department: {
+      type: 'choice',
+      instructions: 'Which team handles this?',
+      criteria: { billing: 'charges and refunds', shipping: 'delivery', technical: 'bugs' },
+    },
+    urgency: { type: 'score', instructions: 'How urgent is this?', criteria: ['low', 'medium', 'high'] },
+    wants_refund: { type: 'noul', instructions: 'Is the customer asking for money back?' },
+  }],
+  // 所有上游都会拒绝: cc-router 依次试完后原样返回最后一家的 4xx
+  invalid: ['x', { a: { type: 'bogus', instructions: 'y?' } }],
 };
 
 // ============================================================
@@ -248,6 +316,7 @@ const state = {
   history: {
     anthropic: { chat: [], tool: [], pendingToolUses: [] },
     responses: { chat: [], tool: [], pendingToolUses: [] },
+    jev: { chat: [], tool: [], pendingToolUses: [] },
   },
   abortCtrl: null,
 };
@@ -302,7 +371,9 @@ function switchApi(api) {
   panes.text.textContent = '';
   panes.raw.textContent = '';
   panes.req.textContent = '';
-  setStatus(`已切换到 ${api === 'anthropic' ? 'Anthropic Messages' : 'OpenAI Responses'} 接口`);
+  const apiName = { anthropic: 'Anthropic Messages', responses: 'OpenAI Responses', jev: 'Jev System One' }[api];
+  setStatus(`已切换到 ${apiName} 接口`);
+  applyVisibility();
   updateHintUrl();
 }
 
@@ -311,12 +382,24 @@ function switchMode(mode) {
   document.querySelectorAll('.modebar button').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
-  $('paneSingle').style.display = mode === 'single' ? '' : 'none';
-  $('paneMulti').style.display = mode === 'single' ? 'none' : '';
-  $('toolsConfigWrap').style.display = mode === 'tools' ? '' : 'none';
+  applyVisibility();
   renderConvo();
   renderMessagesJson();
   renderToolFill();
+}
+
+// 按 apiMode + mode 决定哪些控件可见。Jev 协议只有单次请求, 没有流式 / system / max_tokens / 多轮。
+function applyVisibility() {
+  const jev = state.apiMode === 'jev';
+  const show = (id, on) => { $(id).style.display = on ? '' : 'none'; };
+  show('paneJev', jev);
+  show('paneSingle', !jev && state.mode === 'single');
+  show('paneMulti', !jev && state.mode !== 'single');
+  show('toolsConfigWrap', !jev && state.mode === 'tools');
+  document.querySelector('.modebar').style.display = jev ? 'none' : '';
+  show('maxTokensWrap', !jev);
+  show('streamWrap', !jev);
+  show('systemWrap', !jev);
 }
 
 // 把当前 apiMode 的配置应用到 UI: model 下拉、各字段 label、tools 模板。
@@ -340,6 +423,8 @@ function applyProfile() {
   $('customModel').placeholder = p.customPlaceholder;
   $('customModelWrap').style.display = sel.value === '__custom__' ? '' : 'none';
 
+  // Jev 没有 system / max_tokens / tools, 这些控件由 applyVisibility 隐藏, 保留上一个协议的内容
+  if (!p.toolsJsonTemplate) return;
   $('systemLabel').textContent = p.systemLabel;
   $('maxTokensLabel').textContent = p.maxTokensLabel;
   $('toolsJsonLabel').textContent = p.toolsJsonLabel;
@@ -547,6 +632,55 @@ function anthropicMessagesToOpenAiInput(messages) {
   return input;
 }
 
+// ---- Jev System One 协议 ----
+// {model, state, questions}; state 以 { 或 [ 开头时按 JSON 发 (协议允许 object / array), 否则按字符串。
+function buildJevRequest() {
+  const rawState = $('jevState').value;
+  let st = rawState;
+  const trimmed = rawState.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try { st = JSON.parse(trimmed); } catch (e) { throw new Error('state JSON 解析失败: ' + e.message); }
+  }
+  let questions;
+  try { questions = JSON.parse($('jevQuestions').value); } catch (e) {
+    throw new Error('questions JSON 解析失败: ' + e.message);
+  }
+  return { model: currentModel(), state: st, questions };
+}
+
+function fmtNum(v, digits) {
+  return typeof v === 'number' ? v.toFixed(digits) : String(v);
+}
+
+// 把 answers 排成人能读的文本: 每题一段, choice / score 附置信度与概率分布 (高到低)。
+function formatJevAnswers(json) {
+  const lines = [];
+  if (json.model) lines.push(`model: ${json.model}`, '');
+  for (const [name, a] of Object.entries(json.answers || {})) {
+    lines.push(`■ ${name}  [${a.type}]`);
+    if (a.type === 'noul') {
+      lines.push(`  noul (是的概率): ${fmtNum(a.noul, 3)}`);
+    } else if (a.type === 'choice') {
+      lines.push(`  choice: ${a.choice}   confidence: ${fmtNum(a.confidence, 3)}`);
+    } else if (a.type === 'score') {
+      const legend = a.legend ? ` (${Object.entries(a.legend).map(([k, v]) => `${k}=${v}`).join(', ')})` : '';
+      lines.push(`  score: ${fmtNum(a.score, 3)}${legend}   confidence: ${fmtNum(a.confidence, 3)}`);
+    } else {
+      lines.push('  ' + JSON.stringify(a));
+    }
+    if (a.probabilities) {
+      const legend = a.legend || {};
+      const probs = Object.entries(a.probabilities).sort((x, y) => y[1] - x[1]);
+      for (const [k, p] of probs) {
+        const label = legend[k] !== undefined ? `${k} (${legend[k]})` : k;
+        lines.push(`    ${label.padEnd(18)} ${fmtNum(p, 3)}`);
+      }
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
 function parseToolsJson() {
   try {
     return JSON.parse($('toolsJson').value);
@@ -564,6 +698,7 @@ function setStatus(text, kind) {
 function setBusy(busy) {
   $('sendSingleBtn').disabled = busy;
   $('sendMultiBtn').disabled = busy;
+  $('sendJevBtn').disabled = busy;
   $('abortBtn').disabled = !busy;
 }
 
@@ -585,6 +720,10 @@ async function sendRequest(body) {
     // 同时带, cc-router 中间件认任一即可。
     headers['x-api-key'] = key;
     headers['Authorization'] = `Bearer ${key}`;
+  }
+  // /v1/systemone 的 sticky 会话键只认 x-session-id 头
+  if (state.apiMode === 'jev' && $('jevSessionId').value.trim()) {
+    headers['x-session-id'] = $('jevSessionId').value.trim();
   }
 
   state.abortCtrl = new AbortController();
@@ -612,7 +751,11 @@ async function sendRequest(body) {
       const text = await resp.text();
       panes.raw.textContent = text;
       const json = JSON.parse(text);
-      if (state.apiMode === 'anthropic') {
+      if (state.apiMode === 'jev') {
+        // Jev 不生成文本, 没有可加入对话的 assistant 消息
+        usage = json.usage || null;
+        panes.text.textContent = formatJevAnswers(json);
+      } else if (state.apiMode === 'anthropic') {
         assistantMessage = { role: 'assistant', content: json.content || [] };
         usage = json.usage || null;
         const flat = (json.content || [])
@@ -846,6 +989,21 @@ $('sendSingleBtn').addEventListener('click', async () => {
   try { await sendRequest(buildSingleRequest()); } catch {}
 });
 
+$('sendJevBtn').addEventListener('click', async () => {
+  let body;
+  try { body = buildJevRequest(); } catch (e) { setStatus(e.message, 'err'); return; }
+  try { await sendRequest(body); } catch {}
+});
+
+function applyJevTemplate(key) {
+  const [st, questions] = JEV_TEMPLATES[key];
+  $('jevState').value = typeof st === 'string' ? st : JSON.stringify(st, null, 2);
+  $('jevQuestions').value = JSON.stringify(questions, null, 2);
+}
+document.querySelectorAll('.tplbar button').forEach(btn => {
+  btn.addEventListener('click', () => applyJevTemplate(btn.dataset.tpl));
+});
+
 $('sendMultiBtn').addEventListener('click', async () => {
   const text = $('multiInput').value.trim();
   if (!text && curHistory().pendingToolUses.length === 0) {
@@ -994,8 +1152,10 @@ $('scheme').addEventListener('change', () => {
 $('host').addEventListener('input', updateHintUrl);
 $('port').addEventListener('input', updateHintUrl);
 
-// 初始化: 应用 anthropic profile (默认 apiMode) 到 UI, 更新 hint URL
+// 初始化: 应用 anthropic profile (默认 apiMode) 到 UI, 更新 hint URL; Jev 面板预填官方示例
 applyProfile();
+applyVisibility();
+applyJevTemplate('official');
 updateHintUrl();
 </script>
 
