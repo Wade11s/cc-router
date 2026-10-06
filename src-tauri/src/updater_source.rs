@@ -12,7 +12,6 @@ pub const INTERNATIONAL_MANIFEST_URL: &str =
 // 自有域名 d.cc-router.catonthe.top 反代阿里云 OSS bucket=cc-router-prod (oss-cn-shanghai)。
 // 套一层域名做安全防护 + 可迁移性: 客户端只认域名,背后换桶/换区不需要发新版。
 // CI 在 release 时把 binary/sig 双发到 GitHub Release + OSS(cc-router-prod),manifest URL 字段重写为域名前缀。
-// 过渡期 CI 同时向旧桶 cc-router 全量上传,让 baked 旧 URL 的老用户仍能收到新版。
 pub const CHINA_MANIFEST_URL: &str =
     "https://d.cc-router.catonthe.top/latest.json";
 
