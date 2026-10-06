@@ -42,7 +42,9 @@
           "base_url": { "type": "string" },
           "messages_path": { "type": "string" },
           "region": { "type": "string" },
-          "billing": { "type": "string" }
+          "billing": { "type": "string" },
+          "protocol": { "enum": ["messages", "systemone"] },
+          "example_models": { "type": "array", "items": { "type": "string" } }
         }
       }
     },

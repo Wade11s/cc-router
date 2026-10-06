@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::error::AppResult;
-use crate::provider::model::{Auth, Compatibility, LocalizedText, ModelDiscovery, ProviderCategory};
+use crate::provider::model::{Auth, Compatibility, EndpointProtocol, LocalizedText, ModelDiscovery, ProviderCategory};
 use crate::provider::Provider;
 use crate::state::AppState;
 
@@ -39,6 +39,8 @@ pub struct ProviderEndpointInfo {
     pub messages_path: String,
     pub region: Option<String>,
     pub billing: Option<String>,
+    pub protocol: EndpointProtocol,
+    pub example_models: Vec<String>,
 }
 
 /// 三语齐全 (yaml 解析时已强制), 所以每种语言都是完整的一份, 客户端不需要回退。
@@ -108,6 +110,8 @@ impl From<&Provider> for ProviderInfo {
                     messages_path: e.messages_path.clone(),
                     region: e.region.clone(),
                     billing: e.billing.clone(),
+                    protocol: e.protocol,
+                    example_models: e.example_models.clone(),
                 })
                 .collect(),
             default_endpoint: p.default_endpoint.clone(),

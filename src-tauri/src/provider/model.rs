@@ -200,6 +200,37 @@ pub fn join_base_path(base: &str, path: &str) -> String {
     }
 }
 
+/// 端点服务哪一族入站请求。缺省 `Messages` = 对话类 (三个对话入口共用的 pipeline);
+/// `Systemone` = Jev 决策协议, 只服务 `POST /v1/systemone`, 请求原样透传、不翻译。
+/// 订阅创建时快照进 `subscriptions.endpoint_protocol`, 之后不可变。
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum EndpointProtocol {
+    #[default]
+    Messages,
+    Systemone,
+}
+
+impl EndpointProtocol {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Messages => "messages",
+            Self::Systemone => "systemone",
+        }
+    }
+}
+
+impl FromStr for EndpointProtocol {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "messages" => Ok(Self::Messages),
+            "systemone" => Ok(Self::Systemone),
+            other => Err(format!("无效 endpoint_protocol: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderEndpoint {
     pub id: String,
@@ -212,6 +243,13 @@ pub struct ProviderEndpoint {
     pub region: Option<String>,
     #[serde(default)]
     pub billing: Option<String>,
+    /// 缺省 messages。systemone 只允许出现在 `auth.type = api_key` 的 provider 下 (loader 校验)。
+    #[serde(default)]
+    pub protocol: EndpointProtocol,
+    /// 仅覆盖本端点的模型输入提示; 空 = 用 provider 级 `model_discovery.example_models`。
+    /// 创建订阅时非空则写进订阅快照的 `model_discovery.example_models`。
+    #[serde(default)]
+    pub example_models: Vec<String>,
 }
 
 impl ProviderEndpoint {

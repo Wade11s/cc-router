@@ -47,7 +47,22 @@ fn parse_single(raw: &str) -> AppResult<Provider> {
     let as_json = serde_json::to_value(&as_yaml)?;
     let _ = schema::validate(&as_json);
     let provider: Provider = serde_yaml::from_value(as_yaml)?;
+    validate_semantics(&provider)?;
     Ok(provider)
+}
+
+/// schema 表达不了的跨字段约束。失败即该 yaml 加载失败 (load_all warn + 跳过, 单测在 CI 拦住)。
+fn validate_semantics(p: &Provider) -> AppResult<()> {
+    use crate::provider::model::{AuthType, EndpointProtocol};
+    for e in &p.endpoints {
+        if e.protocol == EndpointProtocol::Systemone && p.auth.auth_type != AuthType::ApiKey {
+            return Err(AppError::internal(format!(
+                "endpoint '{}': protocol systemone 只允许出现在 auth.type = api_key 的 provider 下",
+                e.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -125,5 +140,45 @@ mod tests {
         assert!(missing.to_string().contains("`ja`"), "{missing}");
         let typo = serde_yaml::from_str::<LocalizedText>("{ zh: a, en: b, ja: c, jp: d }").unwrap_err();
         assert!(typo.to_string().contains("`jp`"), "{typo}");
+    }
+
+    const MINIMAL: &str = r#"
+id: demo
+display_name: Demo
+compatibility: untested
+endpoints:
+  - id: chat
+    label: Chat
+    base_url: "https://example.invalid"
+    messages_path: "/v1/messages"
+auth: { type: api_key, header_name: Authorization, header_format: bearer }
+"#;
+
+    #[test]
+    fn endpoint_protocol_defaults_to_messages() {
+        let p = parse_single(MINIMAL).unwrap();
+        assert_eq!(p.endpoints[0].protocol, crate::provider::model::EndpointProtocol::Messages);
+        assert!(p.endpoints[0].example_models.is_empty());
+    }
+
+    #[test]
+    fn systemone_endpoint_parses_with_its_own_example_models() {
+        let yaml = MINIMAL.replace(
+            "    messages_path: \"/v1/messages\"\n",
+            "    messages_path: \"/v1/systemone\"\n    protocol: systemone\n    example_models: [\"jev-latest\"]\n",
+        );
+        let p = parse_single(&yaml).unwrap();
+        assert_eq!(p.endpoints[0].protocol, crate::provider::model::EndpointProtocol::Systemone);
+        assert_eq!(p.endpoints[0].example_models, vec!["jev-latest".to_string()]);
+    }
+
+    /// 翻译类 provider 的端点标 systemone 会让 dispatch 不知道走哪条路, 必须在加载时拒绝。
+    #[test]
+    fn systemone_endpoint_requires_api_key_auth() {
+        let yaml = MINIMAL
+            .replace("    messages_path: \"/v1/messages\"\n", "    messages_path: \"/v1/systemone\"\n    protocol: systemone\n")
+            .replace("type: api_key", "type: gemini_api_key");
+        let err = parse_single(&yaml).unwrap_err();
+        assert!(err.to_string().contains("systemone"), "{err}");
     }
 }
