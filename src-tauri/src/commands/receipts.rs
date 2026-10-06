@@ -10,8 +10,8 @@
 //! 与 statistics.rs 的差异: statistics 查 `request_stats_daily` (无 real_model 维度),
 //! 服务概览/趋势图/heatmap; 这里要按真实模型下钻, 用自己的聚合表。
 //!
-//! Receipts 设计语义只展示 fable/opus/sonnet/haiku 四档主消费项, fallback 透传通道
-//! 不计入小票, SQL 已 WHERE virtual_model_name IN (...) 过滤。
+//! Receipts 展示 fable/opus/sonnet/haiku 四档主消费项（空也返回）+ jev（有用量才出现）,
+//! fallback 透传通道不计入小票, SQL 已 WHERE virtual_model_name IN (...) 过滤。
 
 use std::hash::{Hash, Hasher};
 
@@ -104,7 +104,7 @@ pub struct ReceiptSubItemDto {
 
 #[derive(Debug, Serialize)]
 pub struct ReceiptVirtualModelItemDto {
-    /// "model-fable" / "model-opus" / "model-sonnet" / "model-haiku" — fallback 不出现在小票
+    /// "model-fable" | "model-opus" | "model-sonnet" | "model-haiku" | "model-jev" — fallback 不出现
     pub virtual_model_name: String,
     pub subtotal: ReceiptTotalsDto,
     pub sub_items: Vec<ReceiptSubItemDto>,
@@ -120,19 +120,25 @@ pub struct ReceiptDto {
     pub generated_at_ms: i64,
     /// 8 位大写 hex, 用于小票上的「单号」展示
     pub slip_no: String,
-    /// 始终 4 项: model-fable / model-opus / model-sonnet / model-haiku, 顺序固定, 空也返回
+    /// 4 项 (fable/opus/sonnet/haiku, 顺序固定, 空也返回), 有 Jev 用量时末尾多一项 model-jev
     pub items: Vec<ReceiptVirtualModelItemDto>,
     pub grand_total: ReceiptTotalsDto,
 }
 
-/// 固定排序: fable → opus → sonnet → haiku (与前端 virtualModels.ts::VM_ORDER 一致),
-/// fallback 不出现
-const RECEIPT_VM_ORDER: [VirtualModelName; 4] = [
+/// 固定排序: fable → opus → sonnet → haiku → jev (与前端 virtualModels.ts::VM_ORDER 一致),
+/// fallback 不出现。jev 只在有用量时出现, 不用 Jev 的人看不到空行。
+const RECEIPT_VM_ORDER: [VirtualModelName; 5] = [
     VirtualModelName::Fable,
     VirtualModelName::Opus,
     VirtualModelName::Sonnet,
     VirtualModelName::Haiku,
+    VirtualModelName::Jev,
 ];
+
+/// 四档主消费项空也返回 (版式固定); jev 只在有用量时出现, 不用 Jev 的人看不到空行。
+fn receipt_item_visible(vm: VirtualModelName, has_items: bool) -> bool {
+    has_items || !vm.is_jev()
+}
 
 #[tauri::command]
 pub async fn get_receipt_summary(
@@ -223,6 +229,9 @@ pub async fn get_receipt_summary(
 
     for vm in RECEIPT_VM_ORDER {
         let mut sub_items = buckets.remove(vm.as_str()).unwrap_or_default();
+        if !receipt_item_visible(vm, !sub_items.is_empty()) {
+            continue;
+        }
         // sub_items 内按 request_count 降序, 让用得多的订阅排前面 (小票阅读视角)
         sub_items.sort_by(|a, b| b.totals.request_count.cmp(&a.totals.request_count));
 
@@ -358,5 +367,14 @@ mod tests {
             assert_eq!(local_day_key(r.since_ms()), day);
             assert_ne!(local_day_key(r.since_ms() - 1), day);
         }
+    }
+
+    #[test]
+    fn jev_appears_on_receipt_only_when_used() {
+        assert!(RECEIPT_VM_ORDER.contains(&VirtualModelName::Jev));
+        assert!(!RECEIPT_VM_ORDER.contains(&VirtualModelName::Fallback));
+        assert!(!receipt_item_visible(VirtualModelName::Jev, false));
+        assert!(receipt_item_visible(VirtualModelName::Jev, true));
+        assert!(receipt_item_visible(VirtualModelName::Haiku, false), "四档主消费项空也返回");
     }
 }

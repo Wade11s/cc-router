@@ -168,6 +168,7 @@ const VM_DISPLAY: Record<string, string> = {
   "model-opus": "MODEL-OPUS",
   "model-sonnet": "MODEL-SONNET",
   "model-haiku": "MODEL-HAIKU",
+  "model-jev": "MODEL-JEV",
 };
 
 export const ReceiptSlip = forwardRef<HTMLDivElement, Props>(function ReceiptSlip(
