@@ -164,7 +164,7 @@
 
     <div id="paneJev" style="display:none">
       <div class="small" style="margin-top:6px">
-        路由由路径决定, 固定走 <code>model-jev</code>; model 字段原样发给上游 (订阅配了 Jev 槽则改写成槽值, 响应 model 回显你写的名字)。
+        路由由路径决定, 固定走 <code>model-jev</code>。model 写 <code>model-jev</code> 时按每条订阅的 Jev 槽改写 (没配就用接入点示例模型); 写真实模型名则原样发给上游 (订阅配了 Jev 槽仍改写成槽值)。改写过的响应 model 回显你写的名字。直连 Ollama (端口 11434) 时请选真实模型名。
       </div>
 
       <label>x-session-id (可选, 会话亲和模式下钉住同一订阅)</label>
@@ -267,10 +267,10 @@ const API_PROFILES = {
 ]`,
   },
   // Jev (System One) 决策协议: 非流式, 不生成文本, 没有 system / max_tokens / tools / 多轮。
-  // model 是发给上游的真实模型名 (路由固定走 model-jev), 预设对应三家上游的常用模型。
+  // 路由固定走 model-jev。预设第一项是虚拟名 model-jev (cc-router 按订阅改写), 其余是三家上游的真实模型名。
   jev: {
     path: '/v1/systemone',
-    models: ['clef-flash', 'jev-latest', 'jev-preview', 'typesafe/jev-1.13', 'cloudflare/clef-flash'],
+    models: ['model-jev', 'clef-flash', 'jev-latest', 'jev-preview', 'typesafe/jev-1.13', 'cloudflare/clef-flash'],
     customLabel: '自定义 model 字符串',
     customPlaceholder: 'clef-flash',
     systemLabel: '',

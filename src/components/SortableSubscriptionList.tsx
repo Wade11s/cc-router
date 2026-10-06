@@ -19,6 +19,7 @@ import { stateTone } from "@/components/StatusBadge";
 import { useRouteFlashState } from "@/hooks/useRouteFlash";
 import { useT } from "@/i18n";
 import { isAnthropicPassthrough } from "@/lib/authTypes";
+import { jevModelOf } from "@/lib/virtualModels";
 import type { SubscriptionDto, SubscriptionSlot, VirtualModelName } from "@/types";
 
 interface Props {
@@ -68,9 +69,8 @@ export function SortableSubscriptionList({
             // 未配置且翻译类 → 警示 (dispatch 层会跳过该候选)。
             const isJevCard = vmName === "model-jev";
             const fallbackModel = sub?.model_slots.fallback?.trim() ?? "";
-            const jevModel = sub?.model_slots.jev?.trim() ?? "";
             const realModel = isJevCard
-              ? jevModel || t("sortableSub.passthrough")
+              ? (sub && jevModelOf(sub)) || t("sortableSub.passthrough")
               : slot === null
                 ? fallbackModel || t("sortableSub.passthrough")
                 : sub

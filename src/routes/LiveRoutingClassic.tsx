@@ -8,7 +8,7 @@ import { useProxyStatus, useSettings } from "@/hooks/useSettings";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useVirtualModels } from "@/hooks/useVirtualModels";
 import { isAnthropicPassthrough } from "@/lib/authTypes";
-import { MODE_LABEL_KEY, VM_ORDER, vmNameToSlot } from "@/lib/virtualModels";
+import { MODE_LABEL_KEY, VM_ORDER, jevModelOf, vmNameToSlot } from "@/lib/virtualModels";
 import { useT } from "@/i18n";
 import { API_ROUTES, CLIENT_ALIASES } from "@/lib/liveRouting";
 import type { SubscriptionDto, VirtualModelDto } from "@/types";
@@ -218,8 +218,6 @@ function MappingSection() {
             >
               {vm.name === "model-fallback" ? (
                 <span className="lrc-vm-map-note">{t("liveRouting.map.fallbackLeft")}</span>
-              ) : vm.name === "model-jev" ? (
-                <span className="lrc-vm-map-note">{t("liveRouting.map.jevLeft")}</span>
               ) : (
                 CLIENT_ALIASES[vm.name].map((alias, i) => (
                   <span className={i === 0 ? "lrc-vm-chip primary" : "lrc-vm-chip"} key={alias}>
@@ -282,7 +280,7 @@ function MappingSection() {
                       const fallbackModel = sub.model_slots.fallback?.trim() ?? "";
                       const real =
                         vm.name === "model-jev"
-                          ? sub.model_slots.jev?.trim() || t("sortableSub.passthrough")
+                          ? jevModelOf(sub) ?? t("sortableSub.passthrough")
                           : slot === null
                           ? fallbackModel ||
                             (isAnthropicPassthrough(sub.auth_type)

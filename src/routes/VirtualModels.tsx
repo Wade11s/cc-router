@@ -17,7 +17,7 @@ import { useVirtualModels, useUpdateVirtualModel } from "@/hooks/useVirtualModel
 import { isAnthropicPassthrough } from "@/lib/authTypes";
 import { customProviderLabel } from "@/lib/providerLabels";
 import { providerName as localProviderName } from "@/lib/providerText";
-import { VM_META, VM_ORDER, isJev, vmAccepts, vmNameToSlot } from "@/lib/virtualModels";
+import { VM_META, VM_ORDER, isJev, jevModelOf, vmAccepts, vmNameToSlot } from "@/lib/virtualModels";
 import { runtime } from "@/runtime";
 import { useT } from "@/i18n";
 import type {
@@ -183,7 +183,7 @@ function VirtualModelCard({
         >
           <Plus size={12} /> {t("virtualModels.addButtonShort")}
         </button>
-        {jev && <JevAccessHint model={jevExampleModel(subsMap.get(vm.subscription_ids[0]))} />}
+        {jev && <JevAccessHint />}
       </div>
 
       <AddSubscriptionDialog
@@ -247,7 +247,7 @@ function AddSubscriptionDialog({
     customProviderLabel(sub.provider_id, t) ?? localProviderName(sub, locale);
   // 与 SortableSubscriptionList 同一套规则: 加进来之后这条订阅在本卡片里实际会用的模型
   const modelFor = (sub: SubscriptionDto) => {
-    if (isJev(vmName)) return sub.model_slots.jev?.trim() || t("sortableSub.passthrough");
+    if (isJev(vmName)) return jevModelOf(sub) ?? t("sortableSub.passthrough");
     if (slot !== null) return sub.model_slots[slot] || "—";
     return sub.model_slots.fallback?.trim() || t("sortableSub.passthrough");
   };
@@ -385,17 +385,11 @@ function AddSubscriptionDialog({
   );
 }
 
-/** curl 示例里的 model: 第一条绑定订阅的 Jev 槽 → 其端点示例模型 → 兜底 jev-latest。 */
-function jevExampleModel(sub: SubscriptionDto | undefined): string {
-  return (
-    sub?.model_slots.jev?.trim() ||
-    sub?.model_discovery.example_models[0]?.trim() ||
-    "jev-latest"
-  );
-}
-
-/** jev 卡片底部的接入示例: 调用方是用户自己的代码, 没有 CC 那样现成的环境变量片段。 */
-function JevAccessHint({ model }: { model: string }) {
+/**
+ * jev 卡片底部的接入示例: 调用方是用户自己的代码, 没有 CC 那样现成的环境变量片段。
+ * model 写虚拟名 model-jev, 后端按每条订阅的 Jev 槽 / 端点示例模型改写, 所以对任何上游都能直接用。
+ */
+function JevAccessHint() {
   const { t } = useT();
   const status = useProxyStatus();
   const [copied, setCopied] = useState(false);
@@ -404,7 +398,7 @@ function JevAccessHint({ model }: { model: string }) {
     `curl ${base}/v1/systemone \\`,
     `  -H "Content-Type: application/json" \\`,
     `  -H "Authorization: Bearer <cc-router token>" \\`,
-    `  -d '{"model":${JSON.stringify(model)},"state":"Hello World","questions":{"says_hello":{"type":"noul","instructions":"Does the state text contain a greeting?"}}}'`,
+    `  -d '{"model":"model-jev","state":"Hello World","questions":{"says_hello":{"type":"noul","instructions":"Does the state text contain a greeting?"}}}'`,
   ].join("\n");
   return (
     <div className="jev-access">

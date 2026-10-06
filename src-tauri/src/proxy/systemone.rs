@@ -56,16 +56,28 @@ pub struct Outbound {
     pub rewritten: bool,
 }
 
-/// Jev 槽非空且不同于客户端 model 时改写 `body.model` (重序列化, 语义相等);
+/// 发往上游的 model。客户端写虚拟名 `model-jev` (可带 `anthropic/` / `openai/` 前缀) 时
+/// 与 `model-opus` → opus 槽同理: 用订阅的 Jev 槽, 槽为空则退到端点示例模型 (创建时快照进
+/// `model_discovery.example_models`) —— 虚拟名原样发出去上游必然不认识。客户端写真实模型名时,
+/// Jev 槽非空就改写成槽值, 否则透传。返回 None = 原样转发。
+fn target_model<'a>(row: &'a SubscriptionRow, client_model: &str) -> Option<&'a str> {
+    let slot = row.model_slots.jev_model();
+    if VirtualModelName::parse(client_model) == Some(VirtualModelName::Jev) {
+        return slot.or_else(|| row.model_discovery.example_models.first().map(String::as_str));
+    }
+    slot
+}
+
+/// 目标 model 与客户端 model 不同时改写 `body.model` (重序列化, 语义相等);
 /// 否则请求体逐字节原样转发。出站头只有 auth + content-type:
 /// provider 级 `required_headers` / `forward_headers` 是对话协议的 (如 `anthropic-version`), 不消费。
 pub fn build_outbound(row: &SubscriptionRow, raw_body: &Bytes, client_model: &str) -> Result<Outbound, String> {
-    let (body, real_model, rewritten) = match row.model_slots.jev_model() {
-        Some(slot) if slot != client_model => {
+    let (body, real_model, rewritten) = match target_model(row, client_model) {
+        Some(target) if target != client_model => {
             let mut v: Value = serde_json::from_slice(raw_body).map_err(|e| e.to_string())?;
-            v["model"] = Value::String(slot.to_string());
+            v["model"] = Value::String(target.to_string());
             let bytes = serde_json::to_vec(&v).map_err(|e| e.to_string())?;
-            (Bytes::from(bytes), slot.to_string(), true)
+            (Bytes::from(bytes), target.to_string(), true)
         }
         _ => (raw_body.clone(), client_model.to_string(), false),
     };
@@ -480,6 +492,46 @@ mod tests {
         sent["model"] = Value::Null;
         orig["model"] = Value::Null;
         assert_eq!(sent, orig, "除 model 外语义相等");
+    }
+
+    const RAW_VM: &str = r#"{"model":"model-jev","state":"hi","questions":{"a":{"type":"noul","instructions":"y?"}}}"#;
+
+    /// 客户端写虚拟名 model-jev: 与 model-opus → opus 槽同理, 改写成订阅的 Jev 槽。
+    #[test]
+    fn virtual_name_uses_jev_slot() {
+        let raw = Bytes::from_static(RAW_VM.as_bytes());
+        let out = build_outbound(&systemone_row("clef-flash"), &raw, "model-jev").unwrap();
+        assert!(out.rewritten);
+        assert_eq!(out.real_model, "clef-flash");
+        let sent: Value = serde_json::from_slice(&out.body).unwrap();
+        assert_eq!(sent["model"], "clef-flash");
+        let up = serde_json::json!({"model": "clef-flash", "answers": {}});
+        assert_eq!(restore_model(up, "model-jev", out.rewritten)["model"], "model-jev", "响应回显虚拟名");
+    }
+
+    /// Jev 槽为空时虚拟名不能原样发给上游 (上游不认识 model-jev), 退到端点示例模型。
+    #[test]
+    fn virtual_name_without_slot_falls_back_to_example_model() {
+        let raw = Bytes::from_static(RAW_VM.as_bytes());
+        let mut row = systemone_row("");
+        row.model_discovery.example_models = vec!["jev-latest".into(), "jev-preview".into()];
+        let out = build_outbound(&row, &raw, "model-jev").unwrap();
+        assert!(out.rewritten);
+        assert_eq!(out.real_model, "jev-latest");
+        // 带厂商前缀的写法同样认 (与对话入口的虚拟名解析一致)
+        let out = build_outbound(&row, &raw, "openai/model-jev").unwrap();
+        assert_eq!(out.real_model, "jev-latest");
+    }
+
+    /// 槽和示例都没有时只能原样发出 (上游会报未知模型, 走正常的 4xx 换下家)。
+    #[test]
+    fn virtual_name_without_slot_or_example_passes_through() {
+        let raw = Bytes::from_static(RAW_VM.as_bytes());
+        let mut row = systemone_row("");
+        row.model_discovery.example_models.clear();
+        let out = build_outbound(&row, &raw, "model-jev").unwrap();
+        assert!(!out.rewritten);
+        assert_eq!(out.body, raw);
     }
 
     #[test]

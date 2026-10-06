@@ -13,7 +13,7 @@ export const CLIENT_ALIASES: Record<VirtualModelName, string[]> = {
   "model-sonnet": ["model-sonnet", "claude-sonnet*", "gpt-5.4", "gpt-*-luna"],
   "model-haiku": ["model-haiku", "claude-haiku*", "gpt-*-mini"],
   "model-fallback": [],
-  "model-jev": [],
+  "model-jev": ["model-jev"],
 };
 
 /** 照抄 src-tauri/src/proxy/server.rs::build_router —— 唯一事实来源 */

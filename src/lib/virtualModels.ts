@@ -1,6 +1,7 @@
 import type {
   EndpointProtocol,
   RoutingMode,
+  SubscriptionDto,
   SubscriptionSlot,
   VirtualModelName,
 } from "@/types";
@@ -78,6 +79,14 @@ export const MODE_LABEL_KEY: Record<RoutingMode, string> = {
 
 export function isJev(name: VirtualModelName): boolean {
   return name === "model-jev";
+}
+
+/**
+ * 客户端写 model-jev 时这条订阅实际发给上游的模型, 与后端 systemone.rs::target_model 同一条规则:
+ * Jev 槽 → 端点示例模型 (创建时快照进 model_discovery.example_models)。都没有时返回 null。
+ */
+export function jevModelOf(sub: Pick<SubscriptionDto, "model_slots" | "model_discovery">): string | null {
+  return sub.model_slots.jev?.trim() || sub.model_discovery.example_models[0]?.trim() || null;
 }
 
 /** 与后端 VirtualModelName::accepts 同一条规则: model-jev 只收 systemone 订阅, 其余只收对话类订阅。 */
