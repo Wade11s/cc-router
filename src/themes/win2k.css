@@ -79,6 +79,7 @@
   --vm-opus:   #0A246A;
   --vm-sonnet: #008080;
   --vm-haiku:  #808000;
+  --vm-jev:    #008040;
 
   /* shadcn HSL token */
   --background: 40 10% 81%;
@@ -160,6 +161,7 @@
   --vm-opus:   #8AB4F8;
   --vm-sonnet: #40C0C0;
   --vm-haiku:  #C0C040;
+  --vm-jev:    #40C080;
 
   --background: 0 0% 23%;
   --foreground: 0 0% 90%;

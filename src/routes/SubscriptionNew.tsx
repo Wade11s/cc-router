@@ -29,6 +29,7 @@ import type {
   AuthHeaderFormat,
   ChatGptAccount,
   CreateSubscriptionInput,
+  EndpointProtocol,
   ModelInfo,
   ModelSlots,
   ImportReport,
@@ -365,7 +366,7 @@ export function SubscriptionNewPage() {
         patch: { model_slots: slots, slot_efforts: slotEfforts },
       });
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
-      await bindToVirtualModelsIfOnboarding(createdId);
+      await bindToVirtualModelsIfOnboarding(createdId, "messages");
       if (isOnboarding) {
         navigate("/guide", { replace: true });
         return;
@@ -425,7 +426,7 @@ export function SubscriptionNewPage() {
         patch: { model_slots: slots, slot_efforts: slotEfforts },
       });
       await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
-      await bindToVirtualModelsIfOnboarding(createdId);
+      await bindToVirtualModelsIfOnboarding(createdId, "messages");
       if (isOnboarding) {
         navigate("/guide", { replace: true });
         return;
@@ -507,15 +508,12 @@ export function SubscriptionNewPage() {
     }
   }
 
-  async function bindToVirtualModelsIfOnboarding(subscriptionId: string) {
+  async function bindToVirtualModelsIfOnboarding(subscriptionId: string, protocol: EndpointProtocol) {
     if (!isOnboarding) return;
-    const names: VirtualModelName[] = [
-      "model-fable",
-      "model-opus",
-      "model-sonnet",
-      "model-haiku",
-      "model-fallback",
-    ];
+    const names: VirtualModelName[] =
+      protocol === "systemone"
+        ? ["model-jev"]
+        : ["model-fable", "model-opus", "model-sonnet", "model-haiku", "model-fallback"];
     await Promise.allSettled(
       names.map((name) => {
         const current = vms.data?.find((v) => v.name === name);
@@ -559,7 +557,7 @@ export function SubscriptionNewPage() {
       patch: { model_slots: slots, slot_efforts: slotEfforts },
     });
 
-    await bindToVirtualModelsIfOnboarding(createdId);
+    await bindToVirtualModelsIfOnboarding(createdId, endpoint?.protocol ?? "messages");
 
     if (isOnboarding) {
       navigate("/guide", { replace: true });
@@ -664,7 +662,7 @@ export function SubscriptionNewPage() {
           patch: { slot_efforts: slotEfforts },
         });
       }
-      await bindToVirtualModelsIfOnboarding(created.id);
+      await bindToVirtualModelsIfOnboarding(created.id, "messages");
       if (isOnboarding) {
         navigate("/guide", { replace: true });
         return;

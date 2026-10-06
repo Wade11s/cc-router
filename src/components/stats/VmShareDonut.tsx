@@ -14,6 +14,7 @@ export const VM_COLOR: Record<VirtualModelName, string> = {
   "model-sonnet": "var(--vm-sonnet)",
   "model-haiku": "var(--vm-haiku)",
   "model-fallback": "var(--vm-fallback)",
+  "model-jev": "var(--vm-jev)",
 };
 
 type Metric = "requests" | "tokens";
@@ -29,7 +30,7 @@ interface Slice {
 }
 
 /**
- * 虚拟模型份额环图 (≤5 段) + 右侧图例表 (名称 / 数值 / 占比 / 成功率)。
+ * 虚拟模型份额环图 (≤6 段) + 右侧图例表 (名称 / 数值 / 占比 / 成功率)。
  * 环图只有一个度量, 右上角切换「请求数 / Token」; Token = input + output (不含缓存, 与 KPI 口径一致)。
  */
 export function VmShareDonut({

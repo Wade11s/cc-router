@@ -156,7 +156,7 @@ export function RouteFlowDiagramClassic() {
   const running = proxy.data?.running ?? false;
   const { slots: upSlots, height: canvasH } = layoutUpstreams(upstreams.length);
   const hubCy = canvasH / 2;
-  const slotCount = orderedVms.filter((v) => v.name !== "model-fallback").length;
+  const slotCount = orderedVms.filter((v) => v.name !== "model-fallback" && v.name !== "model-jev").length;
 
   return (
     <div className="lrc-rf-wrap" style={{ "--rf-h": `${canvasH}px` } as CSSProperties}>

@@ -172,7 +172,7 @@ export function RouteFlowDiagram() {
   const running = proxy.data?.running ?? false;
   const { cys: upCys, height: canvasH } = layoutUpstreams(upstreams.length);
   const hubCy = midY(canvasH);
-  const slotCount = orderedVms.filter((v) => v.name !== "model-fallback").length;
+  const slotCount = orderedVms.filter((v) => v.name !== "model-fallback" && v.name !== "model-jev").length;
   const address = (proxy.data?.base_url ?? "").replace(/^https?:\/\//, "");
 
   return (

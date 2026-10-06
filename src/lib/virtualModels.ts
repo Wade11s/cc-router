@@ -1,4 +1,5 @@
 import type {
+  EndpointProtocol,
   RoutingMode,
   SubscriptionSlot,
   VirtualModelName,
@@ -10,6 +11,7 @@ export const VM_ORDER: VirtualModelName[] = [
   "model-sonnet",
   "model-haiku",
   "model-fallback",
+  "model-jev",
 ];
 
 export interface VmMeta {
@@ -47,15 +49,21 @@ export const VM_META: Record<VirtualModelName, VmMeta> = {
     purposeEnKey: "vm.fallback.purposeEn",
     labelKey: "vm.fallback.label",
   },
+  "model-jev": {
+    purposeKey: "vm.jev.purpose",
+    purposeEnKey: "vm.jev.purposeEn",
+    labelKey: "vm.jev.label",
+  },
 };
 
-/** fallback 走原样透传,不绑 slot */
+/** fallback / jev 不绑四槽 (fallback 走原样透传, jev 走自己的 jev 槽) */
 const SLOT_BY_VM: Record<VirtualModelName, SubscriptionSlot | null> = {
   "model-fable": "fable",
   "model-opus": "opus",
   "model-sonnet": "sonnet",
   "model-haiku": "haiku",
   "model-fallback": null,
+  "model-jev": null,
 };
 
 export function vmNameToSlot(name: VirtualModelName): SubscriptionSlot | null {
@@ -67,3 +75,12 @@ export const MODE_LABEL_KEY: Record<RoutingMode, string> = {
   round_robin: "vm.mode.round_robin",
   sticky: "vm.mode.sticky",
 };
+
+export function isJev(name: VirtualModelName): boolean {
+  return name === "model-jev";
+}
+
+/** 与后端 VirtualModelName::accepts 同一条规则: model-jev 只收 systemone 订阅, 其余只收对话类订阅。 */
+export function vmAccepts(name: VirtualModelName, protocol: EndpointProtocol): boolean {
+  return isJev(name) ? protocol === "systemone" : protocol !== "systemone";
+}

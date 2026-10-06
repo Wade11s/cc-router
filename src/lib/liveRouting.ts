@@ -13,6 +13,7 @@ export const CLIENT_ALIASES: Record<VirtualModelName, string[]> = {
   "model-sonnet": ["model-sonnet", "claude-sonnet*", "gpt-5.4", "gpt-*-luna"],
   "model-haiku": ["model-haiku", "claude-haiku*", "gpt-*-mini"],
   "model-fallback": [],
+  "model-jev": [],
 };
 
 /** 照抄 src-tauri/src/proxy/server.rs::build_router —— 唯一事实来源 */
@@ -20,6 +21,7 @@ export const API_ROUTES: { method: string; path: string; descKey: string }[] = [
   { method: "POST", path: "/v1/messages", descKey: "liveRouting.api.messages" },
   { method: "POST", path: "/v1/responses", descKey: "liveRouting.api.responses" },
   { method: "POST", path: "/v1/chat/completions", descKey: "liveRouting.api.chatCompletions" },
+  { method: "POST", path: "/v1/systemone", descKey: "liveRouting.api.systemone" },
   { method: "GET", path: "/v1/models", descKey: "liveRouting.api.models" },
   { method: "GET", path: "/health", descKey: "liveRouting.api.health" },
 ];

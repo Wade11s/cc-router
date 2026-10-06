@@ -241,6 +241,8 @@ function MappingSection() {
             >
               {vm.name === "model-fallback" ? (
                 <span className="vm-map-note">{t("liveRouting.map.fallbackLeft")}</span>
+              ) : vm.name === "model-jev" ? (
+                <span className="vm-map-note">{t("liveRouting.map.jevLeft")}</span>
               ) : (
                 CLIENT_ALIASES[vm.name].map((alias, i) => (
                   <span className={i === 0 ? "vm-chip primary" : "vm-chip"} key={alias}>
@@ -297,7 +299,9 @@ function MappingSection() {
                       // fallback 行三态: 兜底槽值 / 透传 / 翻译类未配槽会被跳过
                       const fallbackModel = sub.model_slots.fallback?.trim() ?? "";
                       const real =
-                        slot === null
+                        vm.name === "model-jev"
+                          ? sub.model_slots.jev?.trim() || t("sortableSub.passthrough")
+                          : slot === null
                           ? fallbackModel ||
                             (isAnthropicPassthrough(sub.auth_type)
                               ? t("sortableSub.passthrough")

@@ -243,6 +243,16 @@ export function ImportConfigDialog({
                 </ul>
               </li>
             )}
+            {(report.skipped_bindings?.length ?? 0) > 0 && (
+              <li>
+                {t("backup.import.report.skippedBindings", { count: report.skipped_bindings!.length })}
+                <ul style={{ paddingLeft: 18 }}>
+                  {report.skipped_bindings!.map((e) => (
+                    <li key={e.name + e.reason}>{t("backup.import.report.invalidItem", { name: e.name, reason: e.reason })}</li>
+                  ))}
+                </ul>
+              </li>
+            )}
             {report.disabled_missing_key.length > 0 && (
               <li>{t("backup.import.report.missingKey", { names: report.disabled_missing_key.join(t("backup.import.nameSeparator")) })}</li>
             )}

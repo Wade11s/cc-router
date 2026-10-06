@@ -103,7 +103,11 @@ export type VirtualModelName =
   | "model-opus"
   | "model-sonnet"
   | "model-haiku"
-  | "model-fallback";
+  | "model-fallback"
+  | "model-jev";
+
+/** 端点协议: messages = 对话类 (三个对话入口); systemone = Jev 决策协议, 只服务 POST /v1/systemone */
+export type EndpointProtocol = "messages" | "systemone";
 export type SubscriptionSlot = "fable" | "opus" | "sonnet" | "haiku";
 export type RoutingMode = "sequential" | "round_robin" | "sticky";
 export type SubscriptionState =
@@ -122,6 +126,9 @@ export interface ProviderEndpointInfo {
   messages_path: string;
   region?: string;
   billing?: string;
+  protocol: EndpointProtocol;
+  /** 仅本端点的模型输入提示; 空数组 = 用 provider 级 model_discovery.example_models */
+  example_models: string[];
 }
 
 export interface ProviderInfo {
@@ -177,6 +184,11 @@ export interface ModelSlots {
    * Rust 侧 #[serde(default)] 兼容不带该字段的 payload。
    */
   fallback?: string;
+  /**
+   * Jev 槽 (可选, 只对 systemone 订阅有意义): model-jev 命中该订阅时非空则改写请求 model;
+   * 缺失 / 空串 = 透传客户端 model。不参与 allSlotsFilled。
+   */
+  jev?: string;
 }
 
 /**
@@ -324,6 +336,8 @@ export interface SubscriptionDto {
   forward_headers: string[];
   /** 「透传客户端请求头」开关 (仅 auth_type=api_key 的透传路径消费, 默认 false) */
   forward_client_headers: boolean;
+  /** 创建时快照的端点协议, 之后不可变。systemone 订阅只能绑 model-jev, 反之亦然。 */
+  endpoint_protocol: EndpointProtocol;
   model_discovery: ModelDiscoveryDto;
   /** true 表示该 provider 声明且启用了余额查询接口. */
   balance_supported: boolean;
@@ -1071,6 +1085,8 @@ export interface ImportReport {
   skipped_oauth: string[];
   /** 没通过新建订阅校验而跳过的订阅 */
   skipped_invalid: { name: string; reason: string }[];
+  /** 跨类绑定 (对话订阅 ↔ model-jev) 被跳过的记录; 后端为空时省略 */
+  skipped_bindings?: { name: string; reason: string }[];
   disabled_missing_key: string[];
   token_imported: boolean;
   token_error?: string;
