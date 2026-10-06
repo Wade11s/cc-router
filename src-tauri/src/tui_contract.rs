@@ -475,7 +475,7 @@ fn routing_mode_wire_names_round_trip() {
 /// `fallback` 空串照常出现 (不是 `Option`)。
 #[test]
 fn update_subscription_patch_from_the_tui_deserializes() {
-    let model_slots = dto::ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new() };
+    let model_slots = dto::ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new(), jev: String::new() };
     let mut slot_efforts = dto::SlotEfforts::default();
     slot_efforts.set(dto::Slot::Opus, Some("high".into()));
 
@@ -896,7 +896,7 @@ fn create_subscription_input_matches() {
     let via_template = dto::CreateInput {
         display_name: "智谱主号".into(),
         api_key: Secret::new("sk-test"),
-        model_slots: dto::ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new() },
+        model_slots: dto::ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new(), jev: String::new() },
         source: dto::CreateSource::Builtin { provider_id: "zhipu".into(), endpoint_id: "default".into() },
     };
     let args = via_template.to_args();
@@ -1094,4 +1094,48 @@ fn pending_placeholder_matches_the_desktop_wizard() {
     assert_eq!(slots.sonnet, dto::PENDING_MODEL);
     assert_eq!(slots.haiku, dto::PENDING_MODEL);
     assert_eq!(slots.fallback, "", "兜底槽应该留空串, 不是占位值");
+}
+
+/// systemone 订阅: endpoint_protocol 与 jev 槽都能被 TUI 读到。
+#[test]
+fn systemone_subscription_matches() {
+    let mut row = SubscriptionRow::test_fixture("ollama", "localhost_systemone");
+    row.endpoint_protocol = crate::provider::model::EndpointProtocol::Systemone;
+    row.model_slots.jev = "clef-flash".into();
+    let view: dto::Subscription = through_json(&SubscriptionDto::from_runtime(&SubscriptionRuntime::from_row(row), vec![], &HashMap::new()));
+    assert!(view.is_systemone());
+    assert_eq!(view.model_slots.jev, "clef-flash");
+    assert!(dto::vm_accepts(dto::JEV_VM, &view));
+    assert!(!dto::vm_accepts("model-opus", &view));
+}
+
+/// 端点级 protocol / example_models 能被 TUI 读到; 老 DTO 缺字段时按 messages。
+#[test]
+fn provider_endpoint_protocol_matches() {
+    let p = provider_from_yaml(
+        r#"
+id: demo
+display_name: Demo
+compatibility: untested
+endpoints:
+  - id: s1
+    label: S1
+    base_url: "http://localhost:11434"
+    messages_path: "/v1/systemone"
+    protocol: systemone
+    example_models: ["clef-flash"]
+auth: { type: api_key, header_name: Authorization, header_format: bearer }
+"#,
+    );
+    let view: dto::Provider = through_json(&ProviderInfo::from(&p));
+    assert!(view.endpoints[0].is_systemone());
+    assert_eq!(view.endpoints[0].example_models, vec!["clef-flash".to_string()]);
+    let legacy: dto::ProviderEndpoint = serde_json::from_value(serde_json::json!({"id": "a", "label": "A", "base_url": "x"})).unwrap();
+    assert!(!legacy.is_systemone());
+}
+
+#[test]
+fn systemone_entry_kind_reaches_the_tui() {
+    let real = crate::proxy::client_fingerprint::RequestEntryKind::SystemOne.as_str();
+    assert_eq!(real, "systemone", "TUI 日志详情按 /v1/{{entry_kind}} 渲染");
 }

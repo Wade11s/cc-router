@@ -305,6 +305,7 @@ pub(crate) fn slot_label(slot: Slot, s: &'static Strings) -> &'static str {
         Slot::Sonnet => "sonnet",
         Slot::Haiku => "haiku",
         Slot::Fallback => s.sub_slot_fallback,
+        Slot::Jev => "jev",
     }
 }
 

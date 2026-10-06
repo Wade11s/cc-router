@@ -1337,7 +1337,8 @@ mod tests {
             provider_id: "p".into(),
             base_url: "https://example.invalid".into(),
             auth_type: "api_key".into(),
-            model_slots: ModelSlots { fable: "d".into(), opus: "a".into(), sonnet: "b".into(), haiku: "c".into(), fallback: String::new() },
+            endpoint_protocol: "messages".into(),
+            model_slots: ModelSlots { fable: "d".into(), opus: "a".into(), sonnet: "b".into(), haiku: "c".into(), fallback: String::new(), jev: String::new() },
             slot_efforts: Default::default(),
             referenced_by: vec![],
             balance_supported: false,
@@ -1380,7 +1381,8 @@ mod tests {
             provider_id: "p".into(),
             base_url: "https://example.invalid".into(),
             auth_type: "api_key".into(),
-            model_slots: ModelSlots { fable: "d".into(), opus: "a".into(), sonnet: "b".into(), haiku: "c".into(), fallback: String::new() },
+            endpoint_protocol: "messages".into(),
+            model_slots: ModelSlots { fable: "d".into(), opus: "a".into(), sonnet: "b".into(), haiku: "c".into(), fallback: String::new(), jev: String::new() },
             slot_efforts: Default::default(),
             referenced_by: vec![],
             balance_supported: false,
@@ -1439,7 +1441,7 @@ mod tests {
     }
 
     fn slots_with_sonnet(sonnet: &str) -> ModelSlots {
-        ModelSlots { fable: "d".into(), opus: "a".into(), sonnet: sonnet.into(), haiku: "c".into(), fallback: String::new() }
+        ModelSlots { fable: "d".into(), opus: "a".into(), sonnet: sonnet.into(), haiku: "c".into(), fallback: String::new(), jev: String::new() }
     }
 
     /// 模型名列宽是 `min(可用宽度, 最长模型名+2)`, 下限 24——短模型名不该拖出一大段空白让 effort

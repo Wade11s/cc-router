@@ -94,6 +94,9 @@ pub struct Subscription {
     pub base_url: String,
     /// 后端是枚举 (`AuthType`, `#[serde(rename_all = "snake_case")]`), 这里按字符串收, 只用于显示。
     pub auth_type: String,
+    /// 端点协议快照 ("messages" / "systemone"), 后端 `SubscriptionDto.endpoint_protocol`。老后端缺字段按 messages。
+    #[serde(default = "default_protocol")]
+    pub endpoint_protocol: String,
     pub model_slots: ModelSlots,
     #[serde(default)]
     pub slot_efforts: SlotEfforts,
@@ -120,6 +123,9 @@ pub struct ModelSlots {
     pub haiku: String,
     #[serde(default)]
     pub fallback: String,
+    /// Jev 槽 (仅 systemone 订阅): 空串 = 透传客户端 model。与 fallback 一样总是序列化。
+    #[serde(default)]
+    pub jev: String,
 }
 
 /// 五个模型槽位, 与 [`ModelSlots`] 的字段一一对应。`widgets::picker::PickerTag` 用它区分「给哪个
@@ -133,6 +139,20 @@ pub enum Slot {
     Sonnet,
     Haiku,
     Fallback,
+    /// 只属于 systemone 订阅 (对话订阅没有这个槽)。
+    Jev,
+}
+
+fn default_protocol() -> String {
+    "messages".to_string()
+}
+
+/// 第 6 个虚拟模型的名字; 只收 systemone 订阅。
+pub const JEV_VM: &str = "model-jev";
+
+/// 与后端 `VirtualModelName::accepts` 同一条规则 (后端仍会兜底拒绝)。
+pub fn vm_accepts(vm_name: &str, sub: &Subscription) -> bool {
+    (vm_name == JEV_VM) == sub.is_systemone()
 }
 
 /// 新建订阅时四个核心槽位的占位值。与桌面端 `uniformSlots("(pending)")` 逐字相同;
@@ -147,6 +167,7 @@ impl ModelSlots {
             Slot::Sonnet => &self.sonnet,
             Slot::Haiku => &self.haiku,
             Slot::Fallback => &self.fallback,
+            Slot::Jev => &self.jev,
         }
     }
 
@@ -157,6 +178,7 @@ impl ModelSlots {
             Slot::Sonnet => self.sonnet = value,
             Slot::Haiku => self.haiku = value,
             Slot::Fallback => self.fallback = value,
+            Slot::Jev => self.jev = value,
         }
     }
 
@@ -169,6 +191,7 @@ impl ModelSlots {
             sonnet: PENDING_MODEL.to_string(),
             haiku: PENDING_MODEL.to_string(),
             fallback: String::new(),
+            jev: String::new(),
         }
     }
 }
@@ -196,6 +219,7 @@ impl SlotEfforts {
             Slot::Sonnet => self.sonnet.as_deref(),
             Slot::Haiku => self.haiku.as_deref(),
             Slot::Fallback => None,
+            Slot::Jev => None,
         }
     }
 
@@ -206,6 +230,7 @@ impl SlotEfforts {
             Slot::Sonnet => self.sonnet = value,
             Slot::Haiku => self.haiku = value,
             Slot::Fallback => {}
+            Slot::Jev => {}
         }
     }
 }
@@ -353,6 +378,10 @@ pub enum RefreshBalanceResult {
 }
 
 impl Subscription {
+    pub fn is_systemone(&self) -> bool {
+        self.endpoint_protocol == "systemone"
+    }
+
     /// 设了上限的周期里已用比例最高的那个 —— 总览页每行只放得下一条限额。
     pub fn tightest_quota(&self) -> Option<&QuotaUsage> {
         self.quota_usage
@@ -607,6 +636,16 @@ pub struct ProviderEndpoint {
     pub id: String,
     pub label: String,
     pub base_url: String,
+    #[serde(default = "default_protocol")]
+    pub protocol: String,
+    #[serde(default)]
+    pub example_models: Vec<String>,
+}
+
+impl ProviderEndpoint {
+    pub fn is_systemone(&self) -> bool {
+        self.protocol == "systemone"
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -1045,7 +1084,7 @@ mod tests {
         CreateInput {
             display_name: "智谱主号".into(),
             api_key: Secret::new(api_key),
-            model_slots: ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new() },
+            model_slots: ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new(), jev: String::new() },
             source: CreateSource::Builtin { provider_id: "zhipu".into(), endpoint_id: "default".into() },
         }
     }

@@ -1033,7 +1033,7 @@ mod tests {
             .and(body_json(json!({
                 "id": "1",
                 "patch": {
-                    "model_slots": {"fable": "f", "opus": "o", "sonnet": "s", "haiku": "h", "fallback": ""},
+                    "model_slots": {"fable": "f", "opus": "o", "sonnet": "s", "haiku": "h", "fallback": "", "jev": ""},
                     "slot_efforts": {"opus": "high"}
                 }
             })))
@@ -1045,7 +1045,7 @@ mod tests {
         let client = Arc::new(Client::connect(dir.path()).unwrap());
         let (tx, mut rx) = unbounded_channel::<Action>();
 
-        let model_slots = ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new() };
+        let model_slots = ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new(), jev: String::new() };
         let mut slot_efforts = SlotEfforts::default();
         slot_efforts.set(Slot::Opus, Some("high".into()));
         spawn_mutation(client, tx, Mutation::UpdateSlots { id: "1".into(), model_slots, slot_efforts }, &crate::i18n::ZH);
@@ -1231,7 +1231,7 @@ mod tests {
             .and(body_json(json!({
                 "id": "1",
                 "patch": {
-                    "model_slots": {"fable": "glm-4.6", "opus": "glm-4.6", "sonnet": "glm-4.6", "haiku": "glm-4.6", "fallback": ""},
+                    "model_slots": {"fable": "glm-4.6", "opus": "glm-4.6", "sonnet": "glm-4.6", "haiku": "glm-4.6", "fallback": "", "jev": ""},
                 }
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "1", "display_name": "n"})))
@@ -1248,6 +1248,7 @@ mod tests {
             sonnet: "glm-4.6".into(),
             haiku: "glm-4.6".into(),
             fallback: String::new(),
+            jev: String::new(),
         };
         spawn_wizard(client, tx, 7, WizardCmd::SaveSlots { id: "1".into(), model_slots }, &crate::i18n::ZH);
 

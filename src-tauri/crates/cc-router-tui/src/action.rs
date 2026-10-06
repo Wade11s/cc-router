@@ -336,7 +336,7 @@ mod tests {
     use crate::client::dto::RequestFilters;
 
     fn slots() -> ModelSlots {
-        ModelSlots { fable: String::new(), opus: String::new(), sonnet: String::new(), haiku: String::new(), fallback: String::new() }
+        ModelSlots { fable: String::new(), opus: String::new(), sonnet: String::new(), haiku: String::new(), fallback: String::new(), jev: String::new() }
     }
 
     #[test]

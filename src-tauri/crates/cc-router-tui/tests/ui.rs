@@ -85,7 +85,8 @@ fn sub(id: &str, name: &str, state: SubscriptionState) -> Subscription {
         provider_id: "p".into(),
         base_url: "https://example.invalid".into(),
         auth_type: "api_key".into(),
-        model_slots: ModelSlots { fable: "d".into(), opus: "a".into(), sonnet: "b".into(), haiku: "c".into(), fallback: String::new() },
+        endpoint_protocol: "messages".into(),
+        model_slots: ModelSlots { fable: "d".into(), opus: "a".into(), sonnet: "b".into(), haiku: "c".into(), fallback: String::new(), jev: String::new() },
         slot_efforts: Default::default(),
         referenced_by: vec![],
         balance_supported: false,
@@ -165,7 +166,7 @@ fn detail_subs() -> Vec<Subscription> {
     zhipu.base_url = "https://open.bigmodel.cn/api/anthropic".into();
     zhipu.auth_type = "api_key".into();
     zhipu.model_slots =
-        ModelSlots { fable: "glm-4.6".into(), opus: "glm-4.6".into(), sonnet: "glm-4.6".into(), haiku: "glm-4.5-air".into(), fallback: String::new() };
+        ModelSlots { fable: "glm-4.6".into(), opus: "glm-4.6".into(), sonnet: "glm-4.6".into(), haiku: "glm-4.5-air".into(), fallback: String::new(), jev: String::new() };
     zhipu.slot_efforts = SlotEfforts { opus: Some("high".into()), ..Default::default() };
     zhipu.quota_usage = vec![quota(1000, 620)];
     zhipu.balance_supported = true;
@@ -207,6 +208,7 @@ fn detail_subs() -> Vec<Subscription> {
         sonnet: "claude-sonnet-4-5".into(),
         haiku: "claude-haiku-4-5".into(),
         fallback: String::new(),
+        jev: String::new(),
     };
 
     vec![zhipu, kimi, relay]
@@ -389,8 +391,8 @@ fn zhipu_provider() -> Provider {
         display_name: "智谱 AI".into(),
         description: Some("智谱 AI 大模型".into()),
         endpoints: vec![
-            ProviderEndpoint { id: "cn".into(), label: "国内版".into(), base_url: "https://open.bigmodel.cn/api/anthropic".into() },
-            ProviderEndpoint { id: "intl".into(), label: "国际版".into(), base_url: "https://api.z.ai/api/anthropic".into() },
+            ProviderEndpoint { id: "cn".into(), label: "国内版".into(), base_url: "https://open.bigmodel.cn/api/anthropic".into(), protocol: "messages".into(), example_models: vec![] },
+            ProviderEndpoint { id: "intl".into(), label: "国际版".into(), base_url: "https://api.z.ai/api/anthropic".into(), protocol: "messages".into(), example_models: vec![] },
         ],
         default_endpoint: Some("cn".into()),
         auth: ProviderAuth { auth_type: "api_key".into() },
@@ -534,6 +536,7 @@ fn slot_row(slot: Slot) -> &'static str {
         Slot::Sonnet => "sonnet",
         Slot::Haiku => "haiku",
         Slot::Fallback => s().sub_slot_fallback,
+        Slot::Jev => "jev",
     }
 }
 
@@ -1057,6 +1060,7 @@ fn saving_sends_only_the_model_slots_patch() {
                 sonnet: "glm-4.6".into(),
                 haiku: "glm-4.6".into(),
                 fallback: String::new(),
+                jev: String::new(),
             },
         }))]
     );
@@ -1481,6 +1485,7 @@ fn creating_a_custom_subscription_sends_real_slots_and_closes() {
             sonnet: "glm-4.6".into(),
             haiku: "glm-4.6".into(),
             fallback: String::new(),
+            jev: String::new(),
         },
         source: CreateSource::Custom(Box::new(CustomSource {
             provider_display_name: "中转站".into(),
@@ -3715,7 +3720,7 @@ fn saving_outcomes_toast_and_refetch_what_they_declare() {
     let mut a = subs_app(false);
     let slots_mutation = Mutation::UpdateSlots {
         id: "1".into(),
-        model_slots: ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new() },
+        model_slots: ModelSlots { fable: "f".into(), opus: "o".into(), sonnet: "s".into(), haiku: "h".into(), fallback: String::new(), jev: String::new() },
         slot_efforts: SlotEfforts::default(),
     };
     assert!(!a.update(Action::Mutate(slots_mutation.clone())).is_empty(), "应该真的发出去");
@@ -4152,6 +4157,7 @@ fn s_saves_the_whole_slots_and_efforts() {
                 sonnet: "glm-4.6".into(),
                 haiku: "glm-4.5-air".into(),
                 fallback: String::new(),
+                jev: String::new(),
             },
             slot_efforts: SlotEfforts { opus: Some("high".into()), ..Default::default() },
         }))
@@ -4202,6 +4208,7 @@ fn draft_survives_polling_and_is_cleared_only_by_a_successful_save() {
             sonnet: "glm-4.6".into(),
             haiku: "glm-4.5-air".into(),
             fallback: String::new(),
+            jev: String::new(),
         },
         slot_efforts: SlotEfforts { opus: Some("high".into()), ..Default::default() },
     };

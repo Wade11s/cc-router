@@ -338,6 +338,7 @@ mod tests {
                 provider_id: "p".into(),
                 base_url: "https://example.invalid".into(),
                 auth_type: "api_key".into(),
+                endpoint_protocol: "messages".into(),
                 model_slots: crate::client::dto::ModelSlots::pending(),
                 slot_efforts: Default::default(),
                 referenced_by: vec![],
@@ -363,7 +364,7 @@ mod tests {
     }
 
     fn filled_slots() -> ModelSlots {
-        ModelSlots { fable: "glm-4.6".into(), opus: "glm-4.6".into(), sonnet: "glm-4.6".into(), haiku: "glm-4.6".into(), fallback: String::new() }
+        ModelSlots { fable: "glm-4.6".into(), opus: "glm-4.6".into(), sonnet: "glm-4.6".into(), haiku: "glm-4.6".into(), fallback: String::new(), jev: String::new() }
     }
 
     #[test]
