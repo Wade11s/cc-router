@@ -39,31 +39,31 @@
 アーキテクチャとリクエストの流れ：
 
 ```text
- Claude Code    OpenCode    OpenClaw   pi ...   Codex ...      Open WebUI / Cherry Studio ...
-      |             |           |         |         |                         |
-      -------------------------------------         |                         |
-                        |                           |                         |
-                    Anthropic                    OpenAI                    OpenAI
-                  Messages API                Responses API         Chat Completions API
-                 (/v1/messages)              (/v1/responses)       (/v1/chat/completions)
-                        |                           |                         |
-                        -------------------------------------------------------
-                                                  |  入口 · 仮想モデル
-                                                  |
-                                              cc-router
-                                       (ローカル 127.0.0.1:23456)
-                                                  |
-                                                  |  出口 · 実モデル
-           -----------------------------------------------------------------------------
-           |            |            |            |            |            |          |
-       DeepSeek        GLM         Kimi       Anthropic     OpenAI       Gemini     ......
-          API        Coding       Coding      Messages    Responses &      API
-                      Plan         Plan          API      Completions
+ Claude Code  OpenCode   OpenClaw  pi ...   Codex ...           Open WebUI ...       自作コード / Agent
+      |           |          |        |         |                      |                      |
+      ---------------------------------         |                      |                      |
+                      |                         |                      |                      |
+                  Anthropic                  OpenAI                 OpenAI                   Jev
+                Messages API              Responses API      Chat Completions API        System One
+               (/v1/messages)            (/v1/responses)    (/v1/chat/completions)     (/v1/systemone)
+                      |                         |                      |                      |
+                      -------------------------------------------------------------------------
+                                                          |  入口 · 仮想モデル
+                                                          |
+                                                      cc-router
+                                             (ローカル 127.0.0.1:23456)
+                                                          |
+                                                          |  出口 · 実モデル
+                    ------------------------------------------------------------------------------
+                    |          |          |          |          |          |          |          |
+                DeepSeek      GLM       Kimi     Anthropic   OpenAI     Gemini       Jev      ......
+                   API      Coding     Coding    Messages  Responses &    API    System One
+                             Plan       Plan        API    Completions
 ```
 
 機能ハイライト：
 
-- **入口は 3 プロトコル、どのツールもそのまま接続** —— Anthropic Messages / OpenAI Responses / OpenAI Chat Completions の 3 エンドポイントを同時に公開。Claude Code、Codex、OpenClaw、Hermes Agent、Kimi Code、ZCode、Cherry Studio などが改造なしで接続できます
+- **入口は 3 プロトコル、どのツールもそのまま接続** —— Anthropic Messages / OpenAI Responses / OpenAI Chat Completions の 3 エンドポイントを同時に公開。Claude Code、Codex、OpenClaw、Hermes Agent、Kimi Code、ZCode、Cherry Studio などが改造なしで接続できます。さらに `/v1/systemone` 入口は Jev（System One）意思決定モデル専用で、独立した仮想モデル `model-jev` を使います
 - **出口は 3 プロトコル、全サブスクを一括ディスパッチ** —— 24 社のプロバイダプリセットを内蔵（DeepSeek・Qwen・Kimi・MiMo・MiniMax・GLM・Claude・OpenAI・Gemini など）。Anthropic / OpenAI / Gemini 互換のエンドポイントなら何でも追加可能
 - **手持ちのトークンをすべて集約** —— 順次 / ラウンドロビン / セッション親和のディスパッチ、自動切替とフェイルオーバー
 - **利用レシート** —— トークン使用量を「スーパーのレシート」風の画像にワンクリックで書き出し。共有にも記録にも便利
@@ -153,16 +153,17 @@ LiteLLM 形式の `anthropic/` プレフィックスにも対応しています:
 |  `model-opus` |  `anthropic/model-opus` `anthropic/claude-opus*` `claude-opus*` `gpt-5.5` `gpt-*-terra` `openai/gpt-5.5` `openai/gpt-*-terra` |
 |  `model-sonnet` |  `anthropic/model-sonnet` `anthropic/claude-sonnet*` `claude-sonnet*` `gpt-5.4` `gpt-*-luna` `openai/gpt-5.4` `openai/gpt-*-luna` |
 |  `model-haiku` |  `anthropic/model-haiku` `anthropic/claude-haiku*` `claude-haiku*`  `gpt-*-mini` `openai/gpt-*-mini` |
+|  `model-jev` |  `anthropic/model-jev` `openai/model-jev`（`/v1/systemone` 入口でのみ有効。会話用の入口では 400 を返します） |
 
 > `claude-opus*` はワイルドカード（前方一致）です。パターンに一致するモデル名を渡せば、すべて仮想モデル `model-opus` に正規化されます。例えば `claude-opus-4-8`、`claude-opus-4-7-20260101`、`claude-opus-100` などはすべて問題なく動作します。`gpt-*-sol` 系のエイリアスはティアセグメントで一致します: `gpt-5.6-sol`、`gpt-6-sol`、`gpt-5.6-sol-20261201` はいずれも sol ティアに一致します（terra/luna/mini も同様）。
 
 ## 入口と出口
 
-cc-router はツールと LLM プロバイダの間に入ります。ツールは**入口**から接続し、リクエストは**出口**からプロバイダへ送られます。入口・出口それぞれが主要 3 種類の LLM API に対応しており、組み合わせは自由です——たとえば Codex が OpenAI Responses の入口から入り、最終的に DeepSeek の Anthropic エンドポイントが応答する、といった構成も可能です。
+cc-router はツールと LLM プロバイダの間に入ります。ツールは**入口**から接続し、リクエストは**出口**からプロバイダへ送られます。入口・出口それぞれが主要 3 種類の LLM API に対応しており、組み合わせは自由です——たとえば Codex が OpenAI Responses の入口から入り、最終的に DeepSeek の Anthropic エンドポイントが応答する、といった構成も可能です。このほか Jev（System One）意思決定モデル専用の経路があり、入口・出口ともに `/v1/systemone` で、そのまま透過します。
 
 ### 入口：ツールから cc-router への接続
 
-3 つの入口はサブスクリプション・仮想モデル・クォータ・セッション親和を共有します。リクエストログの「受信エンドポイント」列で、各リクエストがどの入口から来たかを確認できます。お使いのツールが対応するプロトコルのセクションを展開してください：
+3 つの会話用入口はサブスクリプション・仮想モデル・クォータ・セッション親和を共有します。4 つ目の入口 `/v1/systemone` は Jev 意思決定モデル専用で、`model-jev` のみを使います。リクエストログの「受信エンドポイント」列で、各リクエストがどの入口から来たかを確認できます。お使いのツールが対応するプロトコルのセクションを展開してください：
 
 <details>
 <summary><b>Anthropic Messages</b> <code>/v1/messages</code> —— Claude Code、Claude Desktop、OpenCode、OpenClaw、pi、Kimi code cli など</summary>
@@ -234,11 +235,46 @@ Open WebUI、Cherry Studio、Cline、LobeChat など OpenAI Chat Completions し
 
 </details>
 
-このほか `POST /v1/systemone` があります —— Jev（System One）意思決定モデル向けにリクエストをそのまま透過する入口で、`model-jev` にバインドされます。対応する上流：TypeSafe、OpenRouter、Ollama 0.35+。
+<details>
+<summary><b>Jev System One</b> <code>/v1/systemone</code> —— 自作のコード、エージェントフレームワーク、または HTTP リクエストを送れる任意のプログラム</summary>
+
+Jev（System One）は構造化された意思決定モデルです。リクエストで状態 `state` と質問の集合 `questions` を渡すと、レスポンスの `answers` に質問ごとの構造化された回答が返り、会話テキストは生成しません。cc-router は複数の上流のキーを独立した仮想モデル `model-jev` にまとめ、プロトコルを変換せずにそのまま透過します。
+
+| 設定項目 | 値 |
+|---|---|
+| エンドポイント URL | `http://127.0.0.1:23456/v1/systemone`（フルパスで指定） |
+| 認証 | `Authorization: Bearer <token>`。`x-api-key: <token>` でも構いません |
+| モデル名 | `model-jev`（`anthropic/` / `openai/` プレフィックス可）、または上流の実際のモデル名 |
+
+コマンドラインで確認：
+
+```bash
+curl http://127.0.0.1:23456/v1/systemone \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+  "model": "model-jev",
+  "state": "Hello World",
+  "questions": {
+    "says_hello": {
+      "type": "noul",
+      "instructions": "Does the state text contain a greeting?"
+    }
+  }
+}'
+```
+
+- `model-jev` を指定すると、cc-router は選ばれたサブスクリプションに設定された Jev モデルに書き換えます。未設定ならそのエンドポイントの例示モデル（`clef-flash`、`jev-latest` など）を使い、レスポンスの `model` は `model-jev` のまま返ります。実際のモデル名を指定した場合は、Jev モデルが設定されていれば書き換え、未設定ならそのまま透過します。
+- `model-jev` にバインドされ、エンドポイントが System One のサブスクリプションだけを使います。会話系サブスクリプションはここでは使われず、System One サブスクリプションが他の仮想モデルに入ることもありません。会話用の 3 つの入口は `model-jev` を受け取ると 400 を返します。
+- 非ストリーミングのみ対応。ある上流が 4xx を返すと次の上流に切り替えます（上流ごとに検証ルールが少しずつ異なるため）。すべて失敗した場合、リクエスト自体の誤りなら最後の上流のエラーをそのまま返し、それ以外は 503 を返します。
+- セッション親和性は `x-session-id` ヘッダーのみで識別し、ない場合はラウンドロビンで割り当てます。
+- 使用量は「統計」と「利用レシート」に計上されます。
+
+</details>
 
 ### 出口：cc-router からプロバイダへの接続
 
-出口はプロトコルごとに 3 分類、加えて OAuth ログインを使うサブスクリプションアカウントが 1 分類あります。内蔵プロバイダプリセットもカスタムエンドポイントも同じ経路を通り、違いはプリセットがアドレス・認証方式・モデル一覧をあらかじめ埋めてくれる点だけです。内蔵プロバイダの完全な一覧はアプリ内「サブスクリプションを追加」画面が正となり、記述ファイルは [`src-tauri/providers/`](src-tauri/providers/) にあります。PR 歓迎です。
+出口はプロトコルごとに 3 分類、加えて OAuth ログインを使うサブスクリプションアカウントと、`model-jev` 専用の System One エンドポイントがあります。内蔵プロバイダプリセットもカスタムエンドポイントも同じ経路を通り、違いはプリセットがアドレス・認証方式・モデル一覧をあらかじめ埋めてくれる点だけです。内蔵プロバイダの完全な一覧はアプリ内「サブスクリプションを追加」画面が正となり、記述ファイルは [`src-tauri/providers/`](src-tauri/providers/) にあります。PR 歓迎です。
 
 <details>
 <summary><b>Anthropic Messages 互換</b> —— メイン経路、リクエストをそのまま透過</summary>
@@ -273,6 +309,15 @@ Open WebUI、Cherry Studio、Cline、LobeChat など OpenAI Chat Completions し
 
 - API Key 不要。OAuth のデバイスコードでログインし、ChatGPT サブスクリプション / Kiro の無料 Claude 枠を出口として使います
 - **グレーゾーンでアカウント停止のリスクがあるため、メインとしての利用は推奨しません。** フォールバックやサブアカウントとしての利用に留めてください。これに起因するレート制限、BAN、サブスクリプション解約について作者は一切責任を負いません
+
+</details>
+
+<details>
+<summary><b>Jev System One</b> <code>/v1/systemone</code> —— <code>model-jev</code> 専用、そのまま透過</summary>
+
+- 内蔵：TypeSafe、OpenRouter（System One エンドポイント）、Ollama 0.35+（ローカルの System One エンドポイント）。「サブスクリプションを追加」画面で各プロバイダの System One エンドポイントを選ぶだけです
+- このサブスクリプションには任意の Jev モデルスロットが 1 つだけあり、空欄の場合は入口のセクションで説明した書き換え / 透過のルールに従います
+- サブスクリプションのプロトコルは作成後に固定され、会話用エンドポイントと System One エンドポイントの間で切り替えることはできません。変更したい場合は新しく作成してください
 
 </details>
 

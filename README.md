@@ -39,31 +39,31 @@
 架构与请求走向一览：
 
 ```text
- Claude Code    OpenCode    OpenClaw   pi ...   Codex ...      Open WebUI / Cherry Studio ...
-      |             |           |         |         |                         |
-      -------------------------------------         |                         |
-                        |                           |                         |
-                    Anthropic                    OpenAI                    OpenAI
-                  Messages API                Responses API         Chat Completions API
-                 (/v1/messages)              (/v1/responses)       (/v1/chat/completions)
-                        |                           |                         |
-                        -------------------------------------------------------
-                                                  |  入口 · 虚拟模型
-                                                  |
-                                              cc-router
-                                        (本地 127.0.0.1:23456)
-                                                  |
-                                                  |  出口 · 真实模型
-           -----------------------------------------------------------------------------
-           |            |            |            |            |            |          |
-       DeepSeek        GLM         Kimi       Anthropic     OpenAI       Gemini     ......
-          API        Coding       Coding      Messages    Responses &      API
-                      Plan         Plan          API      Completions
+ Claude Code  OpenCode   OpenClaw  pi ...   Codex ...           Open WebUI ...      你的代码 / Agent 框架
+      |           |          |        |         |                      |                      |
+      ---------------------------------         |                      |                      |
+                      |                         |                      |                      |
+                  Anthropic                  OpenAI                 OpenAI                   Jev
+                Messages API              Responses API      Chat Completions API        System One
+               (/v1/messages)            (/v1/responses)    (/v1/chat/completions)     (/v1/systemone)
+                      |                         |                      |                      |
+                      -------------------------------------------------------------------------
+                                                          |  入口 · 虚拟模型
+                                                          |
+                                                      cc-router
+                                               (本地 127.0.0.1:23456)
+                                                          |
+                                                          |  出口 · 真实模型
+                    ------------------------------------------------------------------------------
+                    |          |          |          |          |          |          |          |
+                DeepSeek      GLM       Kimi     Anthropic   OpenAI     Gemini       Jev      ......
+                   API      Coding     Coding    Messages  Responses &    API    System One
+                             Plan       Plan        API    Completions
 ```
 
 功能亮点：
 
-- **入口三协议，工具随便接** —— 同时开放 Anthropic Messages / OpenAI Responses / OpenAI Chat Completions 三个端点，Claude Code、Codex、OpenClaw、Hermes Agent、Kimi Code、ZCode、Cherry Studio 等无需改造直接接入
+- **入口三协议，工具随便接** —— 同时开放 Anthropic Messages / OpenAI Responses / OpenAI Chat Completions 三个端点，Claude Code、Codex、OpenClaw、Hermes Agent、Kimi Code、ZCode、Cherry Studio 等无需改造直接接入；另有 `/v1/systemone` 入口专供 Jev（System One）决策模型，走独立的虚拟模型 `model-jev`
 - **出口三协议，订阅一站调度** —— 内置 24 家厂商预设（DeepSeek、Qwen、Kimi、MiMo、MiniMax、GLM、Claude、OpenAI、Gemini 等），任何 Anthropic / OpenAI / Gemini 兼容端点也能直接配进来
 - **聚合所有模型Token** —— 顺序 / 轮询 / 会话亲和、自动切换、故障转移
 - **用量小票** —— token 用量一键导出成一张「超市小票」样式的消费凭证，晒图、留档都方便
@@ -153,16 +153,17 @@
 |  `model-opus` |  `anthropic/model-opus` `anthropic/claude-opus*` `claude-opus*` `gpt-5.5` `gpt-*-terra` `openai/gpt-5.5` `openai/gpt-*-terra` |
 |  `model-sonnet` |  `anthropic/model-sonnet` `anthropic/claude-sonnet*` `claude-sonnet*` `gpt-5.4` `gpt-*-luna` `openai/gpt-5.4` `openai/gpt-*-luna` |
 |  `model-haiku` |  `anthropic/model-haiku` `anthropic/claude-haiku*` `claude-haiku*`  `gpt-*-mini` `openai/gpt-*-mini` |
+|  `model-jev` |  `anthropic/model-jev` `openai/model-jev`（只在 `/v1/systemone` 入口可用，对话入口收到会返回 400） |
 
 > `claude-opus*` 的含义是模糊匹配，你可以传入任意符合规则的模型名，都会被归一为虚拟模型`model-opus`，比如 `claude-opus-4-8` `claude-opus-4-7-20260101` `claude-opus-100` 都没问题。`gpt-*-sol` 这类按档位段匹配：`gpt-5.6-sol` `gpt-6-sol` `gpt-5.6-sol-20261201` 都命中 sol 档（terra/luna/mini 同理）。
 
 ## 入口与出口
 
-cc-router 夹在你的工具和大模型厂商中间：工具从**入口**连进来，请求从**出口**发给厂商。两头各支持三种主流大模型接口，可以任意组合——比如 Codex 从 OpenAI Responses 入口进来，最终由 DeepSeek 的 Anthropic 端点作答。
+cc-router 夹在你的工具和大模型厂商中间：工具从**入口**连进来，请求从**出口**发给厂商。两头各支持三种主流大模型接口，可以任意组合——比如 Codex 从 OpenAI Responses 入口进来，最终由 DeepSeek 的 Anthropic 端点作答。另有一条 Jev（System One）决策模型的专用通道，入口和出口都是 `/v1/systemone`，原样透传。
 
 ### 入口：你的工具怎么连 cc-router
 
-三个入口共用同一套订阅、虚拟模型、限额与会话亲和，请求日志的「入口接口」一栏能看到每条请求从哪个入口进来。按你的工具支持的协议展开对应一节：
+三个对话入口共用同一套订阅、虚拟模型、限额与会话亲和；第四个入口 `/v1/systemone` 专供 Jev 决策模型，只调度 `model-jev`。请求日志的「入口接口」一栏能看到每条请求从哪个入口进来。按你的工具支持的协议展开对应一节：
 
 <details>
 <summary><b>Anthropic Messages</b> <code>/v1/messages</code> —— Claude Code、Claude Desktop、OpenCode、OpenClaw、pi、Kimi code cli 等</summary>
@@ -234,11 +235,46 @@ Open WebUI、Cherry Studio、Cline、LobeChat 等只支持 OpenAI Chat Completio
 
 </details>
 
-另有 `POST /v1/systemone` —— Jev（System One）决策模型的原样透传入口，绑定到 `model-jev`；可用上游：TypeSafe、OpenRouter、Ollama 0.35+。
+<details>
+<summary><b>Jev System One</b> <code>/v1/systemone</code> —— 你自己的代码、Agent 框架，或任何能发 HTTP 请求的程序</summary>
+
+Jev（System One）是一类结构化决策模型：请求给出一段状态 `state` 和一组问题 `questions`，响应按问题逐个返回结构化答案 `answers`，不生成对话文本。cc-router 把多家上游的 Key 聚合在独立的虚拟模型 `model-jev` 下，协议原样透传、不做翻译。
+
+| 配置项 | 填写 |
+|---|---|
+| 接口地址 | `http://127.0.0.1:23456/v1/systemone`（写完整路径） |
+| 鉴权 | `Authorization: Bearer <token>`，`x-api-key: <token>` 也可以 |
+| 模型名 | `model-jev`（可带 `anthropic/` / `openai/` 前缀），也可以直接写上游的真实模型名 |
+
+命令行验证：
+
+```bash
+curl http://127.0.0.1:23456/v1/systemone \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+  "model": "model-jev",
+  "state": "Hello World",
+  "questions": {
+    "says_hello": {
+      "type": "noul",
+      "instructions": "Does the state text contain a greeting?"
+    }
+  }
+}'
+```
+
+- 写 `model-jev` 时，cc-router 按命中订阅配置的 Jev 模型改写；没配就用该接入点的示例模型（如 `clef-flash`、`jev-latest`），响应里的 `model` 仍回显 `model-jev`。写真实模型名时，订阅配了 Jev 模型就改写，没配就原样透传。
+- 只调度绑在 `model-jev` 上、接入点为 System One 的订阅；对话类订阅不会被用到，System One 订阅也不会进入其他虚拟模型。三个对话入口收到 `model-jev` 会直接返回 400。
+- 只支持非流式。某一家返回 4xx 会换下一家（各家的校验规则不完全一样）；全部失败时，如果是请求本身写错，原样返回最后一家的错误，否则返回 503。
+- 会话亲和只认 `x-session-id` 请求头，不带就按轮询分配。
+- 用量计入「数据统计」与「用量小票」。
+
+</details>
 
 ### 出口：cc-router 怎么连厂商
 
-出口按协议分三类，另有一类走 OAuth 登录的订阅账号。内置厂商预设和自定义端点走的是同一条路，区别只是内置预设已经替你填好地址、鉴权方式和模型列表。完整内置清单以 app 内「添加订阅」页为准，描述文件在 [`src-tauri/providers/`](src-tauri/providers/)，欢迎 PR 补充。
+出口按协议分三类，另有一类走 OAuth 登录的订阅账号，以及只服务 `model-jev` 的 System One 接入点。内置厂商预设和自定义端点走的是同一条路，区别只是内置预设已经替你填好地址、鉴权方式和模型列表。完整内置清单以 app 内「添加订阅」页为准，描述文件在 [`src-tauri/providers/`](src-tauri/providers/)，欢迎 PR 补充。
 
 <details>
 <summary><b>Anthropic Messages 兼容</b> —— 主路径，请求原样透传</summary>
@@ -273,6 +309,15 @@ Open WebUI、Cherry Studio、Cline、LobeChat 等只支持 OpenAI Chat Completio
 
 - 不用 API Key，通过 OAuth 设备码登录，把 ChatGPT 订阅 / Kiro 免费 Claude 额度当作出口
 - **属于灰色地带，有封号风险，不推荐当主力**，建议只做兜底或副号；由此导致的限速、封禁或订阅取消，作者概不负责
+
+</details>
+
+<details>
+<summary><b>Jev System One</b> <code>/v1/systemone</code> —— 只服务 <code>model-jev</code>，原样透传</summary>
+
+- 内置：TypeSafe、OpenRouter（System One 接入点）、Ollama 0.35+（本地 System One 接入点）；在「添加订阅」里选对应厂商的 System One 接入点即可
+- 这类订阅只有一个可选的 Jev 模型槽，留空时按上文入口一节的规则改写或透传
+- 订阅创建后协议固定，不能在对话接入点和 System One 接入点之间切换，要换请新建订阅
 
 </details>
 

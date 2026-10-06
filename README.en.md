@@ -39,31 +39,31 @@ A locally-running LLM aggregation gateway with a desktop GUI, zero-code setup: b
 Architecture and request flow at a glance:
 
 ```text
- Claude Code    OpenCode    OpenClaw   pi ...   Codex ...      Open WebUI / Cherry Studio ...
-      |             |           |         |         |                         |
-      -------------------------------------         |                         |
-                        |                           |                         |
-                    Anthropic                    OpenAI                    OpenAI
-                  Messages API                Responses API         Chat Completions API
-                 (/v1/messages)              (/v1/responses)       (/v1/chat/completions)
-                        |                           |                         |
-                        -------------------------------------------------------
-                                                  |  inbound · virtual models
-                                                  |
-                                              cc-router
-                                        (local 127.0.0.1:23456)
-                                                  |
-                                                  |  outbound · real models
-           -----------------------------------------------------------------------------
-           |            |            |            |            |            |          |
-       DeepSeek        GLM         Kimi       Anthropic     OpenAI       Gemini     ......
-          API        Coding       Coding      Messages    Responses &      API
-                      Plan         Plan          API      Completions
+ Claude Code  OpenCode   OpenClaw  pi ...   Codex ...           Open WebUI ...       your code / agents
+      |           |          |        |         |                      |                      |
+      ---------------------------------         |                      |                      |
+                      |                         |                      |                      |
+                  Anthropic                  OpenAI                 OpenAI                   Jev
+                Messages API              Responses API      Chat Completions API        System One
+               (/v1/messages)            (/v1/responses)    (/v1/chat/completions)     (/v1/systemone)
+                      |                         |                      |                      |
+                      -------------------------------------------------------------------------
+                                                          |  inbound · virtual models
+                                                          |
+                                                      cc-router
+                                               (local 127.0.0.1:23456)
+                                                          |
+                                                          |  outbound · real models
+                    ------------------------------------------------------------------------------
+                    |          |          |          |          |          |          |          |
+                DeepSeek      GLM       Kimi     Anthropic   OpenAI     Gemini       Jev      ......
+                   API      Coding     Coding    Messages  Responses &    API    System One
+                             Plan       Plan        API    Completions
 ```
 
 Highlights:
 
-- **Three inbound protocols, any tool plugs in** — Anthropic Messages / OpenAI Responses / OpenAI Chat Completions are exposed side by side, so Claude Code, Codex, OpenClaw, Hermes Agent, Kimi Code, ZCode, Cherry Studio and the like connect without any changes
+- **Three inbound protocols, any tool plugs in** — Anthropic Messages / OpenAI Responses / OpenAI Chat Completions are exposed side by side, so Claude Code, Codex, OpenClaw, Hermes Agent, Kimi Code, ZCode, Cherry Studio and the like connect without any changes; a separate `/v1/systemone` entry point serves Jev (System One) decision models through their own virtual model, `model-jev`
 - **Three outbound protocols, every subscription in one router** — 24 built-in provider presets (DeepSeek, Qwen, Kimi, MiMo, MiniMax, GLM, Claude, OpenAI, Gemini, …), plus any Anthropic / OpenAI / Gemini-compatible endpoint you bring yourself
 - **Pool every token you have** — sequential / round-robin / session-affinity dispatch with automatic switching and failover
 - **Usage receipts** — export your token usage as a "supermarket receipt" in one click, handy for sharing or keeping records
@@ -153,16 +153,17 @@ Virtual models and aliases:
 |  `model-opus` |  `anthropic/model-opus` `anthropic/claude-opus*` `claude-opus*` `gpt-5.5` `gpt-*-terra` `openai/gpt-5.5` `openai/gpt-*-terra` |
 |  `model-sonnet` |  `anthropic/model-sonnet` `anthropic/claude-sonnet*` `claude-sonnet*` `gpt-5.4` `gpt-*-luna` `openai/gpt-5.4` `openai/gpt-*-luna` |
 |  `model-haiku` |  `anthropic/model-haiku` `anthropic/claude-haiku*` `claude-haiku*`  `gpt-*-mini` `openai/gpt-*-mini` |
+|  `model-jev` |  `anthropic/model-jev` `openai/model-jev` (only on the `/v1/systemone` entry point; the chat entry points return 400 for it) |
 
 > `claude-opus*` is a wildcard (prefix match): you can pass any model name that fits the pattern and it will be normalized to the `model-opus` virtual model — e.g. `claude-opus-4-8`, `claude-opus-4-7-20260101`, and `claude-opus-100` all work. `gpt-*-sol`-style aliases match by tier segment: `gpt-5.6-sol`, `gpt-6-sol`, and `gpt-5.6-sol-20261201` all hit the sol tier (same for terra/luna/mini).
 
 ## Inbound & Outbound
 
-cc-router sits between your tools and the LLM providers: tools connect on the **inbound** side, requests leave through the **outbound** side. Each side speaks three mainstream LLM APIs, and any combination works — for example, Codex comes in through the OpenAI Responses inbound and is ultimately answered by DeepSeek's Anthropic endpoint.
+cc-router sits between your tools and the LLM providers: tools connect on the **inbound** side, requests leave through the **outbound** side. Each side speaks three mainstream LLM APIs, and any combination works — for example, Codex comes in through the OpenAI Responses inbound and is ultimately answered by DeepSeek's Anthropic endpoint. There is also a dedicated lane for Jev (System One) decision models: `/v1/systemone` on both sides, passed through as-is.
 
 ### Inbound: how your tools connect to cc-router
 
-All three inbound endpoints share the same subscriptions, virtual models, quotas and session affinity; the "Entry endpoint" column in the request log shows which one each request came through. Expand the section matching the protocol your tool speaks:
+The three chat entry points share the same subscriptions, virtual models, quotas and session affinity; the fourth, `/v1/systemone`, serves Jev decision models and only routes to `model-jev`. The "Entry endpoint" column in the request log shows which one each request came through. Expand the section matching the protocol your tool speaks:
 
 <details>
 <summary><b>Anthropic Messages</b> <code>/v1/messages</code> — Claude Code, Claude Desktop, OpenCode, OpenClaw, pi, Kimi code cli, etc.</summary>
@@ -234,11 +235,46 @@ Behavior notes:
 
 </details>
 
-There is also `POST /v1/systemone` — a pass-through entry point for Jev (System One) decision models, bound to `model-jev`; supported upstreams: TypeSafe, OpenRouter, Ollama 0.35+.
+<details>
+<summary><b>Jev System One</b> <code>/v1/systemone</code> — your own code, agent frameworks, or anything that can send HTTP requests</summary>
+
+Jev (System One) is a family of structured decision models: the request carries a `state` and a set of `questions`, and the response returns a structured answer for each question in `answers` — no chat text is generated. cc-router pools the keys of several upstreams under a dedicated virtual model, `model-jev`, and passes the protocol through untranslated.
+
+| Setting | Value |
+|---|---|
+| Endpoint URL | `http://127.0.0.1:23456/v1/systemone` (full path) |
+| Auth | `Authorization: Bearer <token>`; `x-api-key: <token>` also works |
+| Model name | `model-jev` (the `anthropic/` / `openai/` prefixes are accepted), or the upstream's real model name |
+
+Verify from the command line:
+
+```bash
+curl http://127.0.0.1:23456/v1/systemone \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+  "model": "model-jev",
+  "state": "Hello World",
+  "questions": {
+    "says_hello": {
+      "type": "noul",
+      "instructions": "Does the state text contain a greeting?"
+    }
+  }
+}'
+```
+
+- With `model-jev`, cc-router rewrites the model to the Jev model configured on the chosen subscription, or to that endpoint's example model if none is set (e.g. `clef-flash`, `jev-latest`); the response still echoes `model-jev`. With a real model name, it is rewritten only if the subscription has a Jev model set, otherwise passed through unchanged.
+- Only subscriptions bound to `model-jev` whose endpoint is System One are used; chat subscriptions are never used here, and System One subscriptions never join the other virtual models. The three chat entry points return 400 for `model-jev`.
+- Non-streaming only. A 4xx from one upstream moves on to the next (their validation rules differ slightly); if all of them fail, a request error returns the last upstream's error as-is, and anything else returns 503.
+- Session affinity only uses the `x-session-id` header; without it, requests are assigned round-robin.
+- Usage counts toward the Statistics and Receipts pages.
+
+</details>
 
 ### Outbound: how cc-router connects to providers
 
-Outbound is grouped into three protocol families, plus a fourth group of OAuth-based subscription accounts. Built-in provider presets and custom endpoints take the same path — the presets just come with the address, auth scheme and model list pre-filled. The authoritative list of built-in providers is the "Add subscription" page in the app; the descriptor files live in [`src-tauri/providers/`](src-tauri/providers/), and PRs are welcome.
+Outbound is grouped into three protocol families, plus a group of OAuth-based subscription accounts and the System One endpoints that only serve `model-jev`. Built-in provider presets and custom endpoints take the same path — the presets just come with the address, auth scheme and model list pre-filled. The authoritative list of built-in providers is the "Add subscription" page in the app; the descriptor files live in [`src-tauri/providers/`](src-tauri/providers/), and PRs are welcome.
 
 <details>
 <summary><b>Anthropic Messages compatible</b> — primary path, requests passed through verbatim</summary>
@@ -273,6 +309,15 @@ Outbound is grouped into three protocol families, plus a fourth group of OAuth-b
 
 - No API key: sign in via OAuth device code and use your ChatGPT subscription / Kiro's free Claude quota as an outbound
 - **Grey area with account-suspension risk; not recommended as your main path** — use it only as a fallback or on a secondary account. The author assumes no liability for any resulting throttling, bans or subscription cancellation
+
+</details>
+
+<details>
+<summary><b>Jev System One</b> <code>/v1/systemone</code> — serves <code>model-jev</code> only, passed through as-is</summary>
+
+- Built in: TypeSafe, OpenRouter (System One endpoint), Ollama 0.35+ (local System One endpoint); pick the provider's System One endpoint on the "Add subscription" page
+- These subscriptions have a single optional Jev model slot; when it is empty, the rewrite / pass-through rules from the inbound section apply
+- A subscription's protocol is fixed once created and can't be switched between a chat endpoint and a System One endpoint; create a new subscription instead
 
 </details>
 
