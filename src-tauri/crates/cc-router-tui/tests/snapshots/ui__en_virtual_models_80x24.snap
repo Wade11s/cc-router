@@ -11,7 +11,7 @@ expression: out
 "│   model-sonnet      Affinity      3 ││    3 ● Gemini 有兜底  Gemini          │" Hidden by multi-width symbols: [(56, " "), (58, " "), (60, " ")]
 "│   model-haiku       Sequential    0 ││                                       │"
 "│ ▌ model-fallback    Sequential    3 ││                                       │"
-"│                                     ││                                       │"
+"│   model-jev         Sequential    1 ││                                       │"
 "│                                     ││                                       │"
 "│                                     ││                                       │"
 "│                                     ││                                       │"

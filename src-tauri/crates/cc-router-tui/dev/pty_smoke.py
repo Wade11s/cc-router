@@ -112,6 +112,9 @@ DATA = {
             "models": [{"id": "glm-4.6", "display_name": None}, {"id": "glm-4.5-air", "display_name": None}],
         }),
         sub("3", "示例中转", "auth_failed", False),
+        # System One 订阅: 只有 Jev 槽, 只出现在 model-jev 里。
+        dict(sub("4", "Ollama 决策", "healthy", True), endpoint_protocol="systemone",
+             model_slots={"fable": "", "opus": "", "sonnet": "", "haiku": "", "jev": "clef-flash"}),
     ],
     # Task 4 的四个就地操作: 这里只挑 test_connection / set_subscription_enabled 两个真的按一遍
     # (另外两个 refresh_model_list / refresh_subscription_balance 走同一条 command 分派逻辑,
@@ -123,13 +126,14 @@ DATA = {
     # 返回值反序列化成 `serde_json::Value` 就直接丢弃 (权威值等 refetch 的 list_subscriptions 拿),
     # 所以随便一个合法 JSON 都够, 空对象最省事。
     "update_subscription": {},
-    # Task 6: 5 个虚拟模型, 后端固定顺序; subscription_ids 引用上面三条假订阅。
+    # Task 6: 6 个虚拟模型, 后端固定顺序 (model-jev 最后); subscription_ids 引用上面的假订阅。
     "list_virtual_models": [
         {"name": "model-fable", "mode": "sequential", "subscription_ids": ["1", "2"]},
         {"name": "model-opus", "mode": "round_robin", "subscription_ids": ["1"]},
         {"name": "model-sonnet", "mode": "sticky", "subscription_ids": ["1", "2", "3"]},
         {"name": "model-haiku", "mode": "sequential", "subscription_ids": []},
         {"name": "model-fallback", "mode": "sequential", "subscription_ids": ["3"]},
+        {"name": "model-jev", "mode": "sequential", "subscription_ids": ["4"]},
     ],
     # Task 8: 日志页 (键 4 → ⏎ 跳过去) 的假数据。不管请求体里的 `filters` 是什么都返回同一份
     # (与其它假 command 一致); 过滤条件本身只靠 `RECORDED["list_requests"]` 断言。三条分别是
@@ -200,7 +204,7 @@ RECORDED = {}
 
 # 去掉转义序列之后必须出现过的文字
 EXPECT = [
-    "总览", "1,284", "98.6%", "智谱主号", "已连接", "订阅 (3)", "备注名", "键位",
+    "总览", "1,284", "98.6%", "智谱主号", "已连接", "订阅 (4)", "备注名", "键位",
     "连接正常",  # test_connection 成功的 toast
     "已停用",  # set_subscription_enabled 的 toast (Kimi 备用被 e 停用)
     "确定放弃",  # M9(c): 脏页面上 q / Esc 弹出的确认放弃提示 (confirm_discard 的子串)
@@ -208,6 +212,7 @@ EXPECT = [
     # M9(a): 旧版这里断言的是 "虚拟模型" (标签栏文字, 不管有没有真的进过那一页都会显示, 测不出
     # "真的切换到了这一页" 这件事), 换成只有真进了虚拟模型页才会出现的页面内文字。
     "model-fable",
+    "model-jev",  # 第 6 个虚拟模型出现在左栏
     # update_virtual_model 成功的 toast (Task 6: l 进 Members、J 重排、m 切模式、s 保存)。
     # `toast_vm_saved` 的实际文案是 `{vm}：已保存` (`i18n.rs`), 用 model-fable 专属的完整文案,
     # 不是 "槽位已保存" (订阅页保存的 toast) 的子串。
@@ -228,7 +233,7 @@ EXPECT = [
     # 报告有详细坐标推导)。改用「选中之后 picker 还能不能再打开一次」这个状态信号, 见下方按键
     # 序列与断言。
     # 创建 + 保存槽位成功的 toast (`wiz_created`); 备注名跟着厂商显示名 "智谱" 自动生成, 与已有的
-    # 三条假订阅都不重名, 不会被追加序号。
+    # 四条假订阅都不重名, 不会被追加序号。
     "已创建「智谱」",
     # 删除第一条订阅 ("智谱主号", id "1") 成功的 toast (`toast_deleted`)。
     "已删除「智谱主号」",
@@ -388,7 +393,7 @@ def main():
             pump(0.1)
 
     pump(3.0)  # 启动动效 + 首次加载 + 1.5s 时的状态变更事件
-    # 2 = 订阅页 (真页面, 期待「订阅 (3)」「备注名」); j = 选中第二条 "Kimi 备用";
+    # 2 = 订阅页 (真页面, 期待「订阅 (4)」「备注名」); j = 选中第二条 "Kimi 备用";
     # t = 测试连接 (等够 0.8s 让假后端的响应 + toast + 重拉列表都跑完), e = 就地启停 (同样等 0.8s);
     # ? / Esc = 帮助弹窗开关; 此时仍在订阅页且选中 "Kimi 备用":
     #   ⏎ 进详情 (焦点落在 fable 槽) → ⏎ 打开 fable 槽的模型 picker (I2 起输入框不再预填当前值,

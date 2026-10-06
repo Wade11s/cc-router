@@ -86,14 +86,14 @@ impl BasicsForm {
             KeyOutcome::Handled | KeyOutcome::Edited(_) => None,
             KeyOutcome::Activate(BasicsField::Provider) => Some(self.provider_picker(providers, s)),
             KeyOutcome::Activate(BasicsField::Endpoint) => Some(self.endpoint_picker(providers, s)),
-            KeyOutcome::Activate(BasicsField::Submit) => self.submit(phase, s),
+            KeyOutcome::Activate(BasicsField::Submit) => self.submit(phase, providers, s),
             KeyOutcome::Activate(BasicsField::ApiKey | BasicsField::DisplayName) => None,
         }
     }
 
     /// `Submit` 行 `⏎`: 校验通过则打包 `WizardCmd::Create` (槽位先放 `ModelSlots::pending()`,
-    /// 第二步再绑) 并进 `Creating`。
-    fn submit(&mut self, phase: &mut BasicsPhase, s: &'static Strings) -> Option<Action> {
+    /// 第二步再绑; System One 端点没有四个核心槽, 放全空槽——Jev 空 = 透传) 并进 `Creating`。
+    fn submit(&mut self, phase: &mut BasicsPhase, providers: &[Provider], s: &'static Strings) -> Option<Action> {
         if !self.state.validate(validate_basics(&self.draft, s)) {
             self.pending_field_err = true;
             return None;
@@ -103,11 +103,20 @@ impl BasicsForm {
             // 校验按 trim 后判空, 发出去的也是 trim 后的值——校验什么就发送什么。
             display_name: self.draft.display_name.value().trim().to_string(),
             api_key: self.draft.api_key.secret(),
-            model_slots: ModelSlots::pending(),
+            model_slots: if self.selected_endpoint_is_systemone(providers) { ModelSlots::default() } else { ModelSlots::pending() },
             source: CreateSource::Builtin { provider_id: self.draft.provider_id.clone(), endpoint_id: self.draft.endpoint_id.clone() },
         });
         *phase = BasicsPhase::Creating;
         Some(Action::WizardRequest(Box::new(cmd)))
+    }
+
+    /// 草稿里选中的接入点是不是 System One 协议。
+    pub(super) fn selected_endpoint_is_systemone(&self, providers: &[Provider]) -> bool {
+        providers
+            .iter()
+            .find(|p| p.id == self.draft.provider_id)
+            .and_then(|p| p.endpoints.iter().find(|e| e.id == self.draft.endpoint_id))
+            .is_some_and(|e| e.is_systemone())
     }
 
     /// `Provider` 行 `⏎`: 条目是全部厂商 + 5 个自定义协议。OAuth 类厂商 (TUI 不做设备码流程)

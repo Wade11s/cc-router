@@ -1,16 +1,18 @@
-//! 内置厂商路径的第二步: 订阅已经建好, 给五个槽位选模型 → 保存。
+//! 内置厂商路径的第二步: 订阅已经建好, 给五个槽位选模型 → 保存。System One 订阅只有 Jev 一个槽
+//! (可留空 = 透传客户端 model), 见 [`SlotsForm::new_systemone`]。
 
 use ratatui::crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
-use super::common::{self, FieldKind, FormFields, KeyOutcome, RowHints, Rows};
+use super::common::{self, Cell, FieldKind, FormFields, KeyOutcome, RowHints, Rows};
 use super::fields::{validate_slots, SlotsDraft, SlotsField};
 use super::form_state::FormState;
 use super::text::TextInput;
 use super::Paint;
 use crate::action::{Action, WizardCmd};
 use crate::client::dto::Slot;
+use crate::format::slot_label;
 use crate::i18n::Strings;
 use crate::widgets::form::{self, FormView};
 use crate::widgets::keybar::Hint;
@@ -25,6 +27,8 @@ pub(super) struct SlotsForm {
     pub(super) note: Option<String>,
     /// 同 `BasicsForm::pending_field_err`。
     pub(super) pending_field_err: bool,
+    /// System One 订阅: 只有 Jev 一行, 不校验 (空 = 透传)。
+    pub(super) systemone: bool,
 }
 
 impl FormFields for SlotsForm {
@@ -39,7 +43,11 @@ impl FormFields for SlotsForm {
     }
 
     fn order(&self) -> Vec<SlotsField> {
-        SlotsField::ALL.to_vec()
+        if self.systemone {
+            vec![SlotsField::Row(Slot::Jev), SlotsField::Save]
+        } else {
+            SlotsField::ALL.to_vec()
+        }
     }
 
     fn kind(&self, field: SlotsField, s: &'static Strings) -> FieldKind {
@@ -61,7 +69,20 @@ impl FormFields for SlotsForm {
 
 impl SlotsForm {
     pub(super) fn new(draft: SlotsDraft, examples: Vec<String>, note: Option<String>) -> Self {
-        Self { draft, state: FormState::new(SlotsField::Row(Slot::Fable)), examples, note, pending_field_err: false }
+        Self { draft, state: FormState::new(SlotsField::Row(Slot::Fable)), examples, note, pending_field_err: false, systemone: false }
+    }
+
+    /// System One 订阅: 只有 Jev 槽一行, 可留空 (= 透传)。候选是端点 yaml 的示例模型 (三家上游都
+    /// 没有可用的标准模型列表, 不拉)。
+    pub(super) fn new_systemone(examples: Vec<String>) -> Self {
+        Self {
+            draft: SlotsDraft::default(),
+            state: FormState::new(SlotsField::Row(Slot::Jev)),
+            examples,
+            note: None,
+            pending_field_err: false,
+            systemone: true,
+        }
     }
 
     /// 只在没有保存请求在飞时被调用。提交成功时把 `saving` 置真。
@@ -78,7 +99,12 @@ impl SlotsForm {
     /// `Save` 行 `⏎`: 校验通过则发只带 `model_slots` 的 `SaveSlots` (向导不设置 effort, 少发一个
     /// 字段就不会把后端默认值清掉)。
     fn submit(&mut self, id: &str, saving: &mut bool, s: &'static Strings) -> Option<Action> {
-        let failure = validate_slots(&self.draft, s).map(|(slot, message)| (SlotsField::Row(slot), message));
+        // System One 只有 Jev 槽, 空 = 透传, 没有必填项。
+        let failure = if self.systemone {
+            None
+        } else {
+            validate_slots(&self.draft, s).map(|(slot, message)| (SlotsField::Row(slot), message))
+        };
         if !self.state.validate(failure) {
             self.pending_field_err = true;
             return None;
@@ -103,7 +129,14 @@ impl SlotsForm {
         let hints = RowHints::new(s);
         let mut rows = Rows::new(self, &hints, s, saving);
         rows.note(self.note.as_deref());
-        rows.slots(&self.draft.slots, SlotsField::Row);
+        if self.systemone {
+            rows.field(
+                SlotsField::Row(Slot::Jev),
+                Cell { label: slot_label(Slot::Jev, s), value: self.draft.slots.get(Slot::Jev), placeholder: s.sub_slot_passthrough },
+            );
+        } else {
+            rows.slots(&self.draft.slots, SlotsField::Row);
+        }
         rows.spacer();
         rows.button(SlotsField::Save, saving.then_some(s.wiz_saving));
         let built = rows.finish();

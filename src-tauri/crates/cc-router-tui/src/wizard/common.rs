@@ -217,12 +217,15 @@ impl<'a, M: FormFields> Rows<'a, M> {
 }
 
 /// 槽位行 `⏎` 的选择弹窗。候选是拉到 / 探测到的真实模型; 没有时退回 `examples` (厂商 yaml 里的
-/// `example_models`, 只有 id; 自定义厂商没有这个概念, 传空), 引导手输。兜底槽额外在最前面放一项
-/// 「清空」。
+/// `example_models`, 只有 id; 自定义厂商没有这个概念, 传空), 引导手输。兜底槽与 Jev 槽额外在最前面
+/// 放一项「清空」(兜底空 = 未配置, Jev 空 = 透传)。
 pub(super) fn slot_picker(slot: Slot, current: &str, models: &[ModelInfo], examples: &[String], s: &'static Strings) -> Action {
     let mut items = Vec::new();
     if slot == Slot::Fallback {
         items.push(PickerItem { id: String::new(), label: s.pick_clear_fallback.to_string(), hint: None });
+    }
+    if slot == Slot::Jev {
+        items.push(PickerItem { id: String::new(), label: s.pick_clear_jev.to_string(), hint: None });
     }
     if models.is_empty() {
         items.extend(examples.iter().map(|id| PickerItem { id: id.clone(), label: id.clone(), hint: None }));

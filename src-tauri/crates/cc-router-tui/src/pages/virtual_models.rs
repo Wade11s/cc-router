@@ -1,5 +1,5 @@
-//! 虚拟模型页: 左 5 个虚拟模型 / 右选中虚拟模型的有序订阅。支持重排序 (`J`/`K`)、加入 (`a`,
-//! picker 选未绑定的订阅)、移除 (`x`)、切换调度模式 (`m`)、保存 (`s`)。
+//! 虚拟模型页: 左 6 个虚拟模型 (`model-jev` 排最后, 只收 System One 订阅) / 右选中虚拟模型的有序
+//! 订阅。支持重排序 (`J`/`K`)、加入 (`a`, picker 选未绑定的订阅)、移除 (`x`)、切换调度模式 (`m`)、保存 (`s`)。
 //!
 //! 与订阅详情页 (Task 5, `subscriptions.rs`) 同一套草稿模式 (D3 起收进共用的 [`super::draft::Draft`]):
 //! 页面自己的 [`VmDraft`], 首次编辑时从 `Store` 克隆, 与 `Store` 当前值完全相等则立刻丢弃, 只有
@@ -18,7 +18,7 @@ use unicode_width::UnicodeWidthStr;
 use super::draft::Draft;
 use super::{Component, DrawCtx};
 use crate::action::{Action, BusyKey, Cmd, Fetch, Mutation, OnYes};
-use crate::client::dto::{RoutingMode, VirtualModel};
+use crate::client::dto::{vm_accepts, RoutingMode, Subscription, VirtualModel, JEV_VM};
 use crate::client::events::SUBSCRIPTION_CHANGES;
 use crate::format::{fit, widest};
 use crate::i18n::Strings;
@@ -42,6 +42,8 @@ const MEMBER_SYMBOL_COL: usize = 2;
 const MEMBER_NAME_COL: usize = 18;
 const MEMBER_NAME_MIN_COL: usize = 10;
 const MEMBER_PROVIDER_COL: usize = 10;
+/// `model-jev` 成员行末 Jev 槽模型一列的上限 (含前导间隔)。
+const JEV_MODEL_MAX_COL: usize = 17;
 /// 列表选中前缀 (`highlight_symbol("▌ ")`) 的宽度。
 const HIGHLIGHT_COL: usize = 2;
 
@@ -199,18 +201,20 @@ impl VirtualModels {
         None
     }
 
-    /// `a`: 候选是 `Store` 里所有订阅中不在当前 (草稿) 成员列表里的那些; 没有候选就地回一条
+    /// `a`: 候选是 `Store` 里所有订阅中不在当前 (草稿) 成员列表里、且这个虚拟模型收得下的那些
+    /// (`model-jev` 只收 System One 订阅, 其余只收对话订阅, 见 [`vm_accepts`]); 没有候选就地回一条
     /// `Action::Notify`, 不开弹窗。
     fn open_add_picker(&self, vm: &VirtualModel, store: &Store, s: &'static Strings) -> Action {
         let current = self.effective_subscription_ids(vm);
         let items: Vec<PickerItem> = store
             .subscriptions()
             .iter()
-            .filter(|sub| !current.contains(&sub.id))
+            .filter(|sub| !current.contains(&sub.id) && vm_accepts(&vm.name, sub))
             .map(|sub| PickerItem { id: sub.id.clone(), label: sub.display_name.clone(), hint: Some(sub.provider_name(s.lang).to_string()) })
             .collect();
         if items.is_empty() {
-            return Action::Notify { kind: ToastKind::Info, text: s.vm_nothing_to_add.to_string() };
+            let text = if vm.name == JEV_VM { s.vm_nothing_to_add_jev } else { s.vm_nothing_to_add };
+            return Action::Notify { kind: ToastKind::Info, text: text.to_string() };
         }
         Action::OpenPicker(PickerSpec {
             // I5: 带上这次弹窗是为哪个虚拟模型开的, `PickerDone` 落地时据此核对是否还该应用。
@@ -311,8 +315,14 @@ impl VirtualModels {
                 // 下贴右边缘的 toast 挡住, 左栏这颗不会 (toast 只贴右边)。
                 let is_dirty_here = self.draft.get().is_some_and(|d| d.name == vm.name);
                 let name = if is_dirty_here { format!("{} *", vm.name) } else { vm.name.clone() };
+                // `model-jev` 是决策模型, 不是 Claude Code 的槽位: 名字用强调色与其余五个区分开。
+                let name_span = if vm.name == JEV_VM {
+                    Span::styled(fit(&name, MODEL_NAME_COL), ctx.theme.accent_bold())
+                } else {
+                    Span::raw(fit(&name, MODEL_NAME_COL))
+                };
                 let line = Line::from(vec![
-                    Span::raw(fit(&name, MODEL_NAME_COL)),
+                    name_span,
                     Span::raw(" "),
                     Span::raw(fit(s.vm_mode_short(mode), mode_col(s))),
                     Span::raw(format!("{count:>3}")),
@@ -337,6 +347,7 @@ impl VirtualModels {
         let ids: Vec<String> = self.effective_subscription_ids(vm).to_vec();
         let mode = self.effective_mode(vm);
         let is_fallback = vm.name == "model-fallback";
+        let is_jev = vm.name == JEV_VM;
         let is_dirty_here = self.draft.get().is_some_and(|d| d.name == vm.name);
 
         let title_suffix = if is_dirty_here { " *" } else { "" };
@@ -345,6 +356,10 @@ impl VirtualModels {
             let glyph = Throbber::default().throbber_set(BRAILLE_SIX).to_symbol_span(&spinner_state(ctx.tick));
             title_spans.push(Span::raw(glyph.content.to_string()));
             title_spans.push(Span::raw(" "));
+        }
+        // 说明放在标题里而不是列表首行, 成员列表的选中下标保持不变。
+        if is_jev {
+            title_spans.push(Span::styled(format!("· {} ", s.vm_jev_tag), theme.accent_bold()));
         }
 
         let mode_full = s.vm_mode_full(mode);
@@ -369,7 +384,20 @@ impl VirtualModels {
         // 免得每个成员在页面刚打开、还没等到第一次订阅列表加载完成的那几百毫秒里全部被误标成
         // `vm_missing`, 顺带把 `s`/`a`/`x`/`J`/`K` 都指向"请先移除已删除的订阅"这种具有误导性的提示。
         let subs_loaded = store.subscriptions_loaded();
-        let skip_width = if is_fallback { s.vm_will_skip.width() } else { 0 };
+        // `model-jev` 在厂商列之后显示 Jev 槽的真实模型 (空 = 透传), 与兜底页的「将被跳过」共用同一套
+        // 预留: 放不下时占用厂商列。宽度按这一页成员里最长的那个算, 前面留 1 格间隔, 封顶
+        // `JEV_MODEL_MAX_COL` (再长截断成省略号)。
+        let jev_col = if is_jev {
+            ids.iter()
+                .filter_map(|id| store.subscription(id))
+                .map(|sub| jev_model_text(sub, s).0.width() + 1)
+                .max()
+                .unwrap_or(0)
+                .min(JEV_MODEL_MAX_COL)
+        } else {
+            0
+        };
+        let skip_width = if is_fallback { s.vm_will_skip.width() } else { jev_col };
         let cols = member_cols((inner.width as usize).saturating_sub(HIGHLIGHT_COL), skip_width);
         let mut items: Vec<ListItem> = Vec::with_capacity(ids.len());
         for (i, id) in ids.iter().enumerate() {
@@ -383,12 +411,20 @@ impl VirtualModels {
                     // 对齐——纯空白的兜底槽视为未配置, 否则这里会漏标一条实际会被 pipeline 跳过的
                     // 订阅。
                     let will_skip = is_fallback && sub.auth_type != "api_key" && sub.model_slots.fallback.trim().is_empty();
+                    let (jev_text, jev_is_passthrough) = jev_model_text(sub, s);
+                    let jev_style = if jev_is_passthrough { theme.muted_style() } else { Style::default() };
                     if will_skip && cols.skip_in_provider_col {
                         spans.push(Span::styled(fit(s.vm_will_skip, cols.provider), Style::new().fg(theme.warn)));
+                    } else if is_jev && cols.skip_in_provider_col {
+                        spans.push(Span::styled(fit(jev_text, cols.provider), jev_style));
                     } else {
                         spans.push(Span::raw(fit(sub.provider_name(s.lang), cols.provider)));
                         if will_skip {
                             spans.push(Span::styled(s.vm_will_skip, Style::new().fg(theme.warn)));
+                        }
+                        if is_jev && jev_col > 1 {
+                            spans.push(Span::raw(" "));
+                            spans.push(Span::styled(fit(jev_text, jev_col - 1), jev_style));
                         }
                     }
                 }
@@ -434,6 +470,16 @@ impl VirtualModels {
                 }
             }
         }
+    }
+}
+
+/// `model-jev` 成员行显示的 Jev 槽模型; 空 (含纯空白) 显示「透传」, 第二项为真。
+fn jev_model_text<'a>(sub: &'a Subscription, s: &'static Strings) -> (&'a str, bool) {
+    let model = sub.model_slots.jev.trim();
+    if model.is_empty() {
+        (s.sub_slot_passthrough, true)
+    } else {
+        (model, false)
     }
 }
 

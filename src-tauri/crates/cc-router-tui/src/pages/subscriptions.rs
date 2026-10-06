@@ -109,7 +109,8 @@ enum DetailRow {
 
 /// 列表 / 详情的键盘焦点。两种宽度都有效: 宽屏两栏一直都画, 焦点只影响哪一栏的边框是
 /// `theme.accent`; 窄屏一次只画一栏, 焦点直接决定画哪栏。`Detail` 带着当前槽位光标, 因为「进详情」与「选中第一个槽位」是
-/// 同一个动作 (`⏎`/`→`/`l` 从 `List` 过来恒落在 [`Slot::Fable`])。
+/// 同一个动作 (`⏎`/`→`/`l` 从 `List` 过来落在这条订阅的第一个槽: [`Slot::Fable`], System One 是
+/// [`Slot::Jev`])。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
     List,
@@ -134,8 +135,19 @@ fn slot_draft_base(sub: &Subscription) -> SlotDraft {
 
 /// 五个槽位的固定顺序, 给槽位光标的 上/下/首/尾 移动用。
 const ALL_SLOTS: [Slot; 5] = [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku, Slot::Fallback];
+/// System One 订阅只有 Jev 一个槽。
+const JEV_SLOTS: [Slot; 1] = [Slot::Jev];
 /// 四个主槽 (不含兜底), 给详情面板画槽位行用——兜底槽单独一行 (没有 effort 列)。
 const MAIN_SLOTS: [Slot; 4] = [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku];
+
+/// 这条订阅可编辑的槽位, 顺序即光标移动顺序。
+fn slots_of(sub: &Subscription) -> &'static [Slot] {
+    if sub.is_systemone() {
+        &JEV_SLOTS
+    } else {
+        &ALL_SLOTS
+    }
+}
 
 pub struct Subscriptions {
     selected_id: Option<String>,
@@ -244,10 +256,10 @@ impl Subscriptions {
         }
     }
 
-    fn move_slot_cursor(&mut self, current: Slot, delta: isize) {
-        let idx = ALL_SLOTS.iter().position(|&sl| sl == current).unwrap_or(0);
-        let next = (idx as isize + delta).clamp(0, ALL_SLOTS.len() as isize - 1) as usize;
-        self.focus = Focus::Detail { slot: ALL_SLOTS[next] };
+    fn move_slot_cursor(&mut self, slots: &[Slot], current: Slot, delta: isize) {
+        let idx = slots.iter().position(|&sl| sl == current).unwrap_or(0);
+        let next = (idx as isize + delta).clamp(0, slots.len() as isize - 1) as usize;
+        self.focus = Focus::Detail { slot: slots[next] };
     }
 
     /// 当前选中的订阅是否正有一次 `UpdateSlots` 保存在飞行中。
@@ -260,12 +272,15 @@ impl Subscriptions {
     }
 
     /// `⏎` (在 `Detail` 焦点下): 打开当前槽位的模型 picker, `initial` 是草稿 (没有就是 `Store`)
-    /// 里该槽当前值; 兜底槽额外在最前面放一项「清空」。
+    /// 里该槽当前值; 兜底槽与 Jev 槽额外在最前面放一项「清空」(兜底空 = 未配置, Jev 空 = 透传)。
     fn open_model_picker(&self, sub: &Subscription, slot: Slot, s: &'static Strings) -> Action {
         let initial = self.effective_model_slots(sub).get(slot).to_string();
         let mut items = Vec::new();
         if slot == Slot::Fallback {
             items.push(PickerItem { id: String::new(), label: s.pick_clear_fallback.to_string(), hint: None });
+        }
+        if slot == Slot::Jev {
+            items.push(PickerItem { id: String::new(), label: s.pick_clear_jev.to_string(), hint: None });
         }
         if let Some(cache) = &sub.model_cache {
             items.extend(cache.models.iter().map(|m| PickerItem { id: m.id.clone(), label: m.id.clone(), hint: m.display_name.clone() }));
@@ -280,11 +295,14 @@ impl Subscriptions {
         })
     }
 
-    /// `o` (在 `Detail` 焦点下): 打开当前槽位的思考档位 picker, 兜底槽 / Kiro 订阅直接拒绝
+    /// `o` (在 `Detail` 焦点下): 打开当前槽位的思考档位 picker, 兜底槽 / Jev 槽 / Kiro 订阅直接拒绝
     /// (就地回一条 `Action::Notify`, 不开弹窗)。
     fn open_effort_picker_or_refuse(&self, sub: &Subscription, slot: Slot, s: &'static Strings) -> Option<Action> {
         if slot == Slot::Fallback {
             return Some(Action::Notify { kind: ToastKind::Info, text: s.sub_effort_na_fallback.to_string() });
+        }
+        if slot == Slot::Jev {
+            return Some(Action::Notify { kind: ToastKind::Info, text: s.sub_effort_na_jev.to_string() });
         }
         if sub.auth_type == "kiro_oauth" {
             return Some(Action::Notify { kind: ToastKind::Info, text: s.sub_effort_na_kiro.to_string() });
@@ -337,7 +355,7 @@ impl Subscriptions {
                     PickerChoice::Item(item_id) => item_id.clone(),
                     PickerChoice::Custom(text) => text.trim().to_string(),
                 };
-                if value.is_empty() && *slot != Slot::Fallback {
+                if value.is_empty() && !matches!(*slot, Slot::Fallback | Slot::Jev) {
                     self.pending_notice = Some((ToastKind::Info, s.sub_model_required.to_string()));
                     return;
                 }
@@ -670,8 +688,9 @@ impl Component for Subscriptions {
                 }
                 // 两种宽度都有效: 宽屏下这只是把焦点从列表挪到详情 (边框跟着变), 窄屏下
                 // 才是「切一整屏」——同一个按键, `draw()` 按宽度决定怎么呈现。
-                KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') if idx.is_some() => {
-                    self.focus = Focus::Detail { slot: Slot::Fable };
+                KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+                    let i = idx?;
+                    self.focus = Focus::Detail { slot: slots_of(&subs[i])[0] };
                     None
                 }
                 KeyCode::Char('e') => idx.map(|i| Action::Mutate(Mutation::SetEnabled { id: subs[i].id.clone(), enabled: !subs[i].enabled })),
@@ -685,68 +704,74 @@ impl Component for Subscriptions {
                 KeyCode::Char('n') => Some(Action::OpenWizard),
                 _ => None,
             },
-            Focus::Detail { slot } => match key.code {
-                // 五个槽位间移动, 不绕回; 列表选中项不动。
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.move_slot_cursor(slot, -1);
-                    None
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.move_slot_cursor(slot, 1);
-                    None
-                }
-                KeyCode::Char('g') | KeyCode::Home => {
-                    self.focus = Focus::Detail { slot: ALL_SLOTS[0] };
-                    None
-                }
-                KeyCode::Char('G') | KeyCode::End => {
-                    self.focus = Focus::Detail { slot: ALL_SLOTS[ALL_SLOTS.len() - 1] };
-                    None
-                }
-                KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
-                    if self.is_dirty() {
-                        Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: OnYes::discard_then(Action::DiscardDraft) })
-                    } else {
-                        // 草稿不脏 (可能压根没有, 也可能改回了原值) 时直接放行, 顺带清掉它——
-                        // `focus == List` 时 `draft` 恒为 `None` 是页面维持的不变式。改回原值时草稿
-                        // 其实已经被 `Draft::edit` 自动丢弃了, 这里的 `clear()` 只是兜底 (真正没有
-                        // 草稿的普通情况下是个 no-op)。
-                        self.draft.clear();
-                        self.focus = Focus::List;
+            Focus::Detail { slot } => {
+                // 这条订阅可用的槽位 (对话订阅五个, System One 只有 Jev)。选中项在详情焦点下被别处
+                // 删掉、换成了另一种订阅时, 光标可能停在它没有的槽上——就近落回它的第一个槽。
+                let slots = idx.map_or(&ALL_SLOTS[..], |i| slots_of(&subs[i]));
+                let slot = if slots.contains(&slot) { slot } else { slots[0] };
+                match key.code {
+                    // 槽位间移动, 不绕回; 列表选中项不动。
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.move_slot_cursor(slots, slot, -1);
                         None
                     }
-                }
-                KeyCode::Enter => {
-                    // 保存在飞行中时拒绝打开 picker——避免用户对着一份马上要被覆盖的草稿
-                    // 继续编辑, `apply_picker_choice` 里的同款守卫是给"picker 已经开着、保存才
-                    // 开始"这种更罕见的时序兜底, 这里挡的是更常见的"想再开一次 picker"。
-                    if self.is_saving() {
-                        return Some(Self::saving_notice(s));
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.move_slot_cursor(slots, slot, 1);
+                        None
                     }
-                    let i = idx?;
-                    Some(self.open_model_picker(&subs[i], slot, s))
-                }
-                KeyCode::Char('o') => {
-                    if self.is_saving() {
-                        return Some(Self::saving_notice(s));
+                    KeyCode::Char('g') | KeyCode::Home => {
+                        self.focus = Focus::Detail { slot: slots[0] };
+                        None
                     }
-                    let i = idx?;
-                    self.open_effort_picker_or_refuse(&subs[i], slot, s)
-                }
-                KeyCode::Char('s') => {
-                    // 再按一次 s (保存已经在飞行中) 不能被 `App::start_mutation` 的忙碌表悄悄吞掉——
-                    // 就地给个提示, 而不是让用户以为按键没生效。
-                    if self.is_saving() {
-                        return Some(Self::saving_notice(s));
+                    KeyCode::Char('G') | KeyCode::End => {
+                        self.focus = Focus::Detail { slot: slots[slots.len() - 1] };
+                        None
                     }
-                    self.save_action()
+                    KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
+                        if self.is_dirty() {
+                            Some(Action::OpenConfirm { prompt: s.confirm_discard.to_string(), on_yes: OnYes::discard_then(Action::DiscardDraft) })
+                        } else {
+                            // 草稿不脏 (可能压根没有, 也可能改回了原值) 时直接放行, 顺带清掉它——
+                            // `focus == List` 时 `draft` 恒为 `None` 是页面维持的不变式。改回原值时草稿
+                            // 其实已经被 `Draft::edit` 自动丢弃了, 这里的 `clear()` 只是兜底 (真正没有
+                            // 草稿的普通情况下是个 no-op)。
+                            self.draft.clear();
+                            self.focus = Focus::List;
+                            None
+                        }
+                    }
+                    KeyCode::Enter => {
+                        // 保存在飞行中时拒绝打开 picker——避免用户对着一份马上要被覆盖的草稿
+                        // 继续编辑, `apply_picker_choice` 里的同款守卫是给"picker 已经开着、保存才
+                        // 开始"这种更罕见的时序兜底, 这里挡的是更常见的"想再开一次 picker"。
+                        if self.is_saving() {
+                            return Some(Self::saving_notice(s));
+                        }
+                        let i = idx?;
+                        Some(self.open_model_picker(&subs[i], slot, s))
+                    }
+                    KeyCode::Char('o') => {
+                        if self.is_saving() {
+                            return Some(Self::saving_notice(s));
+                        }
+                        let i = idx?;
+                        self.open_effort_picker_or_refuse(&subs[i], slot, s)
+                    }
+                    KeyCode::Char('s') => {
+                        // 再按一次 s (保存已经在飞行中) 不能被 `App::start_mutation` 的忙碌表悄悄吞掉——
+                        // 就地给个提示, 而不是让用户以为按键没生效。
+                        if self.is_saving() {
+                            return Some(Self::saving_notice(s));
+                        }
+                        self.save_action()
+                    }
+                    KeyCode::Char('e') => idx.map(|i| Action::Mutate(Mutation::SetEnabled { id: subs[i].id.clone(), enabled: !subs[i].enabled })),
+                    KeyCode::Char('t') => idx.map(|i| Action::Mutate(Mutation::TestConnection { id: subs[i].id.clone() })),
+                    KeyCode::Char('m') => idx.map(|i| Action::Mutate(Mutation::RefreshModels { id: subs[i].id.clone() })),
+                    KeyCode::Char('b') => idx.map(|i| Action::Mutate(Mutation::RefreshBalance { id: subs[i].id.clone() })),
+                    _ => None,
                 }
-                KeyCode::Char('e') => idx.map(|i| Action::Mutate(Mutation::SetEnabled { id: subs[i].id.clone(), enabled: !subs[i].enabled })),
-                KeyCode::Char('t') => idx.map(|i| Action::Mutate(Mutation::TestConnection { id: subs[i].id.clone() })),
-                KeyCode::Char('m') => idx.map(|i| Action::Mutate(Mutation::RefreshModels { id: subs[i].id.clone() })),
-                KeyCode::Char('b') => idx.map(|i| Action::Mutate(Mutation::RefreshBalance { id: subs[i].id.clone() })),
-                _ => None,
-            },
+            }
         }
     }
 
@@ -931,9 +956,9 @@ fn model_style(model: &str, theme: &Theme) -> Style {
     }
 }
 
-/// 四个主槽 + 兜底槽里最长的那个模型名的显示宽度。
+/// 四个主槽 + 兜底槽 + Jev 槽里最长的那个模型名的显示宽度。
 fn longest_model_width(model_slots: &ModelSlots) -> usize {
-    [&model_slots.fable, &model_slots.opus, &model_slots.sonnet, &model_slots.haiku, &model_slots.fallback]
+    [&model_slots.fable, &model_slots.opus, &model_slots.sonnet, &model_slots.haiku, &model_slots.fallback, &model_slots.jev]
         .into_iter()
         .map(|m| m.width())
         .max()
@@ -985,10 +1010,12 @@ fn slot_line(
     line
 }
 
-fn fallback_slot_line(model: &str, theme: &Theme, s: &'static Strings, modified: bool, focused: bool) -> Line<'static> {
-    let name = format!("  {}", fit(s.sub_slot_fallback, slot_name_col(s)));
+/// 没有 effort 列、可留空的槽位行: 兜底槽 (空 = 未配置) 与 Jev 槽 (空 = 透传)。
+fn optional_slot_line(slot: Slot, model: &str, theme: &Theme, s: &'static Strings, modified: bool, focused: bool) -> Line<'static> {
+    let name = format!("  {}", fit(slot_label(slot, s), slot_name_col(s)));
+    let empty = if slot == Slot::Jev { s.sub_slot_passthrough } else { s.sub_slot_unset };
     let mut spans = if model.is_empty() {
-        vec![Span::raw(name), Span::styled(s.sub_slot_unset, theme.muted_style())]
+        vec![Span::raw(name), Span::styled(empty, theme.muted_style())]
     } else {
         vec![Span::raw(name), Span::styled(model.to_string(), model_style(model, theme))]
     };
@@ -1118,19 +1145,26 @@ fn detail_rows(
     // 与 `Store` (`sub` 自己的字段) 不同的槽位行末尾加 muted 的「已修改」, 焦点落在的槽位整行
     // REVERSED。
     rows.push(DetailRow::Line(Line::from(Span::raw(fit(s.sub_f_slots, field_label_col(s))))));
-    let model_col = slot_model_col(width, model_slots, s);
-    for slot in MAIN_SLOTS {
-        let name = slot_label(slot, s);
-        let model = model_slots.get(slot);
-        let effort = slot_efforts.get(slot);
-        let modified = model != sub.model_slots.get(slot) || effort != sub.slot_efforts.get(slot);
-        let focused = focus_slot == Some(slot);
-        rows.push(DetailRow::Line(slot_line(name, model, effort, model_col, theme, s, modified, focused)));
+    if sub.is_systemone() {
+        // System One 订阅只有 Jev 一行 (没有 effort 列, 空 = 透传)。
+        let model = model_slots.get(Slot::Jev);
+        let modified = model != sub.model_slots.get(Slot::Jev);
+        rows.push(DetailRow::Line(optional_slot_line(Slot::Jev, model, theme, s, modified, focus_slot == Some(Slot::Jev))));
+    } else {
+        let model_col = slot_model_col(width, model_slots, s);
+        for slot in MAIN_SLOTS {
+            let name = slot_label(slot, s);
+            let model = model_slots.get(slot);
+            let effort = slot_efforts.get(slot);
+            let modified = model != sub.model_slots.get(slot) || effort != sub.slot_efforts.get(slot);
+            let focused = focus_slot == Some(slot);
+            rows.push(DetailRow::Line(slot_line(name, model, effort, model_col, theme, s, modified, focused)));
+        }
+        let fallback_model = model_slots.get(Slot::Fallback);
+        let fallback_modified = fallback_model != sub.model_slots.get(Slot::Fallback);
+        let fallback_focused = focus_slot == Some(Slot::Fallback);
+        rows.push(DetailRow::Line(optional_slot_line(Slot::Fallback, fallback_model, theme, s, fallback_modified, fallback_focused)));
     }
-    let fallback_model = model_slots.get(Slot::Fallback);
-    let fallback_modified = fallback_model != sub.model_slots.get(Slot::Fallback);
-    let fallback_focused = focus_slot == Some(Slot::Fallback);
-    rows.push(DetailRow::Line(fallback_slot_line(fallback_model, theme, s, fallback_modified, fallback_focused)));
 
     // 限额: 每个设了上限的周期一行, 不只显示最紧的那个。`limit == Some(0)` 与「没设上限」同义
     // (`QuotaUsage::ratio()` 把它当无限额处理, 见 `tightest_quota` 同一条规则), 不能只看

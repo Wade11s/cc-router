@@ -4031,6 +4031,94 @@ fn fallback_slot_offers_a_clear_item_first() {
     assert_eq!(spec.items.first().map(|i| i.label.as_str()), Some(ZH.pick_clear_fallback));
 }
 
+/// 一条 System One 订阅 (只有 Jev 槽) 的订阅页。
+fn systemone_subs_app(jev: &str) -> App {
+    let mut s1 = sub("9", "Ollama 决策", SubscriptionState::Healthy);
+    s1.provider_display_name = "Ollama".into();
+    s1.endpoint_protocol = "systemone".into();
+    s1.model_slots = ModelSlots::default();
+    s1.model_slots.jev = jev.into();
+    let mut a = app(false);
+    a.update(Action::Connected { app_version: VERSION.into() });
+    a.update(Action::SwitchTab(Tab::Subscriptions));
+    a.update(subs_done(1, vec![s1]));
+    a
+}
+
+/// System One 订阅的详情只有 Jev 一行 (空 = 透传), 不画四个主槽与兜底槽。
+#[test]
+fn systemone_detail_shows_only_the_jev_slot() {
+    let mut a = systemone_subs_app("");
+    let out = render(&mut a, 120, 40);
+    let jev_row = out.lines().find(|l| l.contains("│   jev ")).unwrap_or_else(|| panic!("应该有 jev 槽位行\n{out}"));
+    assert!(jev_row.contains(ZH.sub_slot_passthrough), "{out}");
+    for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku, Slot::Fallback] {
+        // 详情槽位行是「边框 + 内距 + 两格缩进 + 槽位名」; 列表表头的 sonnet 列不算。
+        assert!(!out.lines().any(|l| l.contains(&format!("│   {} ", slot_row(slot)))), "不该画 {slot:?} 槽\n{out}");
+    }
+    let mut a = systemone_subs_app("clef-flash");
+    let out = render(&mut a, 120, 40);
+    assert!(out.lines().any(|l| l.contains("│   jev ") && l.contains("clef-flash")), "{out}");
+}
+
+#[test]
+fn systemone_detail_80x24() {
+    let mut a = systemone_subs_app("clef-flash");
+    render(&mut a, 80, 24);
+    a.handle_key(key(KeyCode::Enter));
+    insta::assert_snapshot!("systemone_detail_80x24", render(&mut a, 80, 24));
+}
+
+/// Jev 槽: 光标只在这一行, `o` 拒绝, picker 置顶「清空 (透传)」, 清空是合法值。
+#[test]
+fn systemone_jev_slot_keys() {
+    let mut a = systemone_subs_app("clef-flash");
+    render(&mut a, 120, 40);
+    a.handle_key(key(KeyCode::Enter)); // Detail{Jev}
+    for code in [KeyCode::Down, KeyCode::Up, KeyCode::Char('G'), KeyCode::Char('g')] {
+        a.handle_key(key(code));
+    }
+    assert_eq!(
+        a.handle_key(key(KeyCode::Char('o'))),
+        Some(Action::Notify { kind: ToastKind::Info, text: ZH.sub_effort_na_jev.into() })
+    );
+    let action = a.handle_key(key(KeyCode::Enter));
+    let Some(Action::OpenPicker(spec)) = action else { panic!("{action:?}") };
+    assert_eq!(spec.tag, PickerTag::SlotModel { sub_id: "9".into(), slot: Slot::Jev });
+    assert_eq!(spec.items.first().map(|i| (i.id.as_str(), i.label.as_str())), Some(("", ZH.pick_clear_jev)));
+    assert_eq!(spec.initial, "clef-flash");
+
+    // 清空不是「必填项为空」: 进草稿, 保存时发空 Jev 槽。
+    a.update(Action::OpenPicker(spec));
+    a.update(Action::PickerDone { tag: PickerTag::SlotModel { sub_id: "9".into(), slot: Slot::Jev }, choice: PickerChoice::Item(String::new()) });
+    let out = render(&mut a, 120, 40);
+    assert!(!out.contains(ZH.sub_model_required), "{out}");
+    let Some(Action::Mutate(Mutation::UpdateSlots { model_slots, .. })) = a.handle_key(key(KeyCode::Char('s'))) else {
+        panic!("应该发保存\n{out}")
+    };
+    assert_eq!(model_slots, ModelSlots::default());
+}
+
+/// 详情焦点下选中的订阅被别处删掉、选中项落到一条 System One 订阅上: 光标不该还停在它没有的
+/// fable 槽, `⏎` 打开的是 Jev 槽的 picker。
+#[test]
+fn stale_slot_cursor_falls_back_to_the_jev_slot() {
+    let mut a = systemone_subs_app("clef-flash");
+    let mut s1 = sub("9", "Ollama 决策", SubscriptionState::Healthy);
+    s1.provider_display_name = "Ollama".into();
+    s1.endpoint_protocol = "systemone".into();
+    s1.model_slots = ModelSlots::default();
+    a.update(subs_done(2, vec![sub("1", "智谱主号", SubscriptionState::Healthy), s1.clone()]));
+    render(&mut a, 120, 40);
+    a.handle_key(key(KeyCode::Char('g')));
+    a.handle_key(key(KeyCode::Enter)); // Detail{Fable} on "1"
+    a.update(subs_done(3, vec![s1]));
+    render(&mut a, 120, 40);
+    let action = a.handle_key(key(KeyCode::Enter));
+    let Some(Action::OpenPicker(spec)) = action else { panic!("{action:?}") };
+    assert_eq!(spec.tag, PickerTag::SlotModel { sub_id: "9".into(), slot: Slot::Jev });
+}
+
 /// 选定一个模型: 创建草稿, 该槽位行标记「已修改」, 标题带 `*`。
 #[test]
 fn picking_a_model_creates_a_draft_and_marks_the_row() {
@@ -4784,7 +4872,12 @@ fn vm_subs() -> Vec<Subscription> {
     gemini_fb.provider_display_name = "Gemini".into();
     gemini_fb.auth_type = "gemini_api_key".into();
     gemini_fb.model_slots.fallback = "gemini-2.5-flash".into();
-    vec![zhipu, kimi, relay, gemini, gemini_fb]
+    let mut ollama_s1 = sub("6", "Ollama 决策", SubscriptionState::Healthy);
+    ollama_s1.provider_display_name = "Ollama".into();
+    ollama_s1.endpoint_protocol = "systemone".into();
+    ollama_s1.model_slots = ModelSlots::default();
+    ollama_s1.model_slots.jev = "clef-flash".into();
+    vec![zhipu, kimi, relay, gemini, gemini_fb, ollama_s1]
 }
 
 /// 5 个虚拟模型, 后端固定顺序。`model-fable` 的列表里混进一个 `Store` 里找不到的 id (「已删除」的
@@ -4804,6 +4897,7 @@ fn vm_list() -> Vec<VirtualModel> {
             mode: RoutingMode::Sequential,
             subscription_ids: vec!["3".into(), "4".into(), "5".into()],
         },
+        VirtualModel { name: "model-jev".into(), mode: RoutingMode::Sequential, subscription_ids: vec!["6".into()] },
     ]
 }
 
@@ -4823,6 +4917,43 @@ fn vm_app_with(fx_enabled: bool, vms: Vec<VirtualModel>, subs: Vec<Subscription>
 
 fn vm_app(fx_enabled: bool) -> App {
     vm_app_with(fx_enabled, vm_list(), vm_subs())
+}
+
+/// 按一次键, 产出的 `Action` (若有) 立刻交给 `update`——`a` 这类键靠它打开弹窗 / 弹 toast。
+fn press(a: &mut App, code: KeyCode) {
+    if let Some(action) = a.handle_key(key(code)) {
+        a.update(action);
+    }
+}
+
+#[test]
+fn jev_is_listed_and_its_picker_only_offers_systemone_subscriptions() {
+    let mut a = vm_app(false);
+    let out = render(&mut a, 80, 24);
+    assert!(vm_list_row(&out, "model-jev").contains('1'), "{out}");
+    // 走到 model-jev (第 6 项), 进成员栏, 按 a
+    for _ in 0..5 {
+        press(&mut a, KeyCode::Down);
+    }
+    press(&mut a, KeyCode::Enter);
+    let out = render(&mut a, 80, 24);
+    assert!(out.contains("JEV"), "成员栏要有 JEV 标识\n{out}");
+    press(&mut a, KeyCode::Char('a'));
+    let out = render(&mut a, 80, 24);
+    // 唯一的 systemone 订阅已经在列表里 → 没有可加入的
+    assert!(out.contains(ZH.vm_nothing_to_add_jev), "{out}");
+}
+
+#[test]
+fn opus_picker_never_offers_systemone_subscriptions() {
+    let mut a = vm_app(false);
+    press(&mut a, KeyCode::Down); // model-opus
+    press(&mut a, KeyCode::Enter);
+    press(&mut a, KeyCode::Char('a'));
+    let out = render(&mut a, 80, 24);
+    // 弹窗确实开了 (对话订阅 4 / 5 还没加入 opus), 但里面没有 System One 订阅。
+    assert!(out.contains("Gemini 中转"), "{out}");
+    assert!(!out.contains("Ollama 决策"), "{out}");
 }
 
 #[test]
@@ -4975,13 +5106,14 @@ fn fallback_marks_translated_subscriptions_without_a_fallback_slot() {
     // 兜底槽也该被视为未配置——否则会漏标一条实际会被 pipeline 统一跳过守卫拦下的订阅。用独立的
     // fixture (不复用 `vm_subs`/`vm_list`, 避免牵动其它依赖那两个函数固定候选列表的用例)。
     let mut subs = vm_subs();
-    let mut gemini_blank = sub("6", "Gemini 空白兜底", SubscriptionState::Healthy);
+    // id 用 "7": `vm_subs()` 的 "6" 已经是 System One 订阅。
+    let mut gemini_blank = sub("7", "Gemini 空白兜底", SubscriptionState::Healthy);
     gemini_blank.provider_display_name = "Gemini".into();
     gemini_blank.auth_type = "gemini_api_key".into();
     gemini_blank.model_slots.fallback = "  ".into();
     subs.push(gemini_blank);
     let mut vms = vm_list();
-    vms.iter_mut().find(|vm| vm.name == "model-fallback").unwrap().subscription_ids.push("6".into());
+    vms.iter_mut().find(|vm| vm.name == "model-fallback").unwrap().subscription_ids.push("7".into());
     let mut b = vm_app_with(false, vms, subs);
     for _ in 0..4 {
         b.handle_key(key(KeyCode::Down));

@@ -238,6 +238,21 @@ impl Wizard {
             WizardResult::Created(inner) => match &mut self.stage {
                 Stage::Basics { form, phase } if *phase == BasicsPhase::Creating => match inner {
                     Ok(created) => {
+                        let systemone_examples = self
+                            .providers
+                            .iter()
+                            .find(|p| p.id == form.draft.provider_id)
+                            .and_then(|p| p.endpoints.iter().find(|e| e.id == form.draft.endpoint_id))
+                            .filter(|e| e.is_systemone())
+                            .map(|e| e.example_models.clone());
+                        if let Some(examples) = systemone_examples {
+                            // System One: 三家上游都没有可用的标准模型列表 (实测), 不拉模型, 直接进 Jev 槽。
+                            let name = form.draft.display_name.value().trim().to_string();
+                            self.stage =
+                                Stage::Slots { id: created.id.clone(), name, form: SlotsForm::new_systemone(examples), saving: false };
+                            self.pending_step_fx = Some(Dir::Forward);
+                            return Vec::new();
+                        }
                         *phase = BasicsPhase::LoadingModels { id: created.id.clone() };
                         vec![WizardCmd::LoadModels { id: created.id.clone() }]
                     }
@@ -840,6 +855,83 @@ mod tests {
         assert!(!w.take_close_request(), "不该关向导");
         assert!(w.take_notice().is_none(), "不该弹 toast");
         assert!(matches!(w.stage, Stage::Slots { saving: false, .. }));
+    }
+
+    fn systemone_provider() -> Provider {
+        let mut p = provider("ollama");
+        p.endpoints = vec![crate::client::dto::ProviderEndpoint {
+            id: "systemone".into(),
+            label: "System One".into(),
+            base_url: "http://localhost:11434".into(),
+            protocol: "systemone".into(),
+            example_models: vec!["clef-flash".into()],
+        }];
+        p.default_endpoint = Some("systemone".into());
+        p
+    }
+
+    /// System One 端点: 第一步提交时不发 `(pending)` 占位槽, 发全空槽 (Jev 空 = 透传)。
+    #[test]
+    fn systemone_basics_submit_sends_empty_slots() {
+        let s = &crate::i18n::ZH;
+        let providers = vec![systemone_provider()];
+        let mut form = BasicsForm::default();
+        form.draft.provider_id = "ollama".into();
+        form.draft.endpoint_id = "systemone".into();
+        form.draft.api_key = super::text::SecretField::new("sk-test");
+        form.draft.display_name.set("Ollama");
+        form.state.focus_on(BasicsField::Submit);
+        let mut phase = BasicsPhase::Editing;
+        let action = form.handle_key(key(KeyCode::Enter), &mut phase, &providers, s);
+        let Some(Action::WizardRequest(cmd)) = action else { panic!("应该发出创建请求: {action:?}") };
+        let WizardCmd::Create(input) = *cmd else { panic!("应该是 Create") };
+        assert_eq!(input.model_slots, ModelSlots::default());
+        assert_eq!(phase, BasicsPhase::Creating);
+    }
+
+    /// System One 端点创建成功: 不拉模型列表, 直接进只有 Jev 一行的第二步, 候选是端点的示例模型。
+    #[test]
+    fn systemone_created_skips_model_loading_and_offers_only_the_jev_slot() {
+        let s = &crate::i18n::ZH;
+        let mut w = basics_at(BasicsPhase::Creating);
+        w.providers = vec![systemone_provider()];
+        basics(&mut w).draft.provider_id = "ollama".into();
+        basics(&mut w).draft.endpoint_id = "systemone".into();
+        basics(&mut w).draft.display_name.set(" Ollama ");
+        let cmds = w.update(&done(WizardResult::Created(Ok(CreatedSubscription { id: "sub-9".into() }))), &Store::default(), s);
+        assert!(cmds.is_empty(), "不该拉模型列表: {cmds:?}");
+        match &w.stage {
+            Stage::Slots { id, name, saving, .. } => {
+                assert_eq!(id, "sub-9");
+                assert_eq!(name, "Ollama");
+                assert!(!saving);
+            }
+            _ => panic!("应该直接进 Slots 阶段"),
+        }
+        let form = slots(&mut w);
+        assert_eq!(common::FormFields::order(form), vec![SlotsField::Row(Slot::Jev), SlotsField::Save]);
+        assert_eq!(form.state.focus(), SlotsField::Row(Slot::Jev));
+        assert_eq!(form.examples, vec!["clef-flash".to_string()]);
+    }
+
+    /// Jev 槽可以留空 (= 透传): 直接保存, 发全空槽。选择弹窗置顶「清空」项。
+    #[test]
+    fn systemone_slots_save_with_an_empty_jev_slot() {
+        let s = &crate::i18n::ZH;
+        let mut form = SlotsForm::new_systemone(vec!["clef-flash".into()]);
+        let picker = form.handle_key(key(KeyCode::Enter), "sub-9", &mut false, s);
+        let Some(Action::OpenPicker(spec)) = picker else { panic!("Jev 行 ⏎ 应该开选择弹窗: {picker:?}") };
+        assert_eq!(spec.items.first().map(|i| (i.id.as_str(), i.label.as_str())), Some(("", s.pick_clear_jev)));
+        assert!(spec.items.iter().any(|i| i.id == "clef-flash"));
+
+        form.handle_key(key(KeyCode::Down), "sub-9", &mut false, s);
+        let mut saving = false;
+        let action = form.handle_key(key(KeyCode::Enter), "sub-9", &mut saving, s);
+        assert_eq!(
+            action,
+            Some(Action::WizardRequest(Box::new(WizardCmd::SaveSlots { id: "sub-9".into(), model_slots: ModelSlots::default() })))
+        );
+        assert!(saving);
     }
 
     /// 创建成功的提示用 trim 后的备注名——与发给后端、落库的值一致。内置路径的名字在进第二步时

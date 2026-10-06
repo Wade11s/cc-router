@@ -11,7 +11,7 @@ expression: "render(&mut a, 80, 24)"
 "│   model-sonnet      会话   3 ││                                              │" Hidden by multi-width symbols: [(23, " "), (25, " ")]
 "│   model-haiku       顺序   0 ││                                              │" Hidden by multi-width symbols: [(23, " "), (25, " ")]
 "│   model-fallback    顺序   3 ││                                              │" Hidden by multi-width symbols: [(23, " "), (25, " ")]
-"│                              ││                                              │"
+"│   model-jev         顺序   1 ││                                              │" Hidden by multi-width symbols: [(23, " "), (25, " ")]
 "│                              ││                                              │"
 "│                              ││                                              │"
 "│                              ││                                              │"

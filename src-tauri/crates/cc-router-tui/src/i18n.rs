@@ -146,6 +146,8 @@ pub struct Strings {
     pub pick_effort_title: fn(slot: &str) -> String,
     /// 兜底槽模型 picker 里置顶的「清空」选项 (对应 `id: ""`)。
     pub pick_clear_fallback: &'static str,
+    /// Jev 槽模型 picker 里置顶的「清空」选项 (对应 `id: ""`, 空 = 透传客户端 model)。
+    pub pick_clear_jev: &'static str,
 
     /// 只读详情弹窗 (`Popup::Detail`, 请求日志详情用) 底部的键位提示。
     pub detail_keys: &'static str,
@@ -221,6 +223,8 @@ pub struct Strings {
     pub sub_f_last_action: &'static str,
     pub sub_slot_fallback: &'static str,
     pub sub_slot_unset: &'static str,
+    /// Jev 槽为空时的显示 (空 = 透传客户端 model, 不是「未设置」)。
+    pub sub_slot_passthrough: &'static str,
     pub sub_effort_auto: &'static str,
     pub sub_balance_unsupported: &'static str,
     pub sub_balance_never: &'static str,
@@ -246,6 +250,8 @@ pub struct Strings {
     /// 兜底槽 / Kiro 订阅上按 `o` 改思考档位的拒绝提示 (两种原因各一条)。
     pub sub_effort_na_fallback: &'static str,
     pub sub_effort_na_kiro: &'static str,
+    /// Jev 槽上按 `o` 的拒绝提示 (System One 协议没有思考强度)。
+    pub sub_effort_na_jev: &'static str,
     /// 主槽 (非兜底) 选了空白自定义值时的拒绝提示。
     pub sub_model_required: &'static str,
     /// 草稿对应的订阅从 `Store` 消失 (被别处删除) 时的提示。
@@ -289,6 +295,10 @@ pub struct Strings {
     pub vm_will_skip: &'static str,
     /// `a` 键在没有可加入的订阅时的提示 (就地回答, 不开弹窗)。
     pub vm_nothing_to_add: &'static str,
+    /// 同上, `model-jev` 专用 (它只收 System One 订阅)。
+    pub vm_nothing_to_add_jev: &'static str,
+    /// `model-jev` 成员栏标题后缀: 说明这是决策模型、走哪个入口。
+    pub vm_jev_tag: &'static str,
     /// 草稿里还有 `Store` 找不到的 id (「已删除」的订阅) 时, `s` 拒绝保存的
     /// 提示——不能把这种裸 id 发给后端, 后端会用一句英文报错拒绝, 对用户毫无意义。
     pub vm_remove_ghosts_first: &'static str,
@@ -669,6 +679,7 @@ pub const ZH: Strings = Strings {
     pick_model_title: |slot| format!("选择 {slot} 的模型"),
     pick_effort_title: |slot| format!("选择 {slot} 的思考档位"),
     pick_clear_fallback: "(清空兜底槽)",
+    pick_clear_jev: "(清空, 透传客户端 model)",
 
     detail_keys: "↑↓ 滚动   Esc 关闭",
 
@@ -739,6 +750,7 @@ pub const ZH: Strings = Strings {
     sub_f_last_action: "上次操作",
     sub_slot_fallback: "兜底",
     sub_slot_unset: "(未配置)",
+    sub_slot_passthrough: "(透传)",
     sub_effort_auto: "auto",
     sub_balance_unsupported: "该厂商不支持余额查询",
     sub_balance_never: "还没查过,按 b 刷新",
@@ -773,6 +785,7 @@ pub const ZH: Strings = Strings {
     sub_save_first: "先按 s 保存或 Esc 放弃当前修改",
     sub_effort_na_fallback: "兜底槽没有思考档位",
     sub_effort_na_kiro: "Kiro 不支持思考档位",
+    sub_effort_na_jev: "Jev 协议没有思考强度",
     sub_model_required: "模型不能为空",
     sub_gone: "这条订阅已不存在",
     saving_in_progress: "正在保存,请稍候",
@@ -797,6 +810,8 @@ pub const ZH: Strings = Strings {
     vm_missing: "(已删除)",
     vm_will_skip: "将被跳过",
     vm_nothing_to_add: "所有订阅都已在列表里",
+    vm_nothing_to_add_jev: "没有可加入的 System One 订阅",
+    vm_jev_tag: "JEV · 决策模型 · /v1/systemone",
     vm_remove_ghosts_first: "列表里有已删除的订阅,请先按 x 移除",
     vm_pick_add_title: |vm| format!("给 {vm} 加入订阅"),
     vm_unknown_mode: "这个调度模式当前版本不认识,请在桌面 app 里修改",
@@ -1083,6 +1098,7 @@ pub const EN: Strings = Strings {
     pick_model_title: |slot| format!("Model for {slot}"),
     pick_effort_title: |slot| format!("Reasoning effort for {slot}"),
     pick_clear_fallback: "(Clear fallback slot)",
+    pick_clear_jev: "(Clear: pass the client model through)",
 
     detail_keys: "↑↓ Scroll   Esc Close",
 
@@ -1159,6 +1175,7 @@ pub const EN: Strings = Strings {
     sub_f_last_action: "Last action",
     sub_slot_fallback: "fallback",
     sub_slot_unset: "(not set)",
+    sub_slot_passthrough: "(pass-through)",
     sub_effort_auto: "Auto",
     sub_balance_unsupported: "This provider does not support balance queries",
     sub_balance_never: "Not fetched yet. Press b to refresh",
@@ -1194,6 +1211,7 @@ pub const EN: Strings = Strings {
     sub_save_first: "Press s to save or Esc to reset your changes first",
     sub_effort_na_fallback: "The fallback slot has no reasoning effort",
     sub_effort_na_kiro: "Kiro does not support reasoning effort",
+    sub_effort_na_jev: "The Jev protocol has no reasoning effort",
     sub_model_required: "Model cannot be empty",
     sub_gone: "This subscription no longer exists",
     saving_in_progress: "Saving. Please wait",
@@ -1224,6 +1242,8 @@ pub const EN: Strings = Strings {
     vm_missing: "(deleted)",
     vm_will_skip: "will be skipped",
     vm_nothing_to_add: "Every subscription is already in the list",
+    vm_nothing_to_add_jev: "No System One subscriptions to add",
+    vm_jev_tag: "JEV · decision model · /v1/systemone",
     vm_remove_ghosts_first: "The list contains deleted subscriptions; press x to remove them first",
     vm_pick_add_title: |vm| format!("Add a subscription to {vm}"),
     vm_unknown_mode: "This version does not recognize the routing mode; change it in the desktop app",
@@ -1512,6 +1532,7 @@ pub const JA: Strings = Strings {
     pick_model_title: |slot| format!("{slot} のモデルを選択"),
     pick_effort_title: |slot| format!("{slot} の思考強度を選択"),
     pick_clear_fallback: "(フォールバックスロットをクリア)",
+    pick_clear_jev: "(クリア: クライアントの model をそのまま渡す)",
 
     detail_keys: "↑↓ スクロール   Esc 閉じる",
 
@@ -1587,6 +1608,7 @@ pub const JA: Strings = Strings {
     sub_f_last_action: "前回の操作",
     sub_slot_fallback: "フォールバック",
     sub_slot_unset: "(未設定)",
+    sub_slot_passthrough: "(パススルー)",
     sub_effort_auto: "自動",
     sub_balance_unsupported: "このプロバイダは残高の照会に対応していません",
     sub_balance_never: "未取得です。b で更新",
@@ -1619,6 +1641,7 @@ pub const JA: Strings = Strings {
     sub_save_first: "先に s で保存するか、Esc で変更を破棄してください",
     sub_effort_na_fallback: "フォールバックスロットでは思考強度を設定できません",
     sub_effort_na_kiro: "Kiro は思考強度に対応していません",
+    sub_effort_na_jev: "Jev プロトコルには思考強度がありません",
     sub_model_required: "モデルは空にできません",
     sub_gone: "このサブスクリプションはもう存在しません",
     saving_in_progress: "保存中です。しばらくお待ちください",
@@ -1644,6 +1667,8 @@ pub const JA: Strings = Strings {
     vm_missing: "(削除済み)",
     vm_will_skip: "スキップ対象",
     vm_nothing_to_add: "すべてのサブスクリプションが追加済みです",
+    vm_nothing_to_add_jev: "追加できる System One サブスクがありません",
+    vm_jev_tag: "JEV · 意思決定モデル · /v1/systemone",
     vm_remove_ghosts_first: "削除済みのサブスクリプションがあります。先に x で外してください",
     vm_pick_add_title: |vm| format!("{vm} にサブスクリプションを追加"),
     vm_unknown_mode: "このバージョンでは認識できないディスパッチモードです。デスクトップ app で変更してください",
