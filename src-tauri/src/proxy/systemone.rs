@@ -392,14 +392,17 @@ pub async fn dispatch(state: &AppState, raw_body: Bytes, client_model: String, c
         LoopEnd::Exhausted => {
             let subs_map = state.subscriptions.read().await;
             let mut summary = Vec::new();
+            let now = Utc::now();
             for sub_id in &vm_config.subscription_ids {
                 if let Some(rt) = subs_map.get(sub_id) {
                     let g = rt.read().await;
-                    if skipped_wrong_protocol.contains(&g.row.display_name) {
-                        summary.push(format!("- {}: 不是 System One 订阅, 已跳过", g.row.display_name));
-                    } else {
-                        summary.push(format!("- {}: {:?}", g.row.display_name, g.state));
-                    }
+                    let exceeded = g.row.token_quotas.first_exceeded(&g.quota_usage, now).map(|p| p.label_zh());
+                    summary.push(summary_line(
+                        &g.row.display_name,
+                        &format!("{:?}", g.state),
+                        exceeded,
+                        skipped_wrong_protocol.contains(&g.row.display_name),
+                    ));
                 }
             }
             drop(subs_map);
@@ -414,6 +417,17 @@ pub async fn dispatch(state: &AppState, raw_body: Bytes, client_model: String, c
                 &format!("All subscriptions for model-jev are unavailable.\nDetails:\n{}", summary.join("\n")),
             )
         }
+    }
+}
+
+/// 503 摘要里一条订阅的说明: 跨类跳过优先, 其次是 token 限额 (限额只让订阅不可调度, 状态仍是 Healthy), 最后才是状态。
+fn summary_line(display_name: &str, state: &str, exceeded: Option<&str>, skipped_wrong_protocol: bool) -> String {
+    if skipped_wrong_protocol {
+        return format!("- {display_name}: 不是 System One 订阅, 已跳过");
+    }
+    match exceeded {
+        Some(period) => format!("- {display_name}: 已达 {period} token 限额"),
+        None => format!("- {display_name}: {state}"),
     }
 }
 
@@ -433,6 +447,13 @@ mod tests {
         row.model_slots.jev = slot.into();
         row.required_headers.insert("anthropic-version".into(), "2023-06-01".into());
         row
+    }
+
+    #[test]
+    fn summary_line_reports_quota_before_state() {
+        assert_eq!(summary_line("a", "Healthy", Some("每日"), false), "- a: 已达 每日 token 限额");
+        assert_eq!(summary_line("a", "Healthy", None, false), "- a: Healthy");
+        assert_eq!(summary_line("a", "Healthy", Some("每日"), true), "- a: 不是 System One 订阅, 已跳过");
     }
 
     const RAW: &str = r#"{"model":"jev-latest","state":"hi","questions":{"a":{"type":"noul","instructions":"y?"}}}"#;
