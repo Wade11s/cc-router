@@ -40,9 +40,9 @@ export function ClientAccessSection({ variant }: { variant: "sketch" | "classic"
   const sketch = variant === "sketch";
   const p = sketch ? "ca" : "lrc-ca";
 
-  // 0 = 永久保留 (设置页把 >=36500 天映射成 0 存)
+  // 0 = 永久保留; >=36500 天兼容旧版的「永久」选项。
   const days = settings.data?.log_retention_days ?? 0;
-  const forever = days >= 36500;
+  const forever = days === 0 || days >= 36500;
 
   return (
     <section className={sketch ? "card alt" : "lrc-flush-section"}>
