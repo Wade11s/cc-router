@@ -824,6 +824,18 @@ export interface ToolBreakdownDto {
   call_count: number;
 }
 
+/**
+ * Live Routing「客户端接入」聚合行 (commands/requests.rs::ClientActivityDto)。
+ * 由 requests.client_tool 分组的被动流量检测结果 —— 哪个客户端最近真的走了 cc-router。
+ * `client_tool` 为空 = 未识别桶 (UA 认不出, 或迁移 009 之前的老日志)。
+ */
+export interface ClientActivityDto {
+  client_tool?: string | null;
+  request_count: number;
+  /** 最近一次请求时间 (ms epoch) */
+  last_seen: number;
+}
+
 // ===== Receipts (commands/receipts.rs) =====
 // 与 StatsRange 故意分开: Receipts 直接查 requests 原始表, 支持 24h 滚动窗口
 

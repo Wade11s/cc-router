@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { ArrowRight, Check, Copy, Lock } from "lucide-react";
 import { runtime } from "@/runtime";
 import { RouteFlowDiagramClassic } from "@/components/RouteFlowDiagramClassic";
+import { ClientAccessSection } from "@/components/ClientAccessSection";
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { useProxyStatus, useSettings } from "@/hooks/useSettings";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
@@ -22,6 +23,7 @@ export function ClassicLiveRoutingPage() {
   return (
     <div className="page-flow">
       <RouteFlowDiagramClassic />
+      <ClientAccessSection variant="classic" />
       <AccessSection />
       <MappingSection />
     </div>

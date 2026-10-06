@@ -6,7 +6,9 @@ import { useVirtualModels } from "@/hooks/useVirtualModels";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useProviders } from "@/hooks/useProviders";
 import { useAnyRouteFlashState } from "@/hooks/useRouteFlash";
+import { useClientActivity } from "@/hooks/useClientActivity";
 import { fmtCooldownLeft } from "@/lib/format";
+import { summarizeActivity, CLIENT_GROUP_LABEL, type ClientGroupKey } from "@/lib/clientActivity";
 import { isCustomProviderId } from "@/lib/providerLabels";
 import { VM_ORDER } from "@/lib/virtualModels";
 import { useT, type TFunction } from "@/i18n";
@@ -78,11 +80,16 @@ const upstreamArc = (hubCy: number, cy: number) =>
 const arrowHead = (x: number, y: number) => `M${x - 10} ${y - 5} L${x} ${y} L${x - 10} ${y + 5}`;
 
 /**
- * 本地 AI Agent 工具。写死 —— cc-router 无法探知是谁在调, 这里表达的是「谁可以调」。
+ * 本地 AI Agent 工具便签。名字取自 CLIENT_GROUP_LABEL (与「客户端接入」卡的分组名同源),
+ * 命令写死 —— 这里表达的是「谁可以调进来」, 便签亮/灰由「客户端接入」的被动流量检测
+ * 决定 (useClientActivity): 保留期内发过请求的便签保持原色, 从未出现的整张灰掉。
+ * 检测未出结果前 (加载/失败) 一律不灰, 免得每次进页面都闪一下。
  * 便签的颜色 / 角度 / 胶带位置逐张错开, 同一个值会显得像盖章。
  */
 const CLIENTS: {
   name: string;
+  /** 该便签对应的流量检测分组 (lib/clientActivity.ts), 与「客户端接入」卡同一套口径 */
+  group: ClientGroupKey;
   /** null = 用本地化的「任何兼容客户端」 */
   cmd: string | null;
   icon: ClientDoodleName;
@@ -91,10 +98,10 @@ const CLIENTS: {
   tapeLeft: number;
   tapeRotate: number;
 }[] = [
-  { name: "Claude Code", cmd: "$ claude", icon: "terminal", fill: "var(--fill-cactus)", rotate: -2.2, tapeLeft: 60, tapeRotate: 4 },
-  { name: "Codex", cmd: "$ codex", icon: "braces", fill: "var(--fill-butter)", rotate: 1.6, tapeLeft: 24, tapeRotate: -5 },
-  { name: "OpenCode", cmd: "$ opencode", icon: "laptop", fill: "var(--fill-sky)", rotate: -1, tapeLeft: 94, tapeRotate: 3 },
-  { name: "Others", cmd: null, icon: "bubble", fill: "var(--fill-coral)", rotate: 2.2, tapeLeft: 56, tapeRotate: -3 },
+  { group: "claude", name: CLIENT_GROUP_LABEL.claude, cmd: "$ claude", icon: "terminal", fill: "var(--fill-cactus)", rotate: -2.2, tapeLeft: 60, tapeRotate: 4 },
+  { group: "codex", name: CLIENT_GROUP_LABEL.codex, cmd: "$ codex", icon: "braces", fill: "var(--fill-butter)", rotate: 1.6, tapeLeft: 24, tapeRotate: -5 },
+  { group: "opencode", name: CLIENT_GROUP_LABEL.opencode, cmd: "$ opencode", icon: "laptop", fill: "var(--fill-sky)", rotate: -1, tapeLeft: 94, tapeRotate: 3 },
+  { group: "others", name: CLIENT_GROUP_LABEL.others, cmd: null, icon: "bubble", fill: "var(--fill-coral)", rotate: 2.2, tapeLeft: 56, tapeRotate: -3 },
 ];
 
 /**
@@ -149,6 +156,8 @@ export function RouteFlowDiagram() {
   const subs = useSubscriptions();
   const providers = useProviders();
   const { ref: fitRef, scale, offset } = useFitScale(CANVAS_W);
+  const activity = useClientActivity();
+  const summary = summarizeActivity(activity.data);
 
   const subsMap = useMemo(() => {
     const m = new Map<string, SubscriptionDto>();
@@ -237,6 +246,7 @@ export function RouteFlowDiagram() {
               client={c}
               cmd={c.cmd ?? t("liveRouting.clientAny")}
               top={hubCy + (i - 1.5) * CLIENT_STEP - NOTE_H / 2}
+              dormant={summary !== null && !summary.groups[c.group].active}
             />
           ))}
 
@@ -286,6 +296,10 @@ export function RouteFlowDiagram() {
           </svg>
           {t("liveRouting.legend.cooling")}
         </span>
+        <span>
+          <i className="rf-legend-swatch dormant" />
+          {t("liveRouting.legend.dormant")}
+        </span>
         <span className="rf-legend-hint hand">{t("liveRouting.legend.hint")}</span>
       </div>
     </section>
@@ -309,12 +323,24 @@ function HandDigits({ text }: { text: string }) {
   );
 }
 
-function ClientNote({ client, cmd, top }: { client: (typeof CLIENTS)[number]; cmd: string; top: number }) {
+function ClientNote({
+  client,
+  cmd,
+  top,
+  dormant,
+}: {
+  client: (typeof CLIENTS)[number];
+  cmd: string;
+  top: number;
+  /** 保留期内没见过请求 → 灰掉; 加载中/失败为 false, 不灰 */
+  dormant: boolean;
+}) {
   return (
-    <div className="rf-note" style={{ top, transform: `rotate(${client.rotate}deg)` }}>
+    <div className={dormant ? "rf-note dormant" : "rf-note"} style={{ top, transform: `rotate(${client.rotate}deg)` }}>
       <svg viewBox={`0 0 ${NOTE_W} ${NOTE_H}`} width={NOTE_W} height={NOTE_H} aria-hidden>
         <g filter="url(#ccr-rough-canvas)">
-          <path className="rf-note-paper" style={{ fill: client.fill }} d="M2 2 L154 3 L153 44 L140 56 L3 56 Z" />
+          {/* fill 是内联的, CSS 盖不住 —— 灰显色必须在组件里选 */}
+          <path className="rf-note-paper" style={{ fill: dormant ? "var(--fill-stone)" : client.fill }} d="M2 2 L154 3 L153 44 L140 56 L3 56 Z" />
           <path className="rf-note-fold" d="M153 44 L141 45.5 L140 56 Z" />
         </g>
       </svg>

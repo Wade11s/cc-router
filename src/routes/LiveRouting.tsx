@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { ArrowRight, Check, Copy, Lock } from "lucide-react";
 import { runtime } from "@/runtime";
 import { RouteFlowDiagram } from "@/components/RouteFlowDiagram";
+import { ClientAccessSection } from "@/components/ClientAccessSection";
 import { ProviderLogo } from "@/components/ProviderLogo";
 import { useProxyStatus, useSettings } from "@/hooks/useSettings";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
@@ -40,6 +41,7 @@ function SketchLiveRoutingPage() {
         </div>
       </div>
       <RouteFlowDiagram />
+      <ClientAccessSection variant="sketch" />
       <AccessSection />
       <MappingSection />
     </div>

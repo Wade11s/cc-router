@@ -5,7 +5,9 @@ import { useVirtualModels } from "@/hooks/useVirtualModels";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
 import { useProviders } from "@/hooks/useProviders";
 import { useAnyRouteFlashState } from "@/hooks/useRouteFlash";
+import { useClientActivity } from "@/hooks/useClientActivity";
 import { fmtCooldownLeft } from "@/lib/format";
+import { summarizeActivity, CLIENT_GROUP_LABEL } from "@/lib/clientActivity";
 import { isCustomProviderId } from "@/lib/providerLabels";
 import { VM_ORDER } from "@/lib/virtualModels";
 import { useT, type TFunction } from "@/i18n";
@@ -112,8 +114,19 @@ function upstreamArc(hubCy: number, cy: number, inner: boolean): string {
     : `M552 ${hubCy} C 650 ${hubCy}, 690 ${cy}, ${UP_LEFT_OUTER - 4} ${cy}`;
 }
 
-/** 本地 AI Agent 工具。写死 —— cc-router 无法探知是谁在调, 这里表达的是「谁可以调」。 */
-const CLIENT_NAMES = ["Claude Code", "Codex", "OpenCode", "Others"];
+/**
+ * 本地 AI Agent 工具的客户端方块。名字取自 CLIENT_GROUP_LABEL (与「客户端接入」卡的
+ * 分组名同源) —— 这里表达的是「谁可以调进来」; 亮/灰由「客户端接入」的被动流量检测
+ * 决定 (useClientActivity): 保留期内发过请求的原样, 从未出现的整块淡出。检测未出
+ * 结果前 (加载/失败) 不灰。
+ * 顺序与 lib/clientActivity.ts 的 CLIENT_GROUPS 一一对应 (others 收拢剩下的)。
+ */
+const CLIENT_NAMES = [
+  { name: CLIENT_GROUP_LABEL.claude, group: "claude" },
+  { name: CLIENT_GROUP_LABEL.codex, group: "codex" },
+  { name: CLIENT_GROUP_LABEL.opencode, group: "opencode" },
+  { name: CLIENT_GROUP_LABEL.others, group: "others" },
+] as const;
 
 interface UpstreamNode {
   /** 聚合 key: 内置 provider = provider_id; 自定义订阅 = provider_id + 订阅 id (每条独立成云) */
@@ -133,6 +146,8 @@ export function RouteFlowDiagramClassic() {
   const vms = useVirtualModels();
   const subs = useSubscriptions();
   const providers = useProviders();
+  const activity = useClientActivity();
+  const summary = summarizeActivity(activity.data);
 
   const subsMap = useMemo(() => {
     const m = new Map<string, SubscriptionDto>();
@@ -231,7 +246,11 @@ export function RouteFlowDiagramClassic() {
           </svg>
 
           {Array.from({ length: CLIENT_COUNT }, (_, i) => (
-            <div className="lrc-rf-client" style={{ top: clientTop(i, canvasH) }} key={i}>
+            <div
+              className={summary !== null && !summary.groups[CLIENT_NAMES[i].group].active ? "lrc-rf-client dormant" : "lrc-rf-client"}
+              style={{ top: clientTop(i, canvasH) }}
+              key={i}
+            >
               <div className="lrc-rf-client-bar">
                 <i />
                 <i />
@@ -239,7 +258,7 @@ export function RouteFlowDiagramClassic() {
               </div>
               <div className="lrc-rf-client-body">
                 <span className="lrc-rf-client-caret">❯</span>
-                <span className="lrc-rf-client-name">{CLIENT_NAMES[i]}</span>
+                <span className="lrc-rf-client-name">{CLIENT_NAMES[i].name}</span>
               </div>
             </div>
           ))}
