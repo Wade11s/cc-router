@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, Plus, Search } from "lucide-react";
+import { Check, Copy, Plus, Search } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -12,11 +12,13 @@ import { ProviderLogo } from "@/components/ProviderLogo";
 import { SortableSubscriptionList } from "@/components/SortableSubscriptionList";
 import { StarPrompt } from "@/components/StarPrompt";
 import { useSubscriptions } from "@/hooks/useSubscriptions";
+import { useProxyStatus } from "@/hooks/useSettings";
 import { useVirtualModels, useUpdateVirtualModel } from "@/hooks/useVirtualModels";
 import { isAnthropicPassthrough } from "@/lib/authTypes";
 import { customProviderLabel } from "@/lib/providerLabels";
 import { providerName as localProviderName } from "@/lib/providerText";
-import { VM_META, VM_ORDER, vmNameToSlot } from "@/lib/virtualModels";
+import { VM_META, VM_ORDER, isJev, vmAccepts, vmNameToSlot } from "@/lib/virtualModels";
+import { runtime } from "@/runtime";
 import { useT } from "@/i18n";
 import type {
   RoutingMode,
@@ -119,9 +121,19 @@ function VirtualModelCard({
         : t("virtualModels.mode.sequentialHint");
   // fallback 是第 5 个虚拟模型, 语义上与 4 个槽位并列而非同级, 通栏独占一行
   const isFallback = vm.name === "model-fallback";
+  const jev = isJev(vm.name);
 
   return (
-    <div className={isFallback ? "slot-card wide" : "slot-card"}>
+    <div className={jev ? "slot-card wide jev" : isFallback ? "slot-card wide" : "slot-card"}>
+      {jev && (
+        <div className="jev-hangtag" aria-hidden="true">
+          <span className="jev-hangtag-string" />
+          <span className="jev-hangtag-tag">
+            JEV
+            <small>{t("virtualModels.jev.tagSub")}</small>
+          </span>
+        </div>
+      )}
       <div className="slot-head compact">
         <div style={{ minWidth: 0 }}>
           <span className="slot-name">{vm.name}</span>
@@ -171,6 +183,7 @@ function VirtualModelCard({
         >
           <Plus size={12} /> {t("virtualModels.addButtonShort")}
         </button>
+        {jev && <JevAccessHint />}
       </div>
 
       <AddSubscriptionDialog
@@ -226,12 +239,15 @@ function AddSubscriptionDialog({
   const { t, locale } = useT();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
-  const candidates = allSubs.filter((s) => s.enabled && !existingIds.includes(s.id));
+  const candidates = allSubs.filter(
+    (s) => s.enabled && !existingIds.includes(s.id) && vmAccepts(vmName, s.endpoint_protocol),
+  );
 
   const providerName = (sub: SubscriptionDto) =>
     customProviderLabel(sub.provider_id, t) ?? localProviderName(sub, locale);
   // 与 SortableSubscriptionList 同一套规则: 加进来之后这条订阅在本卡片里实际会用的模型
   const modelFor = (sub: SubscriptionDto) => {
+    if (isJev(vmName)) return sub.model_slots.jev?.trim() || t("sortableSub.passthrough");
     if (slot !== null) return sub.model_slots[slot] || "—";
     return sub.model_slots.fallback?.trim() || t("sortableSub.passthrough");
   };
@@ -272,7 +288,9 @@ function AddSubscriptionDialog({
           </div>
         </DialogHeader>
         {candidates.length === 0 ? (
-          <div className="field-hint">{t("virtualModels.dialog.empty")}</div>
+          <div className="field-hint">
+            {isJev(vmName) ? t("virtualModels.dialog.emptyJev") : t("virtualModels.dialog.empty")}
+          </div>
         ) : (
           <>
             {candidates.length > PICKER_SEARCH_THRESHOLD && (
@@ -364,5 +382,41 @@ function AddSubscriptionDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** jev 卡片底部的接入示例: 调用方是用户自己的代码, 没有 CC 那样现成的环境变量片段。 */
+function JevAccessHint() {
+  const { t } = useT();
+  const status = useProxyStatus();
+  const [copied, setCopied] = useState(false);
+  const base = status.data?.base_url ?? "http://127.0.0.1:23456";
+  const curl = [
+    `curl ${base}/v1/systemone \\`,
+    `  -H "Content-Type: application/json" \\`,
+    `  -H "Authorization: Bearer <cc-router token>" \\`,
+    `  -d '{"model":"jev-latest","state":"Hello World","questions":{"says_hello":{"type":"noul","instructions":"Does the state text contain a greeting?"}}}'`,
+  ].join("\n");
+  return (
+    <div className="jev-access">
+      <b>{t("virtualModels.jev.access")}</b>
+      <span className="mono">{base}/v1/systemone</span>
+      <span>{t("virtualModels.jev.keyHint")}</span>
+      <button
+        type="button"
+        className="jev-copy"
+        onClick={() => {
+          runtime
+            .copyText(curl)
+            .then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            })
+            .catch(() => {});
+        }}
+      >
+        <Copy size={11} /> {copied ? t("virtualModels.jev.copied") : t("virtualModels.jev.copyCurl")}
+      </button>
+    </div>
   );
 }

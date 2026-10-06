@@ -66,15 +66,18 @@ export function SortableSubscriptionList({
             const sub = subscriptions.get(id);
             // fallback 卡片三态: 配置了兜底槽 → 槽值; 未配置且透传类 → 「原样透传」;
             // 未配置且翻译类 → 警示 (dispatch 层会跳过该候选)。
+            const isJevCard = vmName === "model-jev";
             const fallbackModel = sub?.model_slots.fallback?.trim() ?? "";
-            const realModel =
-              slot === null
+            const jevModel = sub?.model_slots.jev?.trim() ?? "";
+            const realModel = isJevCard
+              ? jevModel || t("sortableSub.passthrough")
+              : slot === null
                 ? fallbackModel || t("sortableSub.passthrough")
                 : sub
                   ? sub.model_slots[slot]
                   : "?";
             const fallbackSkipped =
-              slot === null && !fallbackModel && !!sub && !isAnthropicPassthrough(sub.auth_type);
+              !isJevCard && slot === null && !fallbackModel && !!sub && !isAnthropicPassthrough(sub.auth_type);
             return (
               <SortableRow
                 key={id}
