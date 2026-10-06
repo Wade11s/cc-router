@@ -35,6 +35,8 @@ interface Props {
   refreshLabel?: string;
   exampleModels?: string[];
   disabled?: boolean;
+  /** systemone 订阅: 只显示 Jev 槽一行, 隐藏 effort 与刷新按钮 */
+  systemone?: boolean;
 }
 
 type SlotRow = { key: keyof ModelSlots; labelKey: string; hintKey: string };
@@ -56,6 +58,13 @@ const FALLBACK_ROW: SlotRow = {
   hintKey: "modelSlot.fallback.hint",
 };
 
+/** System One 订阅只有这一行: 留空 = 透传客户端 model; 无 effort (Jev 协议没有思考强度)。 */
+const JEV_ROW: SlotRow = {
+  key: "jev",
+  labelKey: "modelSlot.jev.label",
+  hintKey: "modelSlot.jev.hint",
+};
+
 export function ModelSlotPicker({
   value,
   onChange,
@@ -70,6 +79,7 @@ export function ModelSlotPicker({
   refreshLabel,
   exampleModels,
   disabled,
+  systemone,
 }: Props) {
   const { t } = useT();
   // null 表示还没初始化;一旦用户主动点击切换,userChose 置 true,不再被外部 data 反向覆盖。
@@ -86,7 +96,8 @@ export function ModelSlotPicker({
     }
   }, [error, models]);
 
-  const effectiveMode: Mode = mode ?? "auto";
+  // systemone 没有模型列表可选, 恒为手动输入 (这样示例提示也会显示)
+  const effectiveMode: Mode = systemone ? "manual" : (mode ?? "auto");
 
   function chooseMode(next: Mode) {
     userChoseRef.current = true;
@@ -124,26 +135,28 @@ export function ModelSlotPicker({
           <span style={{ fontSize: 13, fontWeight: 500, color: "var(--ink-2)" }}>
             {t("modelSlot.label")}
           </span>
-          <div className="radio-group">
-            <button
-              className={effectiveMode === "auto" ? "on" : ""}
-              onClick={() => chooseMode("auto")}
-              disabled={disabled}
-              type="button"
-            >
-              {t("modelSlot.modeAuto")}
-            </button>
-            <button
-              className={effectiveMode === "manual" ? "on" : ""}
-              onClick={() => chooseMode("manual")}
-              disabled={disabled}
-              type="button"
-            >
-              {t("modelSlot.modeManual")}
-            </button>
-          </div>
+          {!systemone && (
+            <div className="radio-group">
+              <button
+                className={effectiveMode === "auto" ? "on" : ""}
+                onClick={() => chooseMode("auto")}
+                disabled={disabled}
+                type="button"
+              >
+                {t("modelSlot.modeAuto")}
+              </button>
+              <button
+                className={effectiveMode === "manual" ? "on" : ""}
+                onClick={() => chooseMode("manual")}
+                disabled={disabled}
+                type="button"
+              >
+                {t("modelSlot.modeManual")}
+              </button>
+            </div>
+          )}
         </div>
-        {onRefresh && (
+        {onRefresh && !systemone && (
           <button
             className="btn sm"
             onClick={onRefresh}
@@ -174,31 +187,33 @@ export function ModelSlotPicker({
         <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 500, color: "var(--ink-3)" }}>
           {t("modelSlot.colModel")}
         </div>
-        <div
-          style={{
-            flex: "0 0 104px",
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            fontSize: 12,
-            fontWeight: 500,
-            color: "var(--ink-3)",
-          }}
-        >
-          {t("slotEffort.colLabel")}
-          <button
-            type="button"
-            className="help-toggle"
-            aria-label={t("slotEffort.helpAria")}
-            aria-expanded={showEffortHelp}
-            onClick={() => setShowEffortHelp((v) => !v)}
+        {!systemone && (
+          <div
+            style={{
+              flex: "0 0 104px",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 12,
+              fontWeight: 500,
+              color: "var(--ink-3)",
+            }}
           >
-            <CircleQuestionMark size={13} />
-          </button>
-        </div>
+            {t("slotEffort.colLabel")}
+            <button
+              type="button"
+              className="help-toggle"
+              aria-label={t("slotEffort.helpAria")}
+              aria-expanded={showEffortHelp}
+              onClick={() => setShowEffortHelp((v) => !v)}
+            >
+              <CircleQuestionMark size={13} />
+            </button>
+          </div>
+        )}
       </div>
 
-      {showEffortHelp && (
+      {showEffortHelp && !systemone && (
         <div className="field-hint help-panel">
           {t("slotEffort.hint")}
           {effortDisabled && effortDisabledReason && (
@@ -211,8 +226,8 @@ export function ModelSlotPicker({
       )}
 
       <div style={{ display: "grid", gap: 14 }}>
-        {[...SLOTS, FALLBACK_ROW].map(({ key, labelKey, hintKey }) => {
-          const isFallbackSlot = key === "fallback";
+        {(systemone ? [JEV_ROW] : [...SLOTS, FALLBACK_ROW]).map(({ key, labelKey, hintKey }) => {
+          const isOptionalSlot = key === "fallback" || key === "jev";
           const current = value[key] ?? "";
           const inList = !!models && models.some((m) => m.id === current);
           const showHistorical =
@@ -240,7 +255,7 @@ export function ModelSlotPicker({
                     <>
                       <ModelSelect
                         id={`slot-${key}`}
-                        isFallbackSlot={isFallbackSlot}
+                        isFallbackSlot={isOptionalSlot}
                         current={current}
                         models={models}
                         showHistorical={showHistorical}
@@ -265,14 +280,18 @@ export function ModelSlotPicker({
                       value={current}
                       onChange={(e) => update(key, e.target.value)}
                       placeholder={
-                        isFallbackSlot ? t("modelSlot.fallback.none") : t("modelSlot.modelIdPh")
+                        key === "jev"
+                          ? t("modelSlot.jev.none")
+                          : isOptionalSlot
+                            ? t("modelSlot.fallback.none")
+                            : t("modelSlot.modelIdPh")
                       }
                       disabled={disabled}
                     />
                   )}
                 </div>
                 {/* 右: 思考档位。固定宽度让各行右边缘对齐; 兜底槽无 effort, 放占位块保持对齐 */}
-                {isFallbackSlot ? (
+                {systemone ? null : isOptionalSlot ? (
                   <div style={{ flex: "0 0 104px" }} />
                 ) : (
                   <Select
@@ -306,7 +325,7 @@ export function ModelSlotPicker({
       </div>
 
       {/* 长说明已收进列头的 (?) 面板; 底部只保留 Kiro 灰掉原因这种必须常显的信息 */}
-      {effortDisabled && effortDisabledReason && (
+      {!systemone && effortDisabled && effortDisabledReason && (
         <div className="field-hint" style={{ marginTop: 10 }}>
           {effortDisabledReason}
         </div>

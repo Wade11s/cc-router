@@ -233,6 +233,7 @@ export function SubscriptionNewPage() {
     [provider, endpointId],
   );
   const isChatGptOAuth = provider?.auth.type === "chatgpt_oauth";
+  const isSystemOne = endpoint?.protocol === "systemone";
   const isKiroOAuth = provider?.auth.type === "kiro_oauth";
 
   // ChatGPT OAuth 流程 state. deviceCode + account 同生命周期, 合一份
@@ -447,7 +448,8 @@ export function SubscriptionNewPage() {
     setFetchingModels(true);
     setModelFetchError(null);
     try {
-      const placeholderSlots: ModelSlots = uniformSlots("(pending)");
+      // System One 订阅不用四槽, 也不拉模型列表 (三家上游都没有可用的标准列表, 实测)
+      const placeholderSlots: ModelSlots = isSystemOne ? { ...uniformSlots(""), jev: "" } : uniformSlots("(pending)");
       const input: CreateSubscriptionInput = {
         display_name: displayName,
         api_key: apiKey,
@@ -459,6 +461,13 @@ export function SubscriptionNewPage() {
         },
       };
       const created = await createMut.mutateAsync(input);
+      if (isSystemOne) {
+        setModels(null);
+        setSlots({ ...uniformSlots(""), jev: "" });
+        setCreatedId(created.id);
+        setStep(2);
+        return;
+      }
       try {
         const result: RefreshModelListResult = await runtime.invoke("refresh_model_list", {
           id: created.id,
@@ -855,7 +864,11 @@ export function SubscriptionNewPage() {
                       </SelectTrigger>
                       <SelectContent>
                         {provider.endpoints.map((e) => (
-                          <SelectItem key={e.id} value={e.id} subtitle={e.base_url}>
+                          <SelectItem
+                            key={e.id}
+                            value={e.id}
+                            subtitle={e.protocol === "systemone" ? `${e.base_url} · System One` : e.base_url}
+                          >
                             {e.label}
                           </SelectItem>
                         ))}
@@ -1187,8 +1200,13 @@ export function SubscriptionNewPage() {
                   models={models}
                   loading={fetchingModels}
                   error={modelFetchError}
-                  onRefresh={refreshModels}
-                  exampleModels={provider.model_discovery.example_models}
+                  onRefresh={isSystemOne ? undefined : refreshModels}
+                  exampleModels={
+                    isSystemOne && endpoint?.example_models.length
+                      ? endpoint.example_models
+                      : provider.model_discovery.example_models
+                  }
+                  systemone={isSystemOne}
                 />
 
                 {submitError && (
@@ -1213,7 +1231,7 @@ export function SubscriptionNewPage() {
                     className="btn primary"
                     onClick={isChatGptOAuth ? saveOAuth : isKiroOAuth ? saveKiro : save}
                     disabled={
-                      !allSlotsFilled(slots) || submitting
+                      (!isSystemOne && !allSlotsFilled(slots)) || submitting
                     }
                     type="button"
                   >

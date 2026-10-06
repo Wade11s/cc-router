@@ -177,7 +177,7 @@ export function SubscriptionEditPage() {
       slot_efforts: slotEfforts,
     };
     // 仅透传订阅有此开关 (翻译类订阅不渲染也不提交, 保持后端字段不变)
-    if (sub.auth_type === "api_key") {
+    if (sub.auth_type === "api_key" && !isSystemOne) {
       patch.forward_client_headers = forwardClientHeaders;
     }
     if (sub.is_user_defined) {
@@ -250,6 +250,7 @@ export function SubscriptionEditPage() {
   }
 
   const sub = subQuery.data;
+  const isSystemOne = sub?.endpoint_protocol === "systemone";
 
   if (subQuery.isLoading) {
     return <div className="p-8 text-sm text-muted-foreground">{t("common.loading")}</div>;
@@ -336,7 +337,7 @@ export function SubscriptionEditPage() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {provider?.endpoints.map((e) => (
+                          {provider?.endpoints.filter((e) => e.protocol === sub.endpoint_protocol).map((e) => (
                             <SelectItem key={e.id} value={e.id} subtitle={e.base_url}>
                               {e.label}
                             </SelectItem>
@@ -435,7 +436,7 @@ export function SubscriptionEditPage() {
                 </div>
 
                 {/* 仅 Anthropic 透传订阅: 透传客户端请求头开关 (翻译类协议不消费此字段) */}
-                {sub.auth_type === "api_key" && (
+                {sub.auth_type === "api_key" && !isSystemOne && (
                   <div className="grid grid-cols-[120px_1fr] gap-3 items-start">
                     <Label className="mt-0.5">{t("subscriptionEdit.forwardClientHeaders")}</Label>
                     <div className="space-y-1">
@@ -467,10 +468,15 @@ export function SubscriptionEditPage() {
                   models={models}
                   loading={fetchingModels}
                   error={modelError}
-                  onRefresh={refreshModels}
-                  exampleModels={sub.model_discovery.example_models}
+                  onRefresh={isSystemOne ? undefined : refreshModels}
+                  exampleModels={
+                    isSystemOne
+                      ? provider?.endpoints.find((e) => e.id === endpointId)?.example_models ?? []
+                      : sub.model_discovery.example_models
+                  }
+                  systemone={isSystemOne}
                 />
-                {sub.model_cache && (
+                {sub.model_cache && !isSystemOne && (
                   <div className="mt-3 text-xs text-muted-foreground">
                     {t("subscriptionEdit.modelCacheUpdated")}{new Date(sub.model_cache.fetched_at).toLocaleString()}
                   </div>
