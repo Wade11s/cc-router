@@ -1,6 +1,7 @@
 //! Session key extraction for sticky routing. Pure function, no IO.
 //!
 //! Priority (first hit wins):
+//! 0. SystemOne entry: only the `x-session-id` header (no body-derived keys — identical `state`s are independent decisions)
 //! 1. `x-claude-code-session-id` header (Claude Code >= 2.1.86)
 //! 2. `body.metadata.user_id` — used verbatim as an opaque key (both the legacy
 //!    `user_<hex>_account_<uuid>_session_<uuid>` and the 2.1.78+ JSON string form)
@@ -21,6 +22,9 @@ use crate::proxy::client_fingerprint::RequestEntryKind;
 pub const MAX_KEY_BYTES: usize = 256;
 
 pub fn extract(headers: &HeaderMap, body: &Value, entry_kind: RequestEntryKind) -> Option<String> {
+    if matches!(entry_kind, RequestEntryKind::SystemOne) {
+        return header_str(headers, "x-session-id").map(|v| truncate(format!("sid:{v}")));
+    }
     if let Some(v) = header_str(headers, "x-claude-code-session-id") {
         return Some(truncate(format!("hdr:{v}")));
     }
@@ -177,5 +181,27 @@ mod tests {
         let body = json!({"user": "  ", "messages": [{"role":"user","content":"hello"}]});
         let k = extract(&HeaderMap::new(), &body, RequestEntryKind::ChatCompletions).unwrap();
         assert!(k.starts_with("msg:"));
+    }
+
+    #[test]
+    fn systemone_only_uses_x_session_id() {
+        use axum::http::HeaderMap;
+        let body = serde_json::json!({
+            "model": "jev-latest",
+            "state": "hello",
+            "metadata": {"user_id": "u1"},
+            "messages": [{"role": "user", "content": "x"}]
+        });
+        let mut h = HeaderMap::new();
+        assert_eq!(extract(&h, &body, RequestEntryKind::SystemOne), None, "不拿 metadata / state 做键");
+        h.insert("x-claude-code-session-id", "cc".parse().unwrap());
+        assert_eq!(extract(&h, &body, RequestEntryKind::SystemOne), None, "CC 的会话头也不认");
+        h.insert("x-session-id", "s-42".parse().unwrap());
+        assert_eq!(extract(&h, &body, RequestEntryKind::SystemOne).as_deref(), Some("sid:s-42"));
+    }
+
+    #[test]
+    fn systemone_entry_kind_wire_name() {
+        assert_eq!(RequestEntryKind::SystemOne.as_str(), "systemone");
     }
 }

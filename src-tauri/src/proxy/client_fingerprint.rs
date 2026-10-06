@@ -54,7 +54,7 @@ pub struct ClientInfo {
     pub version: Option<String>,
 }
 
-/// cc-router 对外暴露的三个入口端点. 用枚举不是字符串, 避免下游构造 entry 时拼写错.
+/// cc-router 对外暴露的四个入口端点. 用枚举不是字符串, 避免下游构造 entry 时拼写错.
 /// 默认 Messages: 99% 流量是 /v1/messages, ClientContext::default() 在测试/fallback 路径上有用.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RequestEntryKind {
@@ -63,6 +63,8 @@ pub enum RequestEntryKind {
     Responses,
     /// POST /v1/chat/completions (OpenAI Chat Completions 兼容入口, v4.9+).
     ChatCompletions,
+    /// POST /v1/systemone (Jev / System One 决策协议, 原样透传).
+    SystemOne,
 }
 
 impl RequestEntryKind {
@@ -72,6 +74,7 @@ impl RequestEntryKind {
             Self::Messages => "messages",
             Self::Responses => "responses",
             Self::ChatCompletions => "chat/completions",
+            Self::SystemOne => "systemone",
         }
     }
 }
