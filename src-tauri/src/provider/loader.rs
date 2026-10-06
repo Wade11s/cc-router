@@ -181,4 +181,24 @@ auth: { type: api_key, header_name: Authorization, header_format: bearer }
         let err = parse_single(&yaml).unwrap_err();
         assert!(err.to_string().contains("systemone"), "{err}");
     }
+
+    /// 三家 Jev 上游的 systemone 端点都在, 且 typesafe 只有 systemone 端点。
+    #[test]
+    fn builtin_systemone_endpoints_exist() {
+        use crate::provider::model::EndpointProtocol::Systemone;
+        let all = load_all().unwrap();
+        let ep = |pid: &str, eid: &str| {
+            all.get(pid).and_then(|p| p.endpoint(eid)).unwrap_or_else(|| panic!("{pid}/{eid} 缺失")).clone()
+        };
+        let ollama = ep("ollama", "localhost_systemone");
+        assert_eq!((ollama.protocol, ollama.messages_path.as_str()), (Systemone, "/v1/systemone"));
+        assert_eq!(ollama.example_models, vec!["clef-flash".to_string()]);
+        let or = ep("openrouter", "systemone");
+        assert_eq!((or.protocol, or.base_url.as_str()), (Systemone, "https://openrouter.ai/api"));
+        let ts = all.get("typesafe").expect("typesafe.yaml 缺失");
+        assert!(ts.endpoints.iter().all(|e| e.protocol == Systemone));
+        assert_eq!(ts.auth.header_format, crate::provider::model::AuthHeaderFormat::Bearer);
+        // 原有对话端点不受影响
+        assert_eq!(ep("ollama", "localhost").protocol, crate::provider::model::EndpointProtocol::Messages);
+    }
 }

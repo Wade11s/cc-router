@@ -35,11 +35,26 @@ endpoints:
       en: "Global · Pay-as-you-go API"
       ja: "グローバル · 従量課金 API"
     description:
-      zh: "OpenRouter 唯一端点，按 token 转发到对应底层提供商"
-      en: "OpenRouter's only endpoint; forwards requests to the underlying providers, billed per token"
-      ja: "OpenRouter 唯一のエンドポイント。トークン従量課金で下層のプロバイダへ転送"
+      zh: "对话端点, 按 token 转发到对应底层提供商"
+      en: "Chat endpoint; forwards requests to the underlying providers, billed per token"
+      ja: "チャット用エンドポイント。トークン従量課金で下層のプロバイダへ転送"
     base_url: "https://openrouter.ai/api"
     messages_path: "/v1/messages"
+    region: global
+    billing: pay_as_you_go
+  - id: systemone
+    label:
+      zh: "全球 · System One（决策模型）"
+      en: "Global · System One (decision models)"
+      ja: "グローバル · System One（意思決定モデル）"
+    description:
+      zh: "/api/v1/systemone, 只用于 model-jev"
+      en: "/api/v1/systemone, for model-jev only"
+      ja: "/api/v1/systemone。model-jev 専用"
+    base_url: "https://openrouter.ai/api"
+    messages_path: "/v1/systemone"
+    protocol: systemone
+    example_models: ["typesafe/jev-1.13", "cloudflare/clef-flash"]
     region: global
     billing: pay_as_you_go
 
