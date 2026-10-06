@@ -82,6 +82,7 @@ pub fn build_export(
             Some(v) => ExportVirtualModel { name, mode: v.mode, subscription_ids: v.subscription_ids.clone() },
             None => ExportVirtualModel { name, mode: RoutingMode::Sequential, subscription_ids: Vec::new() },
         })
+        .filter(|vm: &ExportVirtualModel| !(vm.name.is_jev() && vm.subscription_ids.is_empty()))
         .collect();
 
     let envelope = match secrets {
@@ -131,6 +132,20 @@ mod tests {
     }
 
     #[test]
+    fn bound_jev_is_exported() {
+        let r = rows();
+        let mut v = vms(&r);
+        v.push(VirtualModelSnapshot {
+            name: VirtualModelName::Jev,
+            mode: RoutingMode::Sequential,
+            subscription_ids: vec![r[0].id],
+        });
+        let file = build_export(&r, &v, None, "6.1.0", Utc::now()).unwrap();
+        assert_eq!(file.virtual_models.len(), 6);
+        assert!(file.virtual_models.iter().any(|v| v.name.is_jev()));
+    }
+
+    #[test]
     fn plain_export_has_no_secrets_anywhere() {
         let r = rows();
         let file = build_export(&r, &vms(&r), None, "6.1.0", Utc::now()).unwrap();
@@ -138,7 +153,8 @@ mod tests {
         assert!(file.subscriptions.iter().all(|s| s.secret_refs.is_none()));
         let text = serde_json::to_string(&file).unwrap();
         assert!(!text.contains("sk-a") && !text.contains("\"hk\""), "{text}");
-        assert_eq!(file.virtual_models.len(), 6, "六个虚拟模型全部输出");
+        assert_eq!(file.virtual_models.len(), 5, "无绑定的 model-jev 不输出, 其余五个全部输出");
+        assert!(file.virtual_models.iter().all(|v| !v.name.is_jev()));
         let opus = file.virtual_models.iter().find(|v| v.name == VirtualModelName::Opus).unwrap();
         assert_eq!(opus.mode, RoutingMode::Sticky);
         assert_eq!(opus.subscription_ids, vec![r[1].id, r[0].id], "绑定顺序保持");

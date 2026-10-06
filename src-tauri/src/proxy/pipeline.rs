@@ -232,6 +232,8 @@ pub async fn dispatch(
     // B: fallback 下因未配置兜底槽被跳过的翻译类订阅, 攒起来给 503 summary 用,
     // 否则「订阅明明 Available 却 503」无从排查。
     let mut skipped_no_fallback_slot: Vec<String> = Vec::new();
+    // systemone 订阅误入对话路径 (历史数据兜底) 时跳过, 同样记入 503 summary。
+    let mut skipped_wrong_protocol: Vec<String> = Vec::new();
 
     for sub_id in order.candidate_ids {
         let attempt_id = Uuid::new_v4();
@@ -240,6 +242,16 @@ pub async fn dispatch(
             subs_map.get(&sub_id).cloned()
         };
         let Some(rt) = rt else { continue };
+
+        // 运行时守卫: systemone 订阅不进对话路径 (写入 / 导入已拦, 这里兜历史数据)。
+        {
+            let g = rt.read().await;
+            if !vm_name.accepts(g.row.endpoint_protocol) {
+                warn!(%sub_id, display_name = %g.row.display_name, "systemone subscription skipped on chat path");
+                skipped_wrong_protocol.push(g.row.display_name.clone());
+                continue;
+            }
+        }
 
         // 从订阅 row snapshot 读取所有连接信息(snapshot 模型: 不再回查 state.providers)
         let (
@@ -1663,7 +1675,9 @@ pub async fn dispatch(
             let g = rt.read().await;
             // fallback 下因未配置兜底槽被跳过的翻译类订阅: 状态显示 Available 却没被使用,
             // 不注明的话用户无从排查「明明可用为什么 503」。
-            if skipped_no_fallback_slot.contains(&g.row.display_name) {
+            if skipped_wrong_protocol.contains(&g.row.display_name) {
+                summary.push(format!("- {}: System One 订阅, 只能用于 model-jev", g.row.display_name));
+            } else if skipped_no_fallback_slot.contains(&g.row.display_name) {
                 summary.push(format!(
                     "- {}: 未配置兜底模型, fallback 下已跳过",
                     g.row.display_name

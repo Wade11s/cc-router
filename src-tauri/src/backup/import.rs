@@ -193,6 +193,9 @@ pub struct ImportReport {
     pub token_imported: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_error: Option<String>,
+    /// 跨类绑定 (对话订阅 ↔ model-jev) 被跳过的记录: name = 订阅名, reason = 原因。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_bindings: Vec<InvalidEntry>,
 }
 
 #[derive(Debug)]
@@ -255,15 +258,29 @@ pub fn plan(
     }
     report.imported = inserts.len();
 
+    // 订阅 id -> (端点协议快照, 名称): 绑定时按虚拟模型隔离对话类 / systemone 订阅。
+    let protocol_of: HashMap<Uuid, (crate::provider::model::EndpointProtocol, &str)> = file
+        .subscriptions
+        .iter()
+        .map(|s| (s.id, (s.endpoint_protocol, s.display_name.as_str())))
+        .collect();
+
     let mut bindings = Vec::new();
     let mut modes = Vec::new();
     for vm in &file.virtual_models {
         let current = local.bindings.get(&vm.name).cloned().unwrap_or_default();
         let mut next = current.clone();
         for id in &vm.subscription_ids {
-            if new_ids.contains(id) && !next.contains(id) {
-                next.push(*id);
+            if !new_ids.contains(id) || next.contains(id) {
+                continue;
             }
+            if let Some((protocol, name)) = protocol_of.get(id) {
+                if let Some(reason) = vm.name.binding_rejection(*protocol, name) {
+                    report.skipped_bindings.push(InvalidEntry { name: name.to_string(), reason });
+                    continue;
+                }
+            }
+            next.push(*id);
         }
         if next != current {
             if current.is_empty() {
@@ -623,5 +640,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// 文件里的跨类绑定 (对话订阅绑到 model-jev / systemone 订阅绑到 model-opus) 跳过并说明,
+    /// 订阅本身照常导入。
+    #[test]
+    fn cross_kind_bindings_are_skipped_but_subscriptions_imported() {
+        use crate::provider::model::EndpointProtocol;
+        let mut f = fixture(true);
+        let chat_id = f.file.subscriptions[0].id;
+        f.file.subscriptions[1].endpoint_protocol = EndpointProtocol::Systemone;
+        let jev_id = f.file.subscriptions[1].id;
+        f.file.virtual_models.push(crate::backup::format::ExportVirtualModel {
+            name: VirtualModelName::Jev,
+            mode: RoutingMode::Sequential,
+            subscription_ids: vec![chat_id, jev_id],
+        });
+        let plan = plan(&f.file, Some(&resolved(&f)), &empty_local(), Utc::now());
+
+        let jev = plan.bindings.iter().find(|(n, _)| *n == VirtualModelName::Jev).unwrap();
+        assert_eq!(jev.1, vec![jev_id], "对话订阅不能进 model-jev");
+        let opus = plan.bindings.iter().find(|(n, _)| *n == VirtualModelName::Opus).unwrap();
+        assert!(!opus.1.contains(&jev_id), "systemone 订阅不能进 model-opus");
+        assert_eq!(plan.report.skipped_bindings.len(), 2);
+        assert!(plan.inserts.iter().any(|r| r.id == jev_id), "订阅本身照常导入");
     }
 }

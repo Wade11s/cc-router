@@ -52,12 +52,17 @@ pub async fn update_virtual_model(
         .collect();
     let ids = ids.map_err(|e| AppError::BadRequest(format!("invalid uuid: {e}")))?;
 
-    // 校验：所有 subscription 必须存在
+    // 校验: 所有 subscription 必须存在, 且端点协议与虚拟模型匹配 (model-jev ↔ systemone)。
+    // 桌面 / 网页 / TUI 共用本命令, 前端过滤只是体验, 这里才是隔离边界。
     {
         let subs = state.subscriptions.read().await;
         for id in &ids {
-            if !subs.contains_key(id) {
-                return Err(AppError::SubscriptionNotFound(id.to_string()));
+            let rt = subs
+                .get(id)
+                .ok_or_else(|| AppError::SubscriptionNotFound(id.to_string()))?;
+            let g = rt.read().await;
+            if let Some(reason) = vm_name.binding_rejection(g.row.endpoint_protocol, &g.row.display_name) {
+                return Err(AppError::BadRequest(reason));
             }
         }
     }
