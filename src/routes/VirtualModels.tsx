@@ -183,7 +183,7 @@ function VirtualModelCard({
         >
           <Plus size={12} /> {t("virtualModels.addButtonShort")}
         </button>
-        {jev && <JevAccessHint />}
+        {jev && <JevAccessHint model={jevExampleModel(subsMap.get(vm.subscription_ids[0]))} />}
       </div>
 
       <AddSubscriptionDialog
@@ -385,8 +385,17 @@ function AddSubscriptionDialog({
   );
 }
 
+/** curl 示例里的 model: 第一条绑定订阅的 Jev 槽 → 其端点示例模型 → 兜底 jev-latest。 */
+function jevExampleModel(sub: SubscriptionDto | undefined): string {
+  return (
+    sub?.model_slots.jev?.trim() ||
+    sub?.model_discovery.example_models[0]?.trim() ||
+    "jev-latest"
+  );
+}
+
 /** jev 卡片底部的接入示例: 调用方是用户自己的代码, 没有 CC 那样现成的环境变量片段。 */
-function JevAccessHint() {
+function JevAccessHint({ model }: { model: string }) {
   const { t } = useT();
   const status = useProxyStatus();
   const [copied, setCopied] = useState(false);
@@ -395,7 +404,7 @@ function JevAccessHint() {
     `curl ${base}/v1/systemone \\`,
     `  -H "Content-Type: application/json" \\`,
     `  -H "Authorization: Bearer <cc-router token>" \\`,
-    `  -d '{"model":"jev-latest","state":"Hello World","questions":{"says_hello":{"type":"noul","instructions":"Does the state text contain a greeting?"}}}'`,
+    `  -d '{"model":${JSON.stringify(model)},"state":"Hello World","questions":{"says_hello":{"type":"noul","instructions":"Does the state text contain a greeting?"}}}'`,
   ].join("\n");
   return (
     <div className="jev-access">
