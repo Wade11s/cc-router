@@ -92,7 +92,7 @@ impl BasicsForm {
     }
 
     /// `Submit` 行 `⏎`: 校验通过则打包 `WizardCmd::Create` (槽位先放 `ModelSlots::pending()`,
-    /// 第二步再绑; System One 端点没有四个核心槽, 放全空槽——Jev 空 = 透传) 并进 `Creating`。
+    /// 第二步再绑; System One 端点没有四个核心槽, 放全空槽——Jev 可留空) 并进 `Creating`。
     fn submit(&mut self, phase: &mut BasicsPhase, providers: &[Provider], s: &'static Strings) -> Option<Action> {
         if !self.state.validate(validate_basics(&self.draft, s)) {
             self.pending_field_err = true;

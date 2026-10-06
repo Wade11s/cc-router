@@ -27,7 +27,7 @@ pub(super) struct SlotsForm {
     pub(super) note: Option<String>,
     /// 同 `BasicsForm::pending_field_err`。
     pub(super) pending_field_err: bool,
-    /// System One 订阅: 只有 Jev 一行, 不校验 (空 = 透传)。
+    /// System One 订阅: 只有 Jev 一行, 不校验 (空 = model-jev 用端点示例模型, 其他名字透传)。
     pub(super) systemone: bool,
 }
 
@@ -72,7 +72,7 @@ impl SlotsForm {
         Self { draft, state: FormState::new(SlotsField::Row(Slot::Fable)), examples, note, pending_field_err: false, systemone: false }
     }
 
-    /// System One 订阅: 只有 Jev 槽一行, 可留空 (= 透传)。候选是端点 yaml 的示例模型 (三家上游都
+    /// System One 订阅: 只有 Jev 槽一行, 可留空 (后端改用端点示例模型)。候选是端点 yaml 的示例模型 (三家上游都
     /// 没有可用的标准模型列表, 不拉)。
     pub(super) fn new_systemone(examples: Vec<String>) -> Self {
         Self {
@@ -99,7 +99,7 @@ impl SlotsForm {
     /// `Save` 行 `⏎`: 校验通过则发只带 `model_slots` 的 `SaveSlots` (向导不设置 effort, 少发一个
     /// 字段就不会把后端默认值清掉)。
     fn submit(&mut self, id: &str, saving: &mut bool, s: &'static Strings) -> Option<Action> {
-        // System One 只有 Jev 槽, 空 = 透传, 没有必填项。
+        // System One 只有 Jev 槽, 可留空, 没有必填项。
         let failure = if self.systemone {
             None
         } else {
@@ -132,7 +132,7 @@ impl SlotsForm {
         if self.systemone {
             rows.field(
                 SlotsField::Row(Slot::Jev),
-                Cell { label: slot_label(Slot::Jev, s), value: self.draft.slots.get(Slot::Jev), placeholder: s.sub_slot_passthrough },
+                Cell { label: slot_label(Slot::Jev, s), value: self.draft.slots.get(Slot::Jev), placeholder: s.sub_slot_unset },
             );
         } else {
             rows.slots(&self.draft.slots, SlotsField::Row);

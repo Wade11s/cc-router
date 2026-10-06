@@ -4051,7 +4051,7 @@ fn systemone_detail_shows_only_the_jev_slot() {
     let mut a = systemone_subs_app("");
     let out = render(&mut a, 120, 40);
     let jev_row = out.lines().find(|l| l.contains("│   jev ")).unwrap_or_else(|| panic!("应该有 jev 槽位行\n{out}"));
-    assert!(jev_row.contains(ZH.sub_slot_passthrough), "{out}");
+    assert!(jev_row.contains(ZH.sub_slot_unset), "{out}");
     for slot in [Slot::Fable, Slot::Opus, Slot::Sonnet, Slot::Haiku, Slot::Fallback] {
         // 详情槽位行是「边框 + 内距 + 两格缩进 + 槽位名」; 列表表头的 sonnet 列不算。
         assert!(!out.lines().any(|l| l.contains(&format!("│   {} ", slot_row(slot)))), "不该画 {slot:?} 槽\n{out}");

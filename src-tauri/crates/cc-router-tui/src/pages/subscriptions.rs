@@ -1018,10 +1018,10 @@ fn slot_line(
     line
 }
 
-/// 没有 effort 列、可留空的槽位行: 兜底槽 (空 = 未配置) 与 Jev 槽 (空 = 透传)。
+/// 没有 effort 列、可留空的槽位行: 兜底槽与 Jev 槽, 空都显示「未配置」(Jev 槽空时后端对 model-jev 改用端点示例模型)。
 fn optional_slot_line(slot: Slot, model: &str, theme: &Theme, s: &'static Strings, modified: bool, focused: bool) -> Line<'static> {
     let name = format!("  {}", fit(slot_label(slot, s), slot_name_col(s)));
-    let empty = if slot == Slot::Jev { s.sub_slot_passthrough } else { s.sub_slot_unset };
+    let empty = s.sub_slot_unset;
     let mut spans = if model.is_empty() {
         vec![Span::raw(name), Span::styled(empty, theme.muted_style())]
     } else {

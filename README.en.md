@@ -234,6 +234,8 @@ Behavior notes:
 
 </details>
 
+There is also `POST /v1/systemone` — a pass-through entry point for Jev (System One) decision models, bound to `model-jev`; supported upstreams: TypeSafe, OpenRouter, Ollama 0.35+.
+
 ### Outbound: how cc-router connects to providers
 
 Outbound is grouped into three protocol families, plus a fourth group of OAuth-based subscription accounts. Built-in provider presets and custom endpoints take the same path — the presets just come with the address, auth scheme and model list pre-filled. The authoritative list of built-in providers is the "Add subscription" page in the app; the descriptor files live in [`src-tauri/providers/`](src-tauri/providers/), and PRs are welcome.

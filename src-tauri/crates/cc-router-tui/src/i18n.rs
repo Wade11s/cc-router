@@ -223,8 +223,6 @@ pub struct Strings {
     pub sub_f_last_action: &'static str,
     pub sub_slot_fallback: &'static str,
     pub sub_slot_unset: &'static str,
-    /// Jev 槽为空时的显示 (空 = 透传客户端 model, 不是「未设置」)。
-    pub sub_slot_passthrough: &'static str,
     pub sub_effort_auto: &'static str,
     pub sub_balance_unsupported: &'static str,
     pub sub_balance_never: &'static str,
@@ -681,7 +679,7 @@ pub const ZH: Strings = Strings {
     pick_model_title: |slot| format!("选择 {slot} 的模型"),
     pick_effort_title: |slot| format!("选择 {slot} 的思考档位"),
     pick_clear_fallback: "(清空兜底槽)",
-    pick_clear_jev: "(清空, 透传客户端 model)",
+    pick_clear_jev: "(清空 Jev 槽)",
 
     detail_keys: "↑↓ 滚动   Esc 关闭",
 
@@ -752,7 +750,6 @@ pub const ZH: Strings = Strings {
     sub_f_last_action: "上次操作",
     sub_slot_fallback: "兜底",
     sub_slot_unset: "(未配置)",
-    sub_slot_passthrough: "(透传)",
     sub_effort_auto: "auto",
     sub_balance_unsupported: "该厂商不支持余额查询",
     sub_balance_never: "还没查过,按 b 刷新",
@@ -1101,7 +1098,7 @@ pub const EN: Strings = Strings {
     pick_model_title: |slot| format!("Model for {slot}"),
     pick_effort_title: |slot| format!("Reasoning effort for {slot}"),
     pick_clear_fallback: "(Clear fallback slot)",
-    pick_clear_jev: "(Clear: pass the client model through)",
+    pick_clear_jev: "(Clear Jev slot)",
 
     detail_keys: "↑↓ Scroll   Esc Close",
 
@@ -1178,7 +1175,6 @@ pub const EN: Strings = Strings {
     sub_f_last_action: "Last action",
     sub_slot_fallback: "fallback",
     sub_slot_unset: "(not set)",
-    sub_slot_passthrough: "(pass-through)",
     sub_effort_auto: "Auto",
     sub_balance_unsupported: "This provider does not support balance queries",
     sub_balance_never: "Not fetched yet. Press b to refresh",
@@ -1536,7 +1532,7 @@ pub const JA: Strings = Strings {
     pick_model_title: |slot| format!("{slot} のモデルを選択"),
     pick_effort_title: |slot| format!("{slot} の思考強度を選択"),
     pick_clear_fallback: "(フォールバックスロットをクリア)",
-    pick_clear_jev: "(クリア: クライアントの model をそのまま渡す)",
+    pick_clear_jev: "(Jev スロットをクリア)",
 
     detail_keys: "↑↓ スクロール   Esc 閉じる",
 
@@ -1612,7 +1608,6 @@ pub const JA: Strings = Strings {
     sub_f_last_action: "前回の操作",
     sub_slot_fallback: "フォールバック",
     sub_slot_unset: "(未設定)",
-    sub_slot_passthrough: "(パススルー)",
     sub_effort_auto: "自動",
     sub_balance_unsupported: "このプロバイダは残高の照会に対応していません",
     sub_balance_never: "未取得です。b で更新",

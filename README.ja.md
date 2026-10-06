@@ -234,6 +234,8 @@ Open WebUI、Cherry Studio、Cline、LobeChat など OpenAI Chat Completions し
 
 </details>
 
+このほか `POST /v1/systemone` があります —— Jev（System One）意思決定モデル向けにリクエストをそのまま透過する入口で、`model-jev` にバインドされます。対応する上流：TypeSafe、OpenRouter、Ollama 0.35+。
+
 ### 出口：cc-router からプロバイダへの接続
 
 出口はプロトコルごとに 3 分類、加えて OAuth ログインを使うサブスクリプションアカウントが 1 分類あります。内蔵プロバイダプリセットもカスタムエンドポイントも同じ経路を通り、違いはプリセットがアドレス・認証方式・モデル一覧をあらかじめ埋めてくれる点だけです。内蔵プロバイダの完全な一覧はアプリ内「サブスクリプションを追加」画面が正となり、記述ファイルは [`src-tauri/providers/`](src-tauri/providers/) にあります。PR 歓迎です。

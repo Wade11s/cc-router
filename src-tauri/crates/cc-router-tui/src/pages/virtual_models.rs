@@ -384,7 +384,7 @@ impl VirtualModels {
         // 免得每个成员在页面刚打开、还没等到第一次订阅列表加载完成的那几百毫秒里全部被误标成
         // `vm_missing`, 顺带把 `s`/`a`/`x`/`J`/`K` 都指向"请先移除已删除的订阅"这种具有误导性的提示。
         let subs_loaded = store.subscriptions_loaded();
-        // `model-jev` 在厂商列之后显示 Jev 槽的真实模型 (空 = 透传), 与兜底页的「将被跳过」共用同一套
+        // `model-jev` 在厂商列之后显示 Jev 槽的真实模型 (空 = 未配置), 与兜底页的「将被跳过」共用同一套
         // 预留: 放不下时占用厂商列。宽度按这一页成员里最长的那个算, 前面留 1 格间隔, 封顶
         // `JEV_MODEL_MAX_COL` (再长截断成省略号)。
         let jev_col = if is_jev {
@@ -473,11 +473,11 @@ impl VirtualModels {
     }
 }
 
-/// `model-jev` 成员行显示的 Jev 槽模型; 空 (含纯空白) 显示「透传」, 第二项为真。
+/// `model-jev` 成员行显示的 Jev 槽模型; 空 (含纯空白) 显示「未配置」, 第二项为真。
 fn jev_model_text<'a>(sub: &'a Subscription, s: &'static Strings) -> (&'a str, bool) {
     let model = sub.model_slots.jev.trim();
     if model.is_empty() {
-        (s.sub_slot_passthrough, true)
+        (s.sub_slot_unset, true)
     } else {
         (model, false)
     }
