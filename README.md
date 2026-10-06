@@ -234,6 +234,8 @@ Open WebUI、Cherry Studio、Cline、LobeChat 等只支持 OpenAI Chat Completio
 
 </details>
 
+另有 `POST /v1/systemone` —— Jev（System One）决策模型的原样透传入口，绑定到 `model-jev`；可用上游：TypeSafe、OpenRouter、Ollama 0.35+。
+
 ### 出口：cc-router 怎么连厂商
 
 出口按协议分三类，另有一类走 OAuth 登录的订阅账号。内置厂商预设和自定义端点走的是同一条路，区别只是内置预设已经替你填好地址、鉴权方式和模型列表。完整内置清单以 app 内「添加订阅」页为准，描述文件在 [`src-tauri/providers/`](src-tauri/providers/)，欢迎 PR 补充。
