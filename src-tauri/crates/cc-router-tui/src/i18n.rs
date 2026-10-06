@@ -231,6 +231,8 @@ pub struct Strings {
     pub sub_balance_unavailable: &'static str,
     pub sub_models_cached: fn(usize) -> String,
     pub sub_models_never: &'static str,
+    /// System One 订阅按 m 时的提示 (它没有模型列表, 不发刷新请求)。
+    pub sub_models_na_systemone: &'static str,
     pub sub_unreferenced: &'static str,
     pub sub_help_rows: &'static [(&'static str, &'static str)],
     /// 详情面板「状态」行后面追加的进行中文案 (busy 行)。
@@ -757,6 +759,7 @@ pub const ZH: Strings = Strings {
     sub_balance_unavailable: "账户不可用 (可能欠费或被封)",
     sub_models_cached: |n| format!("已缓存 {n} 个"),
     sub_models_never: "还没获取过,按 m 刷新",
+    sub_models_na_systemone: "System One 订阅没有模型列表",
     sub_unreferenced: "没有被任何虚拟模型引用",
     sub_help_rows: &[
         ("↑↓ / j k", "上一条 / 下一条"),
@@ -1185,6 +1188,7 @@ pub const EN: Strings = Strings {
         format!("{n} {noun} cached")
     },
     sub_models_never: "Not fetched yet. Press m to refresh",
+    sub_models_na_systemone: "System One subscriptions have no model list",
     sub_unreferenced: "Not used by any virtual model",
     sub_help_rows: &[
         ("↑↓ / j k", "Previous / next"),
@@ -1615,6 +1619,7 @@ pub const JA: Strings = Strings {
     sub_balance_unavailable: "アカウントを利用できません (残高不足または制限中)",
     sub_models_cached: |n| format!("{n} 件をキャッシュ済み"),
     sub_models_never: "未取得です。m で更新",
+    sub_models_na_systemone: "System One サブスクにはモデル一覧がありません",
     sub_unreferenced: "どの仮想モデルからも参照されていません",
     sub_help_rows: &[
         ("↑↓ / j k", "前 / 次の項目"),

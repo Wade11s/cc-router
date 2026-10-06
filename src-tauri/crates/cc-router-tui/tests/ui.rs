@@ -4099,6 +4099,25 @@ fn systemone_jev_slot_keys() {
     assert_eq!(model_slots, ModelSlots::default());
 }
 
+/// System One 订阅没有模型列表: `m` (列表 / 详情焦点都一样) 只给提示, 不发刷新请求;
+/// 对话订阅的 `m` 照旧发请求。
+#[test]
+fn m_on_a_systemone_subscription_toasts_instead_of_refreshing() {
+    let mut a = systemone_subs_app("clef-flash");
+    render(&mut a, 120, 40);
+    let toast = Some(Action::Notify { kind: ToastKind::Info, text: ZH.sub_models_na_systemone.into() });
+    assert_eq!(a.handle_key(key(KeyCode::Char('m'))), toast);
+    a.handle_key(key(KeyCode::Enter)); // Detail{Jev}
+    assert_eq!(a.handle_key(key(KeyCode::Char('m'))), toast);
+
+    let mut b = app(false);
+    b.update(Action::Connected { app_version: VERSION.into() });
+    b.update(Action::SwitchTab(Tab::Subscriptions));
+    b.update(subs_done(1, vec![sub("1", "智谱主号", SubscriptionState::Healthy)]));
+    render(&mut b, 120, 40);
+    assert_eq!(b.handle_key(key(KeyCode::Char('m'))), Some(Action::Mutate(Mutation::RefreshModels { id: "1".into() })));
+}
+
 /// 详情焦点下选中的订阅被别处删掉、选中项落到一条 System One 订阅上: 光标不该还停在它没有的
 /// fable 槽, `⏎` 打开的是 Jev 槽的 picker。
 #[test]

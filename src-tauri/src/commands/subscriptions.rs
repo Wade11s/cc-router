@@ -746,6 +746,12 @@ pub async fn refresh_model_list(
         let g = rt.read().await;
         g.row.clone()
     };
+    // System One 订阅没有可用的模型列表 (实测), 且内置行会继承厂商级的 discovery 配置, 拉下来的是对话模型。
+    if row.endpoint_protocol == crate::provider::model::EndpointProtocol::Systemone {
+        return Err(AppError::BadRequest(
+            "System One 订阅没有模型列表, 请手动填写 Jev 模型".into(),
+        ));
+    }
 
     // OAuth 订阅走独立的 chatgpt_models 路径 (端点 / 鉴权 / 响应格式都不同),
     // 其他 provider 走通用的 OpenAI /v1/models envelope.

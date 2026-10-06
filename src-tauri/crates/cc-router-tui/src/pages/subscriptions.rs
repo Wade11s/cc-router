@@ -267,6 +267,14 @@ impl Subscriptions {
         self.saving.is_some()
     }
 
+    /// `m`: 刷新模型列表。System One 订阅没有可用的模型列表 (后端也会拒绝), 这里不发请求, 只提示。
+    fn refresh_models_action(sub: &Subscription, s: &'static Strings) -> Action {
+        if sub.is_systemone() {
+            return Action::Notify { kind: ToastKind::Info, text: s.sub_models_na_systemone.to_string() };
+        }
+        Action::Mutate(Mutation::RefreshModels { id: sub.id.clone() })
+    }
+
     fn saving_notice(s: &'static Strings) -> Action {
         Action::Notify { kind: ToastKind::Info, text: s.saving_in_progress.to_string() }
     }
@@ -695,7 +703,7 @@ impl Component for Subscriptions {
                 }
                 KeyCode::Char('e') => idx.map(|i| Action::Mutate(Mutation::SetEnabled { id: subs[i].id.clone(), enabled: !subs[i].enabled })),
                 KeyCode::Char('t') => idx.map(|i| Action::Mutate(Mutation::TestConnection { id: subs[i].id.clone() })),
-                KeyCode::Char('m') => idx.map(|i| Action::Mutate(Mutation::RefreshModels { id: subs[i].id.clone() })),
+                KeyCode::Char('m') => idx.map(|i| Self::refresh_models_action(&subs[i], s)),
                 KeyCode::Char('b') => idx.map(|i| Action::Mutate(Mutation::RefreshBalance { id: subs[i].id.clone() })),
                 // 只在 `Focus::List` 生效 (与 e/t/m/b 不同, 这两个键在 `Focus::Detail`
                 // 下没有对应分支, 落到那边的 `_ => None`)。没有选中项时 `d` 什么都不做; `n` 不依赖
@@ -767,7 +775,7 @@ impl Component for Subscriptions {
                     }
                     KeyCode::Char('e') => idx.map(|i| Action::Mutate(Mutation::SetEnabled { id: subs[i].id.clone(), enabled: !subs[i].enabled })),
                     KeyCode::Char('t') => idx.map(|i| Action::Mutate(Mutation::TestConnection { id: subs[i].id.clone() })),
-                    KeyCode::Char('m') => idx.map(|i| Action::Mutate(Mutation::RefreshModels { id: subs[i].id.clone() })),
+                    KeyCode::Char('m') => idx.map(|i| Self::refresh_models_action(&subs[i], s)),
                     KeyCode::Char('b') => idx.map(|i| Action::Mutate(Mutation::RefreshBalance { id: subs[i].id.clone() })),
                     _ => None,
                 }
